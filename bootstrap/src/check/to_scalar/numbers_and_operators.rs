@@ -136,8 +136,9 @@ impl<'a> Lowering<'a> {
                 _ => return None,
             });
         }
-        let ty = self.typed.type_of(&call.args[0].value, env);
-        let a = self.expr(out, &call.args[0].value, env).1[0];
+        // Both sides are the same range, the first as it is given here.
+        let (ty, a) = self.expr(out, &call.args[0].value, env);
+        let a = a[0];
         let b = self.expr(out, &call.args[1].value, env).1[0];
         let less = match ty {
             Ty::Int(t) if t.signed() => form::Compare::LessS,

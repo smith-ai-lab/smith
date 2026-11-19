@@ -28,7 +28,7 @@
 //! is written, so it is lowered as if it were written there, and no copy of
 //! a function knows which of its arguments were left out.
 
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, OnceLock};
 
@@ -45,8 +45,8 @@ use crate::diag::{Error, Pos};
 use crate::hash::{Map, Set};
 use crate::parser::outline::{Kind as PieceKind, Piece, outline};
 use crate::parser::{
-    Arg, ArithOp, Arm, Call, Enum, Expr, File, Form, Function, Generic, Impl, Lambda, Loop, Match,
-    Over, Part, Pattern, Qualified, Range, Stmt, Struct, Trait, Type, Use,
+    Arg, ArithOp, Arm, Bound, Call, Enum, Expr, File, Form, Function, Generic, Impl, Lambda, Loop,
+    Match, Over, Part, Pattern, Qualified, Range, Stmt, Struct, Trait, Type, Use,
 };
 use lists_and_text::{as_read, is_freeze, is_push, is_utf8};
 use numbers_and_operators::{Int, Narrowing, Numbers, flexible, literal_blocks, narrowing};
@@ -802,6 +802,9 @@ struct Defs<'a> {
     /// How the program's own code wrote `i64` and `u8`, so that an error
     /// names a type as the program wrote it.
     spelled: Cell<Spelled>,
+    /// The names and types of the parameters of the function whose signature
+    /// is being read, which a bound of a range may be.
+    bound_params: RefCell<Vec<(String, Type)>>,
 }
 
 /// For each whole number type that has two names, whether the first name the
@@ -814,6 +817,42 @@ struct Spelled {
 }
 
 impl<'a> Defs<'a> {
+    /// The number a bound of the range type `t` stands for where only the
+    /// range of the bound is known: a number is itself, and a name is the
+    /// least number of its parameter if it is the first bound of the range
+    /// and the greatest if it is the end.
+    fn bound_value(
+        &self,
+        bound: &Bound,
+        first: bool,
+        t: &Type,
+        scope: &Scope,
+        errors: &mut Vec<Error>,
+    ) -> Option<i128> {
+        let name = match bound {
+            Bound::Number(n) => return Some(*n),
+            Bound::Name(name) => name,
+        };
+        let params = self.bound_params.take();
+        let found = params
+            .iter()
+            .find(|(n, _)| n == name)
+            .map(|(_, t)| t.clone());
+        let ty = found.map(|p| self.resolve(&p, scope, errors));
+        *self.bound_params.borrow_mut() = params;
+        match ty {
+            Some(Ty::Int(int)) => Some(if first { int.min() } else { int.max() }),
+            Some(Ty::Unknown) | None => None,
+            Some(_) => {
+                errors.push(Error::new(
+                    t.pos,
+                    format!("`{name}` is not a whole number, and a bound is one"),
+                ));
+                None
+            }
+        }
+    }
+
     /// The type a type written in the source stands for, among the type
     /// parameters of `scope`. Mistakes go in `errors`.
     fn resolve(&self, t: &Type, scope: &Scope, errors: &mut Vec<Error>) -> Ty {
@@ -821,8 +860,15 @@ impl<'a> Defs<'a> {
         if t.unbuilt() {
             return Ty::Unknown;
         }
-        if let Some((min, max)) = t.range {
-            return match Int::between(min, max) {
+        if let Some((first, end)) = &t.range {
+            let (Some(min), Some(end)) = (
+                self.bound_value(first, true, t, scope, errors),
+                self.bound_value(end, false, t, scope, errors),
+            ) else {
+                return Ty::Unknown;
+            };
+            // A range that no number is in is of the least bound.
+            return match Int::between(min, (end - 1).max(min - 1)) {
                 Some(int) => Ty::Int(int),
                 None => {
                     errors.push(Error::new(
@@ -1093,6 +1139,15 @@ impl<'a> Defs<'a> {
 
     /// A function's signature among the type parameters of `scope`.
     fn signature(&self, f: &Function, scope: Scope) -> Signature {
+        *self.bound_params.borrow_mut() = (f.params.iter())
+            .map(|p| (p.name.clone(), p.ty.clone()))
+            .collect();
+        let signature = self.signature_read(f, scope);
+        self.bound_params.borrow_mut().clear();
+        signature
+    }
+
+    fn signature_read(&self, f: &Function, scope: Scope) -> Signature {
         Signature {
             params: (f.params.iter())
                 .map(|p| (p.name.clone(), self.quietly(&p.ty, &scope)))
@@ -1888,6 +1943,7 @@ fn check_file(
         withouts: Vec::new(),
         default_depth: Cell::new(0),
         spelled: Cell::new(Spelled::default()),
+        bound_params: RefCell::new(Vec::new()),
     };
     let mut done = Vec::new();
     for &d in &reached_types {
@@ -1970,6 +2026,7 @@ fn check_file(
         errors,
         types: HashMap::new(),
         widened: HashMap::new(),
+        comparing: false,
         value_calls: Set::default(),
         narrowed: HashSet::new(),
         fn_values: Map::default(),
@@ -5168,7 +5225,13 @@ impl<'a> Typed<'a> {
     /// it is written in replaced by `env`.
     fn callee(&self, call: &Call, env: &[Ty]) -> Callee {
         let defs = self.defs;
-        let given = |i: usize| self.type_of(&call.args[i].value, env);
+        let given = |i: usize| {
+            let arg = &call.args[i].value;
+            match self.widened.get(&addr(arg)) {
+                Some(wide) => Ty::Int(*wide),
+                None => self.type_of(arg, env),
+            }
+        };
         let solve = |params: &[(String, Ty)], vars: usize| {
             let mut sol = vec![None; vars];
             let places = params_of(params, &call.args).expect("checked");
@@ -5440,6 +5503,9 @@ struct Checker<'a> {
     /// The expressions that give a range where a wider one is needed, by
     /// their addresses, with the wider range each is taken as.
     widened: HashMap<usize, Int>,
+    /// Whether the arguments being fitted are those of a comparison, whose
+    /// two sides are taken as the smallest range that holds both.
+    comparing: bool,
     /// The calls of a name that holds a function, by their addresses.
     value_calls: Set<usize>,
     /// The calls of `narrow`, by their addresses, which give the number
@@ -6198,6 +6264,16 @@ impl<'a> Checker<'a> {
             (Ty::Int(g), Ty::Int(n)) => {
                 self.widened.insert(addr(value), *n);
                 self.enters(body, value, (*g, *n));
+            }
+            // The other side of a comparison is a range too.
+            (Ty::Int(g), Ty::Param(p))
+                if self.comparing
+                    && matches!(&sol[*p], Some(Ty::Int(x)) if x != g && x.hull(*g).is_some()) =>
+            {
+                let Some(Ty::Int(x)) = &sol[*p] else {
+                    unreachable!("checked")
+                };
+                sol[*p] = x.hull(*g).map(Ty::Int);
             }
             (given, pattern) => {
                 use_at(value.pos());
@@ -8398,6 +8474,9 @@ impl<'a> Checker<'a> {
             seed(&signature.gives, t, &mut from_place);
         }
         let mut sol: Vec<Option<Ty>> = vec![None; vars.names.len()];
+        let comparing = call.args.len() == 2
+            && matches!(&call.qualifier, Some((q, _)) if q == "Ord" || q == "Eq")
+            && matches!(call.callee.as_str(), "compare" | "eq");
         for effect in &signature.effects {
             self.needs(body, effect, call.pos, &format!("`{}`", call.callee));
         }
@@ -8597,7 +8676,9 @@ impl<'a> Checker<'a> {
             match param {
                 Some(i) => {
                     let pattern = &signature.params[i].1;
+                    self.comparing = comparing;
                     self.fit(body, &arg.value, &gives, pattern, &mut sol, vars);
+                    self.comparing = false;
                 }
                 None if gives == Ty::Nothing => {
                     self.errors.push(self.nothing_where(&arg.value, "text"));
@@ -8633,7 +8714,31 @@ impl<'a> Checker<'a> {
                 t => Want::Ty(t),
             };
             let gives = self.expr(body, value, &wanted);
+            self.comparing = comparing;
             self.fit(body, value, &gives, pattern, &mut sol, vars);
+            self.comparing = false;
+        }
+        // The two sides of a comparison that are two ranges are taken as the
+        // smallest range that holds both.
+        if comparing
+            && let [Ty::Int(a), Ty::Int(b)] = call
+                .args
+                .iter()
+                .map(|a| {
+                    self.types
+                        .get(&addr(&a.value))
+                        .cloned()
+                        .unwrap_or(Ty::Unknown)
+                })
+                .collect::<Vec<_>>()[..]
+            && a != b
+            && let Some(h) = a.hull(b)
+        {
+            for (arg, int) in call.args.iter().zip([a, b]) {
+                if int != h {
+                    self.widened.insert(addr(&arg.value), h);
+                }
+            }
         }
         // A lambda whose parameters' types nothing decided, and which writes
         // none of them.

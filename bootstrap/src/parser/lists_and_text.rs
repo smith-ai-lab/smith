@@ -22,6 +22,8 @@ fn interpolated(
     qualified: &mut Vec<Qualified>,
 ) -> Result<Expr, Error> {
     let mut p = Parser {
+        bound_names_allowed: false,
+        name_bound_ok: false,
         tokens,
         at: 0,
         errors: Vec::new(),

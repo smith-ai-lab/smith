@@ -16,7 +16,7 @@ mod traits;
 
 pub use lists_and_text::Part;
 pub use numbers_and_operators::ArithOp;
-use numbers_and_operators::number;
+use numbers_and_operators::{compared, number};
 pub use traits::{Impl, Trait, Without};
 
 /// The definitions of a file, each kind in the order they are written.
@@ -231,8 +231,26 @@ pub struct Type {
     pub args: Vec<Type>,
     /// Whether it is a function type, written `fn(T) -> U`.
     pub function: bool,
-    /// The bounds of a range type, written `a..b`, whose name is `RANGE`.
-    pub range: Option<(i128, i128)>,
+    /// The bounds of a range type, written `a..b`, whose name is `RANGE`: the
+    /// first, and the end, which the range stops short of.
+    pub range: Option<(Bound, Bound)>,
+}
+
+/// A bound of a range type: a whole number written out, or the name of a
+/// parameter of the function the type is written in.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Bound {
+    Number(i128),
+    Name(String),
+}
+
+impl Bound {
+    fn written(&self) -> String {
+        match self {
+            Bound::Number(n) => n.to_string(),
+            Bound::Name(n) => n.clone(),
+        }
+    }
 }
 
 /// The name of a type that is not built yet, as an array type is. It is no
@@ -248,8 +266,8 @@ impl Type {
     /// How the type is written in the source.
     pub fn written(&self) -> String {
         let args: Vec<String> = self.args.iter().map(Type::written).collect();
-        if let Some((min, max)) = self.range {
-            format!("{min}..{}", max + 1)
+        if let Some((first, end)) = &self.range {
+            format!("{}..{}", first.written(), end.written())
         } else if self.function {
             let (gives, params) = args.split_last().expect("a result");
             if self
@@ -660,6 +678,8 @@ fn parse_file(tokens: &[Token], library: bool) -> Result<File, Vec<Error>> {
         at: 0,
         errors: Vec::new(),
         unbuilt: Vec::new(),
+        bound_names_allowed: false,
+        name_bound_ok: false,
         no_lambda: false,
         binds: Vec::new(),
         holes: Vec::new(),
@@ -1036,6 +1056,12 @@ struct Parser<'a> {
     tokens: &'a [Token],
     at: usize,
     errors: Vec<Error>,
+    /// Whether the parameters of the function being read may have a range
+    /// type with a name for a bound: those of a function that has a body.
+    bound_names_allowed: bool,
+    /// Whether the type read next is the whole type of such a parameter, so
+    /// that it may have a name for a bound.
+    name_bound_ok: bool,
     /// What is not built yet and was read past, which is not a mistake of
     /// the syntax.
     unbuilt: Vec<Error>,
@@ -1477,6 +1503,13 @@ impl Parser<'_> {
         let mut block = Block::default();
         block.inner.append(&mut self.binds);
         let mut ok = true;
+        let mut requires = requires;
+        let owed = self.bounds_owed(&params);
+        ok &= owed.is_some();
+        if let Some(mut owed) = owed {
+            owed.append(&mut requires);
+            requires = owed;
+        }
         let end = loop {
             self.skip_newlines();
             let start = self.at;
@@ -1541,9 +1574,53 @@ impl Parser<'_> {
         }))
     }
 
+    /// What the caller owes for the parameters that have a range type with a
+    /// name for a bound: a parameter of range `a..n` is below `n`, and one of
+    /// range `m..b` is at least `m`. None when a name is not a parameter.
+    fn bounds_owed(&mut self, params: &[Param]) -> Option<Vec<Expr>> {
+        let mut owed = Vec::new();
+        let mut named = true;
+        for p in params {
+            let Some((first, end)) = &p.ty.range else {
+                continue;
+            };
+            let pos = p.ty.pos;
+            let name = |n: &str| Expr::Name {
+                name: n.to_string(),
+                pos,
+            };
+            for bound in [first, end] {
+                if let Bound::Name(n) = bound
+                    && (*n == p.name || !params.iter().any(|q| q.name == *n))
+                {
+                    self.errors.push(
+                        Error::new(
+                            pos,
+                            format!(
+                                "`{n}` is not a parameter of this function, and a bound is one"
+                            ),
+                        )
+                        .with_fix("write the bound as a number, or take it as another parameter"),
+                    );
+                    named = false;
+                }
+            }
+            if let Bound::Name(n) = first {
+                owed.push(compared(name(n), "<=", name(&p.name), pos));
+            }
+            if let Bound::Name(n) = end {
+                owed.push(compared(name(&p.name), "<", name(n), pos));
+            }
+        }
+        named.then_some(owed)
+    }
+
     /// Parses a function's signature, through the `{` that opens its body.
     fn body_signature(&mut self) -> Result<BodySignature, Error> {
-        let (name, pos, generics, params, result, result_name, effects) = self.signature()?;
+        self.bound_names_allowed = true;
+        let signature = self.signature();
+        self.bound_names_allowed = false;
+        let (name, pos, generics, params, result, result_name, effects) = signature?;
         let (mut requires, mut ensures) = (Vec::new(), Vec::new());
         loop {
             self.skip_newlines();
@@ -1679,7 +1756,9 @@ impl Parser<'_> {
         };
         self.expect_punct(":", "`:` and the parameter's type")?;
         let take = self.taking();
+        self.name_bound_ok = self.bound_names_allowed && self.tok() != &Tok::Keyword("fn");
         let (ty, takes) = self.ty_taking()?;
+        self.name_bound_ok = false;
         let mut default = None;
         if self.tok() == &Tok::Punct("=") {
             if pattern.is_some() {
@@ -1819,14 +1898,13 @@ impl Parser<'_> {
     /// Parses a type: a name, and the types in brackets after it, if any.
     fn ty(&mut self) -> Result<Type, Error> {
         let pos = self.pos();
+        let names = std::mem::take(&mut self.name_bound_ok);
         match self.tok() {
             Tok::Ident(name) => {
                 let name = name.clone();
                 self.bump();
                 if self.tok() == &Tok::Punct("..") {
-                    self.bump();
-                    self.range_bound()?;
-                    return Ok(self.unbuilt_type(pos));
+                    return self.range_type(pos, names, Some(Bound::Name(name)));
                 }
                 let mut args = Vec::new();
                 if self.tok() == &Tok::Punct("[") {
@@ -1841,7 +1919,7 @@ impl Parser<'_> {
                     range: None,
                 })
             }
-            Tok::Number(_) | Tok::Punct("-") => self.range_type(pos),
+            Tok::Number(_) | Tok::Punct("-") => self.range_type(pos, names, None),
             Tok::Punct("[") => self.array_type(pos),
             Tok::Keyword("fn") => Ok(self.function_type()?.0),
             Tok::Punct("(") => {
@@ -1881,54 +1959,61 @@ impl Parser<'_> {
         }
     }
 
-    /// Parses a range type, `a..b`, with numbers written out as its bounds.
-    fn range_type(&mut self, pos: Pos) -> Result<Type, Error> {
-        let min = self.range_bound()?;
+    /// Parses a range type, `a..b`, whose bounds are numbers written out, or
+    /// the name of a parameter where `names` says one may be. `first` is the
+    /// first bound if it was read already.
+    fn range_type(&mut self, pos: Pos, names: bool, first: Option<Bound>) -> Result<Type, Error> {
+        let first = match first {
+            Some(first) => first,
+            None => self.range_bound()?,
+        };
         if self.tok() != &Tok::Punct("..") {
             let tok = self.tok().clone();
             return Err(self.expected("`..` after the first bound of a range", &tok));
         }
         self.bump();
         let end = self.range_bound()?;
-        let (Some(min), Some(end)) = (min, end) else {
-            return Ok(self.unbuilt_type(pos));
-        };
-        let Some(max) = end.checked_sub(1).filter(|max| *max >= min - 1) else {
-            return Err(Error::new(
-                pos,
-                "a range ends where it begins or after it, so `a..b` has `b` at least `a`",
-            ));
-        };
+        match (&first, &end) {
+            (Bound::Number(min), Bound::Number(end)) => {
+                if end.checked_sub(1).is_none_or(|max| max < min - 1) {
+                    return Err(Error::new(
+                        pos,
+                        "a range ends where it begins or after it, so `a..b` has `b` at least `a`",
+                    ));
+                }
+            }
+            _ if !names => {
+                self.unbuilt.push(Error::unsupported(
+                    pos,
+                    "a bound of a range that is a name, except for a parameter's own type",
+                ));
+                return Ok(Type {
+                    name: UNBUILT.to_string(),
+                    pos,
+                    args: Vec::new(),
+                    function: false,
+                    range: None,
+                });
+            }
+            _ => {}
+        }
         Ok(Type {
             name: RANGE.to_string(),
             pos,
             args: Vec::new(),
             function: false,
-            range: Some((min, max)),
+            range: Some((first, end)),
         })
     }
 
-    /// The type that stands for a range with a bound that is a name, which is
-    /// not built yet.
-    fn unbuilt_type(&mut self, pos: Pos) -> Type {
-        self.unbuilt
-            .push(Error::unsupported(pos, "a bound of a range that is a name"));
-        Type {
-            name: UNBUILT.to_string(),
-            pos,
-            args: Vec::new(),
-            function: false,
-            range: None,
-        }
-    }
-
     /// Parses a bound of a range type: a whole number, with its `-` if it
-    /// has one directly before it, or none for a name, which is not built.
-    fn range_bound(&mut self) -> Result<Option<i128>, Error> {
+    /// has one directly before it, or a name.
+    fn range_bound(&mut self) -> Result<Bound, Error> {
         let pos = self.pos();
-        if let Tok::Ident(_) = self.tok() {
+        if let Tok::Ident(name) = self.tok() {
+            let name = name.clone();
             self.bump();
-            return Ok(None);
+            return Ok(Bound::Name(name));
         }
         let negative = self.tok() == &Tok::Punct("-");
         if negative {
@@ -1936,7 +2021,7 @@ impl Parser<'_> {
         }
         let Tok::Number(text) = self.tok().clone() else {
             let tok = self.tok().clone();
-            return Err(self.expected("a whole number as a bound of a range", &tok));
+            return Err(self.expected("a whole number or a name as a bound of a range", &tok));
         };
         self.bump();
         match self.number_pattern(text, negative, pos)? {
@@ -1944,7 +2029,7 @@ impl Parser<'_> {
                 magnitude,
                 negative,
                 ..
-            } if magnitude <= i128::MAX as u128 => Ok(Some(if negative {
+            } if magnitude <= i128::MAX as u128 => Ok(Bound::Number(if negative {
                 -(magnitude as i128)
             } else {
                 magnitude as i128
