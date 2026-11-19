@@ -25,12 +25,12 @@ The compiler reports for `body` the type `u8`, the effects the function declares
 A hole is also written where a proof is needed, and the report names the statement that is wanted.
 
 ```
-fn token[v: Nat](raw: Nat) -> Fin[v] {
-  Fin(value: raw, below: hole(inside))
+fn positive(raw: Nat) -> Pos {
+  Pos(value: raw, above: hole(inside))
 }
 ```
 
-The report for `inside` is the statement `raw < v`, which a [`check`](check.md) would give.
+The report for `inside` is the statement `raw > 0`, which a [`check`](check.md) would give.
 
 ## A hole is not built
 

@@ -66,6 +66,21 @@ fn describe(n: i32) -> str {
 
 This gives "this is a number, where text is needed".
 
+Blocks that give whole numbers give the smallest range that holds the values of both, as each block's value is accepted by that range with nothing written.
+
+```
+fn pick(c: bool, x: 0..256) -> 0..256 {
+  if c { 1 } else { x }
+}
+
+fn main() ! console, alloc {
+  y = if true { 1 } else { 300 }
+  print("{pick(false, 7)} {y}")
+}
+```
+
+This prints `7 1`. In `pick` the blocks give a `1..2` and a `0..256`, so the `if` gives a `0..256`. `y` is a `1..301`, as `1` and `300` are the two ends.
+
 ## An `if` with no `else`
 
 An `if` with no `else` gives `()`, and what its block gives is not read. It is for what its block does.
@@ -111,7 +126,7 @@ fn grade(n: i32) -> str {
 }
 ```
 
-`grade(10)` is `"fail"`, `grade(60)` is `"pass"`, and `grade(90)` is `"distinction"`. As for a plain `if`, every block gives the same type, and a chain with no last `else` gives `()`.
+`grade(10)` is `"fail"`, `grade(60)` is `"pass"`, and `grade(90)` is `"distinction"`. As for a plain `if`, every block gives the same type, or for whole numbers the smallest range that holds them all, and a chain with no last `else` gives `()`.
 
 The `else` is written on the line where the block before it ends. On a line of its own it is refused: "expected a statement, found `else`".
 

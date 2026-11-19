@@ -35,7 +35,7 @@ The numbers of `0..3` are the values of the type `0..3`, as [Number types](numbe
 fn pick[n: Nat](i: 0..n) -> Nat { i }
 ```
 
-`pick` takes a number below `n`, whatever `n` is, and gives it back as a `Nat`. A `0..n` has no value when `n` is `0`, since the range has no numbers.
+`pick` takes a number below `n`, whatever `n` is, and gives it back as a `Nat`. A `0..n` has no value when `n` is `0`, since the range has no numbers, and it is a type all the same, as [Number types](number-types.md#a-range-as-a-type) says.
 
 ## A slice
 

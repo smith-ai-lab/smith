@@ -41,7 +41,7 @@ fn describe(tom: Cat) ! console, alloc {
 - A tuple is `("a", "b")` and the empty tuple is `()`.
 - A case of an enum is `.cat("a")` for a case that holds a value and `.none` for one that does not, with a leading dot as in a pattern.
 - An array or list is `[1, 2, 3]`.
-- A struct with exactly one field that is not a proof, such as `Fin`, is written as that field's value.
+- A struct with exactly one field that is not a proof, such as `Pos`, is written as that field's value.
 
 ```
 enum Pet {

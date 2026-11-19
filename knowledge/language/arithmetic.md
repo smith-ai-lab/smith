@@ -155,7 +155,13 @@ This prints `0 8` and `255 -56`. The `1` is a `Byte`, as it is a range that fits
 fn next(i: 0..101) -> 0..101 { wrapping_add(i, 1) }
 ```
 
-This is refused, as `0..101` does not fill a size, so it has no wrapping function.
+This is refused, as `0..101` does not fill a size, so it has no wrapping function. A wrapping function takes two values of one range, written the same, and a wider range is not accepted for a narrower one here, as it is elsewhere, since widening one would change where a sum wraps.
+
+```
+fn bump(a: Byte, b: 0..65536) -> 0..65536 { wrapping_add(a, b) }
+```
+
+This is refused, as `a` and `b` are of two ranges. The fix is to bind the narrower with the type of the other, as `wide: 0..65536 = a`.
 
 ## The forms
 

@@ -15,7 +15,7 @@ built:
 
 # What arith proves
 
-`arith` is the procedure that proves, when the program is built, that a `+`, `-`, or `*` fits its type and that an index is in range. It decides linear arithmetic over the integers and nothing more, which is why it always answers yes or no, in a time that can be predicted.
+`arith` is the procedure that proves, when the program is built, that a value fits the range it enters, as [Integer arithmetic](arithmetic.md) says, and that an index is in range. It decides linear arithmetic over the integers and nothing more, which is why it always answers yes or no, in a time that can be predicted.
 
 ```
 fn main() ! console, alloc {
@@ -117,7 +117,7 @@ fn climb(x: u8) -> u8 {
 }
 ```
 
-`climb(100)` is `150` and `climb(250)` is `0`. The line after the `if` is reached only when `x > 200` is false, so `x + 50` fits. Without the `if`, `v = x + 50` is refused: "cannot prove that `x + 50 <= 255`, so `x + 50` may not fit `u8`".
+`climb(100)` is `150` and `climb(250)` is `0`. The line after the `if` is reached only when `x > 200` is false, so `x + 50` fits. Without the `if`, `v = x + 50` is refused, as `x + 50` may be above 255, which `v` does not hold.
 
 **The size of a list.** A list has the `size` of the list it was given, whether it is bound to a name or to a `var`, and `size` is a value in a comparison, as in a `requires`, an `if`, and the range of a `loop`. It is what proves an index, as [Indexing](indexing.md) says.
 
@@ -156,7 +156,7 @@ fn forgotten(q: Pair) -> u8 {
 }
 ```
 
-`kept(Pair(a: 5, b: 1))` is `105`. `forgotten` is refused: "cannot prove that `p.a + 100 <= 255`, so `p.a + 100` may not fit `u8`", since `p.a` was assigned after `p.a < 100` was known. The same holds in a loop, a lambda, and an arm of an `if` or a `match` as outside one, and a `var` that the loop or lambda assigns is not known from before it.
+`kept(Pair(a: 5, b: 1))` is `105`. `forgotten` is refused, as `p.a + 100` may be above 255, since `p.a` was assigned after `p.a < 100` was known. The same holds in a loop, a lambda, and an arm of an `if` or a `match` as outside one, and a `var` that the loop or lambda assigns is not known from before it.
 
 **A bit operation.** What [`bit_and`, `bit_or`, `bit_xor`, `shift_right`, and `shift_left`](bits.md) give is known from what is known of the numbers they are given, as far as it is true of every value.
 
@@ -205,7 +205,7 @@ It does not reason about a product of two variables, or about dividing by a vari
 fn area(w: u8, h: u8) -> u8 { w * h }
 ```
 
-This is refused: "cannot prove that `w * h <= 255`, so `w * h` may not fit `u8`". Nothing is known of `w * h` from what is known of `w` and `h`.
+This is refused, as `w * h` may be above 255, which the result does not hold. Nothing is known of `w * h` from what is known of `w` and `h`.
 
 A fact stated about the same product is a fact about that term, so it is known.
 
@@ -249,7 +249,7 @@ fn double_plus(i: u8, n: u8) -> u8
 }
 ```
 
-This is refused: "cannot prove that `2 * i <= 255`, so `2 * i` may not fit `u8`", with the fix "check the operands first, or use `wrapping_mul`, `saturating_mul`, or `checked_mul`". Nothing says `n` is small, so `i` may be 254.
+This is refused, as `2 * i` may be above 255, which the result does not hold, with the fix to check the operands first. Nothing says `n` is small, so `i` may be 254.
 
 The author supplies the missing fact in one of three ways: with a [`requires`](contracts.md), with a [`check`](check.md), or with [a type that carries the proof](proof-fields.md). Adding `n <= 100` to the `requires` above makes the function compile.
 
