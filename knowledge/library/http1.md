@@ -2,7 +2,10 @@
 type: specification
 title: HTTP/1.1 messages
 description: std.http1, which reads and writes the messages of HTTP/1.1 as bytes: the head of a request and of a response, and a body by its length or in chunks, with nothing read that the standard says to refuse.
-status: planned
+status: partial
+built:
+  - "`request_head`, `response_head`, `body_of`, `chunk`, and `write_chunk` of `std.http1`, written in Smith, with `Read`, `RequestHead`, `ResponseHead`, and `Body`, every refusal the page lists, and a `limit` of 16384 that each reader takes"
+  - "not `write_request_head` or `write_response_head`, which need a `requires` over a text, and a contract is only a comparison of whole numbers"
 ---
 
 # HTTP/1.1 messages
@@ -14,7 +17,7 @@ use std.http1 (Read, request_head)
 
 fn first_line(bytes: Slice[Byte]) -> str ! alloc {
   match request_head(bytes) {
-    .complete(head, used) { "{head.method} {head.target}" }
+    .complete((head, used)) { "{head.method} {head.target}" }
     .incomplete { "more bytes are needed" }
     .refused(why) { why }
   }
@@ -50,17 +53,17 @@ enum Body {
   chunked
 }
 
-fn request_head(bytes: Slice[Byte]) -> Read[RequestHead] ! alloc
-fn response_head(bytes: Slice[Byte]) -> Read[ResponseHead] ! alloc
+fn request_head(bytes: Slice[Byte], limit: Nat = 16384) -> Read[RequestHead] ! alloc
+fn response_head(bytes: Slice[Byte], limit: Nat = 16384) -> Read[ResponseHead] ! alloc
 fn body_of(headers: List[(str, str)]) -> Result[Body, str]
-fn chunk(bytes: Slice[Byte]) -> Read[Slice[Byte]]
+fn chunk(bytes: Slice[Byte], limit: Nat = 16384) -> Read[Slice[Byte]]
 ```
 
 - `complete` holds the value and how many of the bytes it took, so the caller goes on from there. `incomplete` says the bytes so far are right and there are not enough of them. `refused` says the bytes are no message, with why, and more bytes will not make them one.
 - A head is read only when it is whole. The name of a header is given in small letters, and its value with the space at its ends taken off.
-- `body_of` says how the body that follows a head is framed, from its headers. `chunk` reads one chunk and gives its bytes, as a piece of what it was given. A chunk of no bytes is the last.
+- `body_of` says how the body that follows a head is framed, from its headers. `chunk` reads one chunk and gives its bytes, as a piece of what it was given. A chunk of no bytes is the last, and the trailers after it are passed over. `body_of` gives `.err` for a `content-length` that is not one number, for both framings together, and for a `transfer-encoding` whose last coding is not `chunked`, and a head whose headers it refuses is refused. A name or a value that is not UTF-8 is refused too, as every one is a `str`.
 - A head is refused where RFC 9112 says a server must not accept it, as these let one request be read as two by two servers that read it differently: a line that ends with a line feed alone, a space before the colon of a header, a header line that continues the one before, a byte that is no part of a name or a value, more than one `content-length` or one that is not a number, and `content-length` together with `transfer-encoding`.
-- Nothing is read without a limit. A head of more bytes than `limit`, which each function takes with a default of 16384, is refused, so a peer that never ends a line cannot fill memory.
+- Nothing is read without a limit. A head, or a chunk, of more bytes than `limit`, which each of the three functions takes with a default of 16384, is refused, so a peer that never ends a line cannot fill memory.
 
 ## Writing
 
