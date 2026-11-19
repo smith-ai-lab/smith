@@ -2,12 +2,13 @@
 //! once the code and its data are laid out, and how a program in the scalar
 //! form becomes them. It reads the scalar form and nothing else.
 
-use super::alloc::{self, Home, Registers};
+use super::alloc::{self, Home, Kinds, Registers};
 use super::frame::{self, PAGE, Passed, call_area, round_up, size};
 use super::indexed::{self, Folded};
 use super::moves::{self, Move, Step};
 use crate::scalar::{
-    Binary, Compare, Constant, End, Function, Jump, Op, Program, Stream, System as Call, Value,
+    Binary, Compare, Constant, End, FloatBinary, FloatCompare, Function, Jump, Op, Program, Stream,
+    System as Call, Type, Value,
 };
 
 pub const X0: u32 = 0;
@@ -46,6 +47,32 @@ const REGISTERS: Registers = Registers {
     preserved: 10,
     passed: 15,
 };
+/// The registers that hold floats, in the order the allocator numbers them, after
+/// those of `HOMES`: v0 to v7 and v16 to v29, which a call may change, and v8 to
+/// v15, of which a call keeps the low 64 bits on every system, which holds any
+/// float. v30 and v31 are kept for the chip, where a float read from the frame
+/// waits and where a result that goes to the frame is worked out.
+const FLOATS: [u32; 30] = [
+    0, 1, 2, 3, 4, 5, 6, 7, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 8, 9, 10, 11,
+    12, 13, 14, 15,
+];
+const V30: u32 = 30;
+const V31: u32 = 31;
+
+/// A call passes its first eight floats, and the function gives its first eight
+/// results that are floats, in v0 to v7, in the order each has among the
+/// floats. What does not fit goes in the caller's frame.
+const FLOAT_REGISTERS: Registers = Registers {
+    changed: 22,
+    preserved: 8,
+    passed: 8,
+};
+
+const KINDS: Kinds = Kinds {
+    ints: REGISTERS,
+    floats: FLOAT_REGISTERS,
+};
+
 /// The link register, which a call puts its return address in.
 const X30: u32 = 30;
 /// The stack pointer, where an instruction takes it in place of a register.
@@ -56,12 +83,20 @@ pub const LE: u32 = 0xd;
 pub const EQ: u32 = 0x0;
 pub const NE: u32 = 0x1;
 pub const LT: u32 = 0xb;
+/// Negative, which a comparison of floats sets when the first is below the
+/// second, and does not when either is not a number.
+const MI: u32 = 0x4;
+/// Greater than, or greater than or the same, as signed numbers or floats.
+const GT: u32 = 0xc;
+const GE: u32 = 0xa;
 /// Unsigned lower.
 pub const LO: u32 = 0x3;
 /// Unsigned lower or same.
 pub const LS: u32 = 0x9;
 /// Carry set: an unsigned addition did not fit.
 const HS: u32 = 0x2;
+/// Unsigned higher.
+const HI: u32 = 0x8;
 /// Overflow set: a signed operation did not fit.
 const VS: u32 = 0x6;
 
@@ -601,6 +636,92 @@ impl Asm {
     fn shift_right_signed(&mut self, rd: u32, count: u32) {
         self.word(0x9340_fc00 | count << 16 | rd << 5 | rd);
     }
+
+    /// The bit that says a float is of 64 bits, in the instructions of floats.
+    fn double(width: u32) -> u32 {
+        u32::from(width == 8) << 22
+    }
+
+    /// `ldr sd` or `ldr dd`: a float of `width` bytes into the register.
+    pub fn float_load(&mut self, rt: u32, width: u32, from: Place) {
+        let (base, at) = self.reach(from, width);
+        let op = if width == 8 { 0xfd40_0000 } else { 0xbd40_0000 };
+        self.word(op | at << 10 | base << 5 | rt);
+    }
+
+    /// `str sd` or `str dd`: the float in the register, `width` bytes of it.
+    pub fn float_store(&mut self, to: Place, rt: u32, width: u32) {
+        if let Place::Indexed { base, index, scale } = to {
+            assert!(
+                u32::from(scale) == width,
+                "the index is scaled by the width"
+            );
+            let op = if width == 8 { 0xfc20_7800 } else { 0xbc20_7800 };
+            self.word(op | index << 16 | base << 5 | rt);
+            return;
+        }
+        let (base, at) = self.reach(to, width);
+        let op = if width == 8 { 0xfd00_0000 } else { 0xbd00_0000 };
+        self.word(op | at << 10 | base << 5 | rt);
+    }
+
+    /// `fadd`, `fsub`, `fmul`, or `fdiv fd, fn, fm`, by the bits that choose it.
+    pub fn float_arithmetic(&mut self, bits: u32, width: u32, rd: u32, rn: u32, rm: u32) {
+        self.word(bits | Self::double(width) | rm << 16 | rn << 5 | rd);
+    }
+
+    /// `fneg fd, fn`.
+    pub fn float_negate(&mut self, width: u32, rd: u32, rn: u32) {
+        self.word(0x1e21_4000 | Self::double(width) | rn << 5 | rd);
+    }
+
+    /// `fmov fd, fn`.
+    pub fn float_mov(&mut self, rd: u32, rn: u32) {
+        self.word(0x1e60_4000 | rn << 5 | rd);
+    }
+
+    /// `fcmp fn, fm`, which sets the flags so that `MI` says `fn` is below `fm`,
+    /// and nothing but `NE` holds when either is not a number.
+    pub fn float_compare(&mut self, width: u32, rn: u32, rm: u32) {
+        self.word(0x1e20_2000 | Self::double(width) | rm << 16 | rn << 5);
+    }
+
+    /// `fcsel fd, fn, fm, cond`, which takes `fn` if `cond` holds and `fm` if not.
+    pub fn float_select(&mut self, width: u32, rd: u32, rn: u32, rm: u32, cond: u32) {
+        self.word(0x1e20_0c00 | Self::double(width) | rm << 16 | cond << 12 | rn << 5 | rd);
+    }
+
+    /// `scvtf` or `ucvtf fd, xn`: the float nearest the integer of 64 bits.
+    pub fn float_from_int(&mut self, signed: bool, width: u32, rd: u32, rn: u32) {
+        let op = if signed { 0x9e22_0000 } else { 0x9e23_0000 };
+        self.word(op | Self::double(width) | rn << 5 | rd);
+    }
+
+    /// `fcvtzs` or `fcvtzu xd, fn`: the integer of 64 bits the float is cut to,
+    /// the least or the greatest when it does not fit, and 0 when it is not a
+    /// number.
+    pub fn int_from_float(&mut self, signed: bool, width: u32, rd: u32, rn: u32) {
+        let op = if signed { 0x9e38_0000 } else { 0x9e39_0000 };
+        self.word(op | Self::double(width) | rn << 5 | rd);
+    }
+
+    /// `fcvt dd, sn` for a `from` of 4 bytes and `fcvt sd, dn` for 8.
+    pub fn float_resize(&mut self, from: u32, rd: u32, rn: u32) {
+        let op = if from == 4 { 0x1e22_c000 } else { 0x1e62_4000 };
+        self.word(op | rn << 5 | rd);
+    }
+
+    /// `fmov xd, dn` or `fmov wd, sn`: the bits of the float.
+    pub fn bits_from_float(&mut self, rd: u32, width: u32, rn: u32) {
+        let op = if width == 8 { 0x9e66_0000 } else { 0x1e26_0000 };
+        self.word(op | rn << 5 | rd);
+    }
+
+    /// `fmov dd, xn` or `fmov sd, wn`: the float with those bits, and zeros above.
+    pub fn float_from_bits(&mut self, rd: u32, width: u32, rn: u32) {
+        let op = if width == 8 { 0x9e67_0000 } else { 0x1e27_0000 };
+        self.word(op | rn << 5 | rd);
+    }
 }
 
 /// What a system gives the code of an arm64 target: how it writes, how it
@@ -684,6 +805,8 @@ pub fn code<S: System>(program: &Program) -> (Asm, Vec<(usize, &[u8])>) {
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Loc {
     Register(u32),
+    /// A register that holds a float, by its number among the 32.
+    Float(u32),
     /// `[sp + offset]`.
     Frame(u32),
     /// A number that a constant gives, which is in no place: each
@@ -691,15 +814,24 @@ enum Loc {
     Imm(u64),
 }
 
-/// Where the values of a call go, in order: in the registers that carry them,
-/// and in the places in the frame, which start at `base`.
-fn passing(places: &[Passed], base: u32) -> Vec<Loc> {
-    (places.iter())
-        .map(|p| match p {
-            Passed::Register(k) => Loc::Register(HOMES[*k]),
-            Passed::Frame(at) => Loc::Frame(base + at),
+/// Where the values of a call go, in order, of the types: in the registers that
+/// carry them, the k-th of its kind for the k-th value of the kind, and in the
+/// places in the frame, which start at `base`.
+fn passing(places: &[Passed], types: &[Type], base: u32) -> Vec<Loc> {
+    (places.iter().zip(types))
+        .map(|(place, ty)| match (place, ty) {
+            (Passed::Register(k), Type::Float(_)) => Loc::Float(FLOATS[*k]),
+            (Passed::Register(k), _) => Loc::Register(HOMES[*k]),
+            (Passed::Frame(at), _) => Loc::Frame(base + at),
         })
         .collect()
+}
+
+/// A register a function keeps for its caller: of integers, or of floats.
+#[derive(Clone, Copy)]
+enum Saved {
+    Int,
+    Float,
 }
 
 /// A function being written, and where each value is.
@@ -719,7 +851,7 @@ struct Writer<'a, S> {
     leave: Vec<Loc>,
     /// The registers a call does not change that the function uses, and
     /// where it keeps what they held.
-    saved: Vec<(u32, u32)>,
+    saved: Vec<(Saved, u32, u32)>,
     labels: Vec<usize>,
     /// Which instructions are folded into the store that reads them.
     folded: Vec<Vec<Folded>>,
@@ -754,24 +886,35 @@ fn function<S: System>(
         u32::from(scale) == width
     });
     let held = held(f, &constants, Some(&folded));
-    let allocation = alloc::allocate(f, REGISTERS, &held);
-    let below = S::RESERVED + frame::outgoing(program, f, [REGISTERS.passed, 0]);
+    let allocation = alloc::allocate_kinds(f, KINDS, &held);
+    let passed = [REGISTERS.passed, FLOAT_REGISTERS.passed];
+    let below = S::RESERVED + frame::outgoing(program, f, passed);
     let saved_from = round_up(below + allocation.frame, 8);
     // The address the function returns to is kept above its values.
     let total = round_up(saved_from + 8 * allocation.saved.len() as u32, 16) + 16;
-    let area = call_area(f, [REGISTERS.passed, 0]);
-    let in_caller = |places: &[Passed]| -> Vec<Loc> { passing(places, total + S::RESERVED) };
-    let arrive = in_caller(&area.params);
-    let leave = in_caller(&area.results);
+    let area = call_area(f, passed);
+    let in_caller = |places: &[Passed], types: &[Type]| -> Vec<Loc> {
+        passing(places, types, total + S::RESERVED)
+    };
+    let params: Vec<Type> = f.blocks[0].params.iter().map(|v| f.types[v.0]).collect();
+    let arrive = in_caller(&area.params, &params);
+    let leave = in_caller(&area.results, &f.results);
     let at: Vec<Loc> = (allocation.homes.iter().enumerate())
         .map(|(v, home)| match home {
-            Home::Register(r) => Loc::Register(HOMES[*r]),
+            Home::Register(r) if *r < HOMES.len() => Loc::Register(HOMES[*r]),
+            Home::Register(r) => Loc::Float(FLOATS[*r - HOMES.len()]),
             Home::Frame(place) => Loc::Frame(below + place),
             Home::Held => Loc::Imm(constants[v].expect("a value held is a constant")),
         })
         .collect();
-    let saved: Vec<(u32, u32)> = (allocation.saved.iter().enumerate())
-        .map(|(i, r)| (HOMES[*r], saved_from + 8 * i as u32))
+    let saved: Vec<(Saved, u32, u32)> = (allocation.saved.iter().enumerate())
+        .map(|(i, r)| {
+            let at = saved_from + 8 * i as u32;
+            match r.checked_sub(HOMES.len()) {
+                None => (Saved::Int, HOMES[*r], at),
+                Some(k) => (Saved::Float, FLOATS[k], at),
+            }
+        })
         .collect();
     let branches_on_compare = super::branch::on_compare(f);
     let before_choice = super::branch::before_choice(f);
@@ -806,8 +949,11 @@ fn function<S: System>(
             asm.reserve_stack(total);
         }
         asm.store(Place::Frame(total - 16), X30, 8);
-        for (r, at) in &w.saved {
-            asm.store(Place::Frame(*at), *r, 8);
+        for (kind, r, at) in &w.saved {
+            match kind {
+                Saved::Int => asm.store(Place::Frame(*at), *r, 8),
+                Saved::Float => asm.float_store(Place::Frame(*at), *r, 8),
+            }
         }
         // The function's own parameters are in registers, and in the caller's
         // frame when there are more than registers.
@@ -931,6 +1077,19 @@ impl<S: System> Writer<'_, S> {
             (Loc::Register(to), Loc::Imm(n)) => asm.mov_imm(to, n),
             (Loc::Frame(to), Loc::Imm(n)) => self.store_imm(asm, Place::Frame(to), n, width, X16),
             (Loc::Imm(_), _) => unreachable!("a number is not a place to copy to"),
+            (Loc::Float(to), Loc::Float(from)) => {
+                if to != from {
+                    asm.float_mov(to, from);
+                }
+            }
+            (Loc::Float(to), Loc::Frame(from)) => asm.float_load(to, width, Place::Frame(from)),
+            (Loc::Frame(to), Loc::Float(from)) => asm.float_store(Place::Frame(to), from, width),
+            // Through x17, which holds what breaks a circle of copies. The
+            // circle may hold floats of both sizes, so the register is copied
+            // whole.
+            (Loc::Register(to), Loc::Float(from)) => asm.bits_from_float(to, 8, from),
+            (Loc::Float(to), Loc::Register(from)) => asm.float_from_bits(to, 8, from),
+            (Loc::Float(_), Loc::Imm(_)) => unreachable!("a float is not a number held"),
         }
     }
 
@@ -950,6 +1109,9 @@ impl<S: System> Writer<'_, S> {
         let base = self.read(asm, X16, base);
         let index = self.read(asm, X17, index);
         let place = Place::Indexed { base, index, scale };
+        if matches!(ty, Type::Float(_)) {
+            return self.float_store(asm, place, *value);
+        }
         match self.at[value.0] {
             Loc::Imm(n) => self.store_imm(asm, place, n, size(*ty), X15),
             _ => {
@@ -996,6 +1158,7 @@ impl<S: System> Writer<'_, S> {
                 asm.mov_imm(tmp, n);
                 tmp
             }
+            Loc::Float(_) => unreachable!("a float is not read as an integer"),
         }
     }
 
@@ -1019,6 +1182,7 @@ impl<S: System> Writer<'_, S> {
                 let shift = 64 - 8 * width;
                 asm.mov_imm(rd, (((n << shift) as i64) >> shift) as u64);
             }
+            Loc::Float(_) => unreachable!("a float is not read as an integer"),
         }
     }
 
@@ -1039,6 +1203,7 @@ impl<S: System> Writer<'_, S> {
         match self.at[v.0] {
             Loc::Register(r) => r,
             Loc::Frame(_) | Loc::Imm(_) => X16,
+            Loc::Float(_) => unreachable!("an integer is not given in a register of floats"),
         }
     }
 
@@ -1055,7 +1220,69 @@ impl<S: System> Writer<'_, S> {
             }
             Loc::Register(h) => asm.zero_extend(h, r, width),
             Loc::Imm(_) => unreachable!("an instruction gives no result that is a number held"),
+            Loc::Float(_) => unreachable!("an integer is not given in a register of floats"),
         }
+    }
+
+    /// The register of floats that holds the value: its own, or `tmp`, with the
+    /// value read into it.
+    fn float_read(&self, asm: &mut Asm, tmp: u32, v: Value) -> u32 {
+        match self.at[v.0] {
+            Loc::Float(r) => r,
+            Loc::Frame(at) => {
+                asm.float_load(tmp, self.width(v), Place::Frame(at));
+                tmp
+            }
+            _ => unreachable!("a float is in a register of floats or in the frame"),
+        }
+    }
+
+    /// The register of floats to work a result out in: its own, or v30.
+    fn float_target(&self, v: Value) -> u32 {
+        match self.at[v.0] {
+            Loc::Float(r) => r,
+            _ => V30,
+        }
+    }
+
+    /// Puts the float, which is in `r`, in the home of the value.
+    fn float_finish(&self, asm: &mut Asm, v: Value, r: u32) {
+        match self.at[v.0] {
+            Loc::Float(h) => {
+                if h != r {
+                    asm.float_mov(h, r);
+                }
+            }
+            Loc::Frame(at) => asm.float_store(Place::Frame(at), r, self.width(v)),
+            _ => unreachable!("a float is in a register of floats or in the frame"),
+        }
+    }
+
+    /// Writes the float to the place.
+    fn float_store(&self, asm: &mut Asm, to: Place, value: Value) {
+        let r = self.float_read(asm, V30, value);
+        asm.float_store(to, r, self.width(value));
+    }
+
+    /// The integer the float is cut to, held to the size of the result.
+    fn int_from_float(&self, asm: &mut Asm, result: Value, signed: bool, value: Value) {
+        let to = 8 * self.width(result);
+        let from = self.float_read(asm, V30, value);
+        asm.int_from_float(signed, self.width(value), X16, from);
+        if to < 64 && signed {
+            let greatest = (1i64 << (to - 1)) - 1;
+            asm.mov_imm(X17, greatest as u64);
+            asm.cmp(X16, X17);
+            asm.csel(X16, X17, X16, GT);
+            asm.mov_imm(X17, (-greatest - 1) as u64);
+            asm.cmp(X16, X17);
+            asm.csel(X16, X17, X16, LT);
+        } else if to < 64 {
+            asm.mov_imm(X17, (1u64 << to) - 1);
+            asm.cmp(X16, X17);
+            asm.csel(X16, X17, X16, HI);
+        }
+        self.finish(asm, result, X16, to == 64);
     }
 
     /// Makes the flags say what the comparison, or the operation that tells
@@ -1096,18 +1323,110 @@ impl<S: System> Writer<'_, S> {
 
     fn instruction(&self, asm: &mut Asm, results: &[Value], op: &Op) {
         match op {
-            Op::FloatBinary { .. }
-            | Op::FloatNegate(_)
-            | Op::FloatCompare { .. }
-            | Op::FloatFromInt { .. }
-            | Op::IntFromFloat { .. }
-            | Op::FloatResize(_) => unreachable!("arm64 does not build floats yet"),
+            Op::FloatBinary { op, a, b } => {
+                let bits = match op {
+                    FloatBinary::Add => 0x1e20_2800,
+                    FloatBinary::Sub => 0x1e20_3800,
+                    FloatBinary::Mul => 0x1e20_0800,
+                    FloatBinary::Div => 0x1e20_1800,
+                };
+                let (ra, rb) = (self.float_read(asm, V30, *a), self.float_read(asm, V31, *b));
+                let t = self.float_target(results[0]);
+                asm.float_arithmetic(bits, self.width(results[0]), t, ra, rb);
+                self.float_finish(asm, results[0], t);
+            }
+            Op::FloatNegate(value) => {
+                let r = self.float_read(asm, V30, *value);
+                let t = self.float_target(results[0]);
+                asm.float_negate(self.width(results[0]), t, r);
+                self.float_finish(asm, results[0], t);
+            }
+            Op::FloatCompare { op, a, b } => {
+                let (ra, rb) = (self.float_read(asm, V30, *a), self.float_read(asm, V31, *b));
+                asm.float_compare(self.width(*a), ra, rb);
+                // These are the conditions under which each holds, and none
+                // holds but `!=` when either is not a number.
+                let cond = match op {
+                    FloatCompare::Equal => EQ,
+                    FloatCompare::NotEqual => NE,
+                    FloatCompare::Less => MI,
+                    FloatCompare::LessEqual => LS,
+                    FloatCompare::Greater => GT,
+                    FloatCompare::GreaterEqual => GE,
+                };
+                let t = self.target(results[0]);
+                asm.cset(t, cond ^ 1);
+                self.finish(asm, results[0], t, true);
+            }
+            Op::FloatFromInt { signed, value } => {
+                if *signed {
+                    self.read_signed_into(asm, X16, *value);
+                } else {
+                    self.read_into(asm, X16, *value);
+                }
+                let t = self.float_target(results[0]);
+                asm.float_from_int(*signed, self.width(results[0]), t, X16);
+                self.float_finish(asm, results[0], t);
+            }
+            Op::IntFromFloat { signed, value } => {
+                self.int_from_float(asm, results[0], *signed, *value)
+            }
+            Op::FloatResize(value) => {
+                let r = self.float_read(asm, V30, *value);
+                let t = self.float_target(results[0]);
+                asm.float_resize(self.width(*value), t, r);
+                self.float_finish(asm, results[0], t);
+            }
+            Op::Constant(Constant::Float(n)) => {
+                let result = results[0];
+                let width = self.width(result);
+                let n = if width == 8 { *n } else { n & 0xffff_ffff };
+                match self.at[result.0] {
+                    Loc::Float(h) if n == 0 => asm.float_from_bits(h, width, XZR),
+                    Loc::Float(h) => {
+                        asm.mov_imm(X16, n);
+                        asm.float_from_bits(h, width, X16);
+                    }
+                    Loc::Frame(at) => self.store_imm(asm, Place::Frame(at), n, width, X16),
+                    _ => unreachable!("a float is in a register of floats or in the frame"),
+                }
+            }
+            Op::Choose {
+                on,
+                then,
+                otherwise,
+            } if matches!(self.f.types[results[0].0], Type::Float(_)) => {
+                let on = self.read(asm, X16, *on);
+                asm.cmp_imm(on, 0);
+                let then = self.float_read(asm, V30, *then);
+                let otherwise = self.float_read(asm, V31, *otherwise);
+                let t = self.float_target(results[0]);
+                asm.float_select(self.width(results[0]), t, then, otherwise, NE);
+                self.float_finish(asm, results[0], t);
+            }
+            Op::Load {
+                ty: Type::Float(_),
+                address,
+            } => {
+                let address = self.read(asm, X16, *address);
+                let t = self.float_target(results[0]);
+                asm.float_load(t, self.width(results[0]), Place::At(address));
+                self.float_finish(asm, results[0], t);
+            }
+            Op::Store {
+                ty: Type::Float(_),
+                address,
+                value,
+            } => {
+                let address = self.read(asm, X16, *address);
+                self.float_store(asm, Place::At(address), *value);
+            }
             Op::Constant(_) if matches!(self.at[results[0].0], Loc::Imm(_)) => {}
             Op::Constant(c) => {
                 let result = results[0];
                 let t = self.target(result);
                 match c {
-                    Constant::Float(_) => unreachable!("arm64 does not build floats yet"),
+                    Constant::Float(_) => unreachable!("a float constant is made as one"),
                     Constant::Int(n) => {
                         let n = match self.width(result) {
                             8 => *n,
@@ -1177,9 +1496,15 @@ impl<S: System> Writer<'_, S> {
                 }
             }
             Op::Call { function, args } => {
-                let area = call_area(&self.program.functions[*function], [REGISTERS.passed, 0]);
-                let at_bottom = |places: &[Passed]| passing(places, S::RESERVED);
-                let params = at_bottom(&area.params);
+                let callee = &self.program.functions[*function];
+                let passed = [REGISTERS.passed, FLOAT_REGISTERS.passed];
+                let area = call_area(callee, passed);
+                let at_bottom =
+                    |places: &[Passed], types: &[Type]| passing(places, types, S::RESERVED);
+                let types: Vec<Type> = (callee.blocks[0].params.iter())
+                    .map(|v| callee.types[v.0])
+                    .collect();
+                let params = at_bottom(&area.params, &types);
                 let moves: Vec<Move<Loc>> = (args.iter().zip(&params))
                     .map(|(arg, to)| Move {
                         to: *to,
@@ -1189,13 +1514,15 @@ impl<S: System> Writer<'_, S> {
                     .collect();
                 self.run(asm, &moves);
                 asm.call_label(self.functions[*function]);
-                let moves: Vec<Move<Loc>> = (results.iter().zip(at_bottom(&area.results)))
-                    .map(|(result, from)| Move {
-                        to: self.at[result.0],
-                        from,
-                        width: self.width(*result),
-                    })
-                    .collect();
+                let moves: Vec<Move<Loc>> = (results
+                    .iter()
+                    .zip(at_bottom(&area.results, &callee.results)))
+                .map(|(result, from)| Move {
+                    to: self.at[result.0],
+                    from,
+                    width: self.width(*result),
+                })
+                .collect();
                 self.run(asm, &moves);
             }
             Op::System {
@@ -1528,8 +1855,11 @@ impl<S: System> Writer<'_, S> {
                     })
                     .collect();
                 self.run(asm, &moves);
-                for (r, at) in &self.saved {
-                    asm.load(*r, 8, false, Place::Frame(*at));
+                for (kind, r, at) in &self.saved {
+                    match kind {
+                        Saved::Int => asm.load(*r, 8, false, Place::Frame(*at)),
+                        Saved::Float => asm.float_load(*r, 8, Place::Frame(*at)),
+                    }
                 }
                 asm.load(X30, 8, false, Place::Frame(self.frame - 16));
                 asm.release_stack(self.frame);
