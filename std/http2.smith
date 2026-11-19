@@ -719,7 +719,7 @@ fn write_huffman(to: take List[Byte], s: str) -> List[Byte] ! alloc {
 
 fn write_text(to: take List[Byte], s: str) -> List[Byte] ! alloc {
   short = huffman_size(s)
-  if short < s.size { return write_huffman(write_num(to, 128, 127, short), s) }
+  if short <= s.size { return write_huffman(write_num(to, 128, 127, short), s) }
   var w = write_num(to, 0, 127, s.size)
   loop i in 0..s.size { w = push(w, s[i]) }
   w
