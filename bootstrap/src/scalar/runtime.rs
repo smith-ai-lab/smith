@@ -567,9 +567,76 @@ fn append(stride: u64, reserve: usize, copy: usize) -> Function {
     let used = f.binary(Binary::Mul, size, width);
     let at = after(&mut f, address, used);
     let bytes = f.binary(Binary::Mul, count, width);
+    // What is added is often a few bytes, which a call of `Copy` and its
+    // loops cost more than they move.
+    let limit = int(&mut f, 17);
+    let few = f.compare(Compare::LessU, bytes, limit);
+    let (many, _) = f.block(&[]);
+    let (little, _) = f.block(&[]);
+    let (done, _) = f.block(&[]);
+    f.switch(few, vec![(many, vec![]), (little, vec![])]);
+    f.at(many);
     f.call(copy, vec![at, from, bytes], &[]);
+    f.jump(done, vec![]);
+    f.at(little);
+    copy_few(&mut f, at, from, bytes, done);
+    f.at(done);
     f.ret(vec![address, total, room]);
     f.finish(&LIST)
+}
+
+/// Copies `n` bytes, which are not more than 16, with at most two loads and
+/// two stores that lie over each other, so that no loop is run, and goes on
+/// at `done`. The two places do not overlap.
+fn copy_few(f: &mut Builder, to: Value, from: Value, n: Value, done: usize) {
+    let zero = int(f, 0);
+    let (some, _) = f.block(&[]);
+    let (wide, _) = f.block(&[]);
+    let (narrow, _) = f.block(&[]);
+    let (middle, _) = f.block(&[]);
+    let (tiny, _) = f.block(&[]);
+    let none = f.compare(Compare::Equal, n, zero);
+    f.switch(none, vec![(some, vec![]), (done, vec![])]);
+    f.at(some);
+    let eight = int(f, 8);
+    let under_eight = f.compare(Compare::LessU, n, eight);
+    f.switch(under_eight, vec![(wide, vec![]), (narrow, vec![])]);
+    // From 8 to 16 bytes: the first 8 and the last 8.
+    f.at(wide);
+    overlapping(f, to, from, n, 8, WORD);
+    f.jump(done, vec![]);
+    f.at(narrow);
+    let four = int(f, 4);
+    let under_four = f.compare(Compare::LessU, n, four);
+    f.switch(under_four, vec![(middle, vec![]), (tiny, vec![])]);
+    // From 4 to 7 bytes: the first 4 and the last 4.
+    f.at(middle);
+    overlapping(f, to, from, n, 4, Type::Int(Bits::B32));
+    f.jump(done, vec![]);
+    // From 1 to 3 bytes: the first, the middle, and the last.
+    f.at(tiny);
+    let one = int(f, 1);
+    let half = f.binary(Binary::ShiftRightU, n, one);
+    let last = f.binary(Binary::Sub, n, one);
+    for place in [zero, half, last] {
+        let source = after(f, from, place);
+        let b = f.load(BYTE, source);
+        let target = after(f, to, place);
+        f.store(target, b);
+    }
+    f.jump(done, vec![]);
+}
+
+/// Copies the first `width` bytes and the last `width` of `n`, which is at
+/// least `width`.
+fn overlapping(f: &mut Builder, to: Value, from: Value, n: Value, width: u64, ty: Type) {
+    let w = int(f, width);
+    let tail = f.binary(Binary::Sub, n, w);
+    let (read_end, write_end) = (after(f, from, tail), after(f, to, tail));
+    let first = f.load(ty, from);
+    let last = f.load(ty, read_end);
+    f.store(to, first);
+    f.store(write_end, last);
 }
 
 /// Gives a list whose memory has room for twice as many elements of the
