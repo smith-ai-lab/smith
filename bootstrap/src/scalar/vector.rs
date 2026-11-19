@@ -3,8 +3,10 @@
 //! both use it, so the two cannot disagree. A vector is held as the bits of
 //! the whole, lane 0 in the lowest.
 
-use super::eval::{binary, compare, float_binary, float_compare, mask};
-use super::{Binary, Bits, Compare, FloatBinary, FloatBits, FloatCompare, Lane, Relation, Type};
+use super::eval::{binary, compare, float_binary, float_compare, float_fused, mask};
+use super::{
+    Binary, Bits, Compare, FloatBinary, FloatBits, FloatCompare, Fused, Lane, Relation, Type,
+};
 
 /// The bits of a lane of the lane's size.
 pub(super) fn lane_mask(lane: Lane) -> u128 {
@@ -46,6 +48,21 @@ pub(super) fn vector_float_binary(op: FloatBinary, bits: FloatBits, a: u128, b: 
     let lane = Lane::Float(bits);
     made(lane, |at| {
         float_binary(op, bits, lane_of(lane, a, at), lane_of(lane, b, at))
+    })
+}
+
+/// The vector of what `op` gives for each triple of lanes of three vectors of
+/// floats of the lane's size.
+pub(super) fn vector_float_fused(op: Fused, bits: FloatBits, a: u128, b: u128, c: u128) -> u128 {
+    let lane = Lane::Float(bits);
+    made(lane, |at| {
+        float_fused(
+            op,
+            bits,
+            lane_of(lane, a, at),
+            lane_of(lane, b, at),
+            lane_of(lane, c, at),
+        )
     })
 }
 

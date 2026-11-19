@@ -3,11 +3,12 @@
 
 use super::vector::{
     lane_of, lane_type, vector_binary, vector_choose, vector_compare, vector_first_set,
-    vector_float_binary, vector_float_compare, vector_splat, vector_sum, with_lane,
+    vector_float_binary, vector_float_compare, vector_float_fused, vector_splat, vector_sum,
+    with_lane,
 };
 use super::{
-    Binary, Bits, Compare, Constant, End, FloatBinary, FloatBits, FloatCompare, Jump, Lane, Op,
-    Program, Stream, System, Type, Value,
+    Binary, Bits, Compare, Constant, End, FloatBinary, FloatBits, FloatCompare, Fused, Jump, Lane,
+    Op, Program, Stream, System, Type, Value,
 };
 
 /// What a program did: what it wrote to standard output, and the status it
@@ -445,6 +446,33 @@ pub(super) fn float_binary(op: FloatBinary, bits: FloatBits, x: u64, y: u64) -> 
     }
 }
 
+/// What `op` gives for three floats of the size, worked out exactly and
+/// rounded once, as the bits of a float of that size.
+pub(super) fn float_fused(op: Fused, bits: FloatBits, x: u64, y: u64, z: u64) -> u64 {
+    match bits {
+        FloatBits::F32 => {
+            let (a, b, c) = (
+                f32::from_bits(x as u32),
+                f32::from_bits(y as u32),
+                f32::from_bits(z as u32),
+            );
+            float_result_f32(match op {
+                Fused::MulAdd => a.mul_add(b, c),
+                Fused::MulSub => a.mul_add(b, -c),
+                Fused::NegMulAdd => (-a).mul_add(b, c),
+            })
+        }
+        FloatBits::F64 => {
+            let (a, b, c) = (f64::from_bits(x), f64::from_bits(y), f64::from_bits(z));
+            float_result_f64(match op {
+                Fused::MulAdd => a.mul_add(b, c),
+                Fused::MulSub => a.mul_add(b, -c),
+                Fused::NegMulAdd => (-a).mul_add(b, c),
+            })
+        }
+    }
+}
+
 /// The float with its sign bit flipped.
 pub(super) fn float_negate(bits: FloatBits, x: u64) -> u64 {
     (x ^ (1 << (bits.count() - 1))) & float_mask(bits)
@@ -563,6 +591,14 @@ impl Machine<'_> {
                         };
                         vec![Word::Int(float_binary(*op, bits, x, y))]
                     }
+                    Op::FloatFused { op, a, b, c } => {
+                        let bits = float_bits_of(f.types[a.0]);
+                        let (Word::Int(x), Word::Int(y), Word::Int(z)) = (get(a), get(b), get(c))
+                        else {
+                            panic!("arithmetic on what is not a float")
+                        };
+                        vec![Word::Int(float_fused(*op, bits, x, y, z))]
+                    }
                     Op::FloatNegate(value) => {
                         let bits = float_bits_of(f.types[value.0]);
                         let Word::Int(x) = get(value) else {
@@ -627,6 +663,17 @@ impl Machine<'_> {
                             panic!("arithmetic on what is not a vector")
                         };
                         vec![Word::Vector(vector_float_binary(*op, bits, x, y))]
+                    }
+                    Op::VectorFloatFused { op, a, b, c } => {
+                        let Lane::Float(bits) = lane_type(f.types[a.0]) else {
+                            panic!("arithmetic on lanes that are not floats")
+                        };
+                        let (Word::Vector(x), Word::Vector(y), Word::Vector(z)) =
+                            (get(a), get(b), get(c))
+                        else {
+                            panic!("arithmetic on what is not a vector")
+                        };
+                        vec![Word::Vector(vector_float_fused(*op, bits, x, y, z))]
                     }
                     Op::VectorCompare { op, signed, a, b } => {
                         let Lane::Int(bits) = lane_type(f.types[a.0]) else {

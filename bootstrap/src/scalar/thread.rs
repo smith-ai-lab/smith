@@ -317,6 +317,11 @@ fn each_read(op: &Op, mut f: impl FnMut(Value)) {
             f(*a);
             f(*b);
         }
+        Op::FloatFused { a, b, c, .. } | Op::VectorFloatFused { a, b, c, .. } => {
+            f(*a);
+            f(*b);
+            f(*c);
+        }
         Op::Widen { value, .. }
         | Op::Narrow(value)
         | Op::FloatNegate(value)

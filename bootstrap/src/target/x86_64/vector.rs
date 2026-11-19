@@ -22,7 +22,9 @@
 //!   `movd`, or `movq`, after a shuffle.
 
 use super::{Asm, Loc, Place, RAX, RCX, Reg, Rm, System, Writer, XMM13, XMM14, XMM15};
-use crate::scalar::{Binary, FloatBinary, FloatBits, FloatCompare, Lane, Relation, Type, Value};
+use crate::scalar::{
+    Binary, FloatBinary, FloatBits, FloatCompare, Fused, Lane, Relation, Type, Value,
+};
 
 /// What every lane of a vector of the lane holds, as the bits of the vector, when
 /// each lane holds the bits `n`.
@@ -407,6 +409,30 @@ impl<S: System> Writer<'_, S> {
         self.vector_two(asm, result, a, b, commutative, |asm, t, rb| {
             asm.vector_rr(prefix, opcode, t, rb);
         });
+    }
+
+    /// `a * b + c`, or the form of `op` of them, of floats, in each lane, in one
+    /// instruction that rounds once. It is worked out in the register `c` is
+    /// copied to, which is neither of the registers `a` and `b` are read from.
+    pub(super) fn vector_float_fused(
+        &self,
+        asm: &mut Asm,
+        result: Value,
+        op: Fused,
+        a: Value,
+        b: Value,
+        c: Value,
+    ) {
+        let lane = self.lane_of(result);
+        let ra = self.vector_read(asm, XMM13, a);
+        let rb = self.vector_read(asm, XMM14, b);
+        let t = match self.at[result.0] {
+            Loc::Xmm(r) if r != ra && r != rb => r,
+            _ => XMM15,
+        };
+        self.vector_into(asm, t, c);
+        asm.fused(op, lane.bits() == 64, false, t, ra, rb);
+        self.vector_finish(asm, result, t);
     }
 
     /// The mask of a comparison of two vectors of integers, as lanes that are all

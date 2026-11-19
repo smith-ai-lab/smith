@@ -238,6 +238,18 @@ pub(super) fn renamed(op: &Op, rename: &impl Fn(Value) -> Value) -> Op {
             a: rename(*a),
             b: rename(*b),
         },
+        Op::FloatFused { op, a, b, c } => Op::FloatFused {
+            op: *op,
+            a: rename(*a),
+            b: rename(*b),
+            c: rename(*c),
+        },
+        Op::VectorFloatFused { op, a, b, c } => Op::VectorFloatFused {
+            op: *op,
+            a: rename(*a),
+            b: rename(*b),
+            c: rename(*c),
+        },
         Op::FloatNegate(value) => Op::FloatNegate(rename(*value)),
         Op::FloatCompare { op, a, b } => Op::FloatCompare {
             op: *op,

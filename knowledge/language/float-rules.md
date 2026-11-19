@@ -2,7 +2,9 @@
 type: specification
 title: The rules floats keep
 description: Float code is fast and repeatable, a float reduction is regrouped in a shape that depends only on the source, sum_ordered adds in order, and a product is fused with one add or subtract.
-status: planned
+status: partial
+built:
+  - "a product whose only use is one add or subtract, named or not, on either side of it, is one instruction with one rounding, for a float and for each lane of a vector of floats, on x86-64 and arm64"
 ---
 
 # The rules floats keep
