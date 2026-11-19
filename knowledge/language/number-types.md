@@ -12,7 +12,8 @@ built:
   - "a range taken where a narrower one is needed, at the same places, which compiles when a condition or a `requires` shows that it fits, and is refused otherwise with an error that says what could not be proven"
   - "`==`, `!=`, `<`, `<=`, `>`, and `>=` between two different ranges, as the numbers they hold are, where one type of 64 bits holds the numbers of both"
   - "a range whose bound is the name of a parameter, `0..n` or `m..256`, as the type of a parameter: the body knows that the parameter is below `n` or at least `m`, as a `requires` says, and a call compiles when its argument is shown to be, and is the empty type where `n` is not above the first bound"
-  - "not a name for a bound in the type of a result or of a binding, which is planned, and a comparison of two ranges that no type of 64 bits holds"
+  - "a name for a bound in the type of a result, as `0..n` or `m..256`, which the function is shown to give and a caller knows, and in the type of a binding made with `=`, which is shown where it is written and known wherever the name is used, and a name in the type of a field, of a `var`, or inside another type refused with the reason, and a `var` or an unbound name refused as a bound"
+  - "not a comparison of two ranges that no type of 64 bits holds"
 ---
 
 # Number types

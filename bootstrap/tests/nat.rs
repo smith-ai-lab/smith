@@ -154,8 +154,10 @@ fn the_size_of_a_list_and_of_a_text_is_a_nat_and_no_other_type() {
 }
 
 /// A `loop i in 0..xs.size` gives `i` the type `Nat`, and `xs[i]` compiles
-/// there. An index of another type is refused, and one of type `Nat` that
-/// `arith` shows below the size compiles.
+/// there. An index whose range has a number below 0 is refused, and one that
+/// `arith` shows below the size compiles. A range of numbers that are not
+/// below 0 is a `Nat` where an index is needed, and a range with a number below
+/// 0 is not one.
 fn a_loop_over_the_size_gives_a_nat_that_indexes_and_no_other_type_indexes() {
     generate::check(3632, 6, |g: &mut Gen| g.below(6), |n| {
         let items: Vec<String> = (0..*n).map(|i| i.to_string()).collect();
@@ -169,7 +171,7 @@ fn a_loop_over_the_size_gives_a_nat_that_indexes_and_no_other_type_indexes() {
                 "fn main() ! console, alloc {{\n  xs: List[Byte] = [1, 2, 3]\n  i: {} = 1\n  print(\"{{xs[i]}}\")\n}}\n",
                 ty.name
             ));
-            assert_eq!(compiles(&source), ty.name == "u64", "for\n{source}");
+            assert_eq!(compiles(&source), ty.min >= 0, "for\n{source}");
         }
     });
 }
