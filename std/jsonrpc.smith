@@ -1,0 +1,381 @@
+use std.deserialize (Deserialize, ReadError, Reader, fail)
+use std.json (RawJson, from_json, raw_json, raw_text, to_json)
+use std.list (push)
+use std.text (Text, append)
+
+pub enum Id {
+  number: Int
+  text: str
+  null
+}
+
+pub struct Request {
+  pub id: Id
+  pub method: str
+  pub params: Option[RawJson]
+}
+
+pub struct Notification {
+  pub method: str
+  pub params: Option[RawJson]
+}
+
+pub struct Failure {
+  pub code: Int
+  pub message: str
+  pub data: Option[RawJson]
+}
+
+pub struct Response {
+  pub id: Id
+  pub outcome: Result[RawJson, Failure]
+}
+
+pub enum Message {
+  request: Request
+  notification: Notification
+  response: Response
+}
+
+pub enum Received {
+  one: Message
+  many: List[Result[Message, Failure]]
+}
+
+pub fn parse_error() -> Failure {
+  Failure(code: -32700, message: "Parse error", data: .none)
+}
+
+pub fn invalid_request() -> Failure {
+  Failure(code: -32600, message: "Invalid Request", data: .none)
+}
+
+pub fn method_not_found(method: str) -> Failure ! alloc {
+  Failure(code: -32601, message: "Method not found", data: .none)
+}
+
+pub fn invalid_params(why: str) -> Failure ! alloc {
+  Failure(code: -32602, message: why, data: .none)
+}
+
+pub fn internal_error() -> Failure {
+  Failure(code: -32603, message: "Internal error", data: .none)
+}
+
+// The members of an object that the standard names, each with the text of its
+// value, in the order they came. A member given twice is an error of the reader.
+struct Members {
+  named: List[(str, RawJson)]
+}
+
+fn is_named(name: str) -> bool {
+  name == "jsonrpc" or name == "id" or name == "method" or name == "params" or name == "result" or name == "error" or name == "code" or name == "message" or name == "data"
+}
+
+fn has(named: List[(str, RawJson)], name: str) -> bool {
+  loop pair in named {
+    match pair {
+      (n, v) { if n == name { return true } }
+    }
+  }
+  false
+}
+
+impl Deserialize[Members] {
+  fn read[R: Reader](from: take R) -> (R, Result[Members, ReadError]) ! alloc {
+    (opened, began) = Reader.structure(from, "Members")
+    match began {
+      .err(e) { return (opened, Result.err(e)) }
+      .ok(u) { }
+    }
+    var r = opened
+    var named: List[(str, RawJson)] = []
+    loop round in 0..4294967296 {
+      (after, got) = Reader.field(r)
+      r = after
+      match got {
+        .err(e) { return (r, Result.err(e)) }
+        .ok(next) {
+          match next {
+            .none { break }
+            .some(name) {
+              if is_named(name) {
+                if has(named, name) {
+                  (w, e) = fail(r, .twice(name))
+                  return (w, Result.err(e))
+                }
+                (w, value): (R, Result[RawJson, ReadError]) = Deserialize.read(r)
+                r = w
+                match value {
+                  .err(e) { return (r, Result.err(e)) }
+                  .ok(v) { named = push(named, (name, v)) }
+                }
+              } else {
+                (w, passed) = Reader.unknown(r, name)
+                r = w
+                match passed {
+                  .err(e) { return (r, Result.err(e)) }
+                  .ok(u) { }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+    (r, Result.ok(Members(named: named)))
+  }
+}
+
+fn find(named: List[(str, RawJson)], name: str) -> Option[RawJson] {
+  loop pair in named {
+    match pair {
+      (n, v) { if n == name { return .some(v) } }
+    }
+  }
+  .none
+}
+
+// The text a value is, when it is one.
+fn text_value(raw: RawJson) -> Option[str] ! alloc {
+  got: Result[str, ReadError] = from_json(raw_text(raw))
+  match got {
+    .ok(s) { .some(s) }
+    .err(e) { .none }
+  }
+}
+
+// The first byte of a value, which says what kind it is.
+fn kind(raw: RawJson) -> Byte {
+  s = raw_text(raw)
+  if s.size == 0 { 0 } else { s[0] }
+}
+
+fn structured(raw: RawJson) -> bool {
+  k = kind(raw)
+  k == 123 or k == 91
+}
+
+// A whole number of `Int`: `std.json` refuses a fraction and an exponent.
+fn whole(raw: RawJson) -> Option[Int] ! alloc {
+  got: Result[Int, ReadError] = from_json(raw_text(raw))
+  match got {
+    .ok(n) { .some(n) }
+    .err(e) { .none }
+  }
+}
+
+fn id_of(raw: RawJson) -> Option[Id] ! alloc {
+  k = kind(raw)
+  if k == 110 {
+    .some(.null)
+  } else if k == 34 {
+    match text_value(raw) {
+      .some(t) { .some(.text(t)) }
+      .none { .none }
+    }
+  } else if k == 45 or (k >= 48 and k <= 57) {
+    match whole(raw) {
+      .some(n) { .some(.number(n)) }
+      .none { .none }
+    }
+  } else {
+    .none
+  }
+}
+
+fn version_ok(named: List[(str, RawJson)]) -> bool ! alloc {
+  match find(named, "jsonrpc") {
+    .some(v) {
+      match text_value(v) {
+        .some(t) { t == "2.0" }
+        .none { false }
+      }
+    }
+    .none { false }
+  }
+}
+
+// The failure that an `error` member holds, or none when it is not one.
+fn failure_of(raw: RawJson) -> Option[Failure] ! alloc {
+  if kind(raw) != 123 { return .none }
+  got: Result[Members, ReadError] = from_json(raw_text(raw))
+  match got {
+    .err(e) { .none }
+    .ok(m) {
+      match (find(m.named, "code"), find(m.named, "message")) {
+        (.some(c), .some(t)) {
+          match (whole(c), text_value(t)) {
+            (.some(code), .some(message)) { .some(Failure(code: code, message: message, data: find(m.named, "data"))) }
+            _ { .none }
+          }
+        }
+        _ { .none }
+      }
+    }
+  }
+}
+
+fn message_of(members: Members) -> Result[Message, Failure] ! alloc {
+  named = members.named
+  if not version_ok(named) { return .err(invalid_request()) }
+  method = find(named, "method")
+  id = find(named, "id")
+  result = find(named, "result")
+  error = find(named, "error")
+  match method {
+    .some(m) {
+      if has(named, "result") or has(named, "error") { return .err(invalid_request()) }
+      name = match text_value(m) {
+        .some(t) { t }
+        .none { return .err(invalid_request()) }
+      }
+      params = find(named, "params")
+      match params {
+        .some(p) { if not structured(p) { return .err(invalid_request()) } }
+        .none { }
+      }
+      match id {
+        .none { .ok(.notification(Notification(method: name, params: params))) }
+        .some(i) {
+          match id_of(i) {
+            .some(v) { .ok(.request(Request(id: v, method: name, params: params))) }
+            .none { .err(invalid_request()) }
+          }
+        }
+      }
+    }
+    .none {
+      i = match id {
+        .some(v) { v }
+        .none { return .err(invalid_request()) }
+      }
+      ident = match id_of(i) {
+        .some(v) { v }
+        .none { return .err(invalid_request()) }
+      }
+      match (result, error) {
+        (.some(r), .none) { .ok(.response(Response(id: ident, outcome: .ok(r)))) }
+        (.none, .some(e)) {
+          match failure_of(e) {
+            .some(f) { .ok(.response(Response(id: ident, outcome: .err(f)))) }
+            .none { .err(invalid_request()) }
+          }
+        }
+        _ { .err(invalid_request()) }
+      }
+    }
+  }
+}
+
+// One object, read into a message or the failure to send back.
+fn read_object(text: str) -> Result[Message, Failure] ! alloc {
+  got: Result[Members, ReadError] = from_json(text)
+  match got {
+    .ok(m) { message_of(m) }
+    .err(e) {
+      match e.problem {
+        .malformed { .err(parse_error()) }
+        _ { .err(invalid_request()) }
+      }
+    }
+  }
+}
+
+// The first byte of the text that is no space.
+fn first(text: str) -> Byte {
+  loop b in text {
+    if b != 32 and b != 9 and b != 10 and b != 13 { return b }
+  }
+  0
+}
+
+pub fn read(text: str) -> Result[Received, Failure] ! alloc {
+  k = first(text)
+  if k == 123 {
+    match read_object(text) {
+      .ok(m) { .ok(.one(m)) }
+      .err(f) { .err(f) }
+    }
+  } else if k == 91 {
+    members: Result[List[RawJson], ReadError] = from_json(text)
+    match members {
+      .err(e) { .err(parse_error()) }
+      .ok(ms) {
+        if ms.size == 0 { return .err(invalid_request()) }
+        var read_all: List[Result[Message, Failure]] = []
+        loop one in ms {
+          if kind(one) == 123 {
+            read_all = push(read_all, read_object(raw_text(one)))
+          } else {
+            read_all = push(read_all, .err(invalid_request()))
+          }
+        }
+        .ok(.many(read_all))
+      }
+    }
+  } else {
+    // A value that is no object or array is a message that is none, or no JSON.
+    whole_text: Result[RawJson, ReadError] = raw_json(text)
+    match whole_text {
+      .err(e) { .err(parse_error()) }
+      .ok(raw) { .err(invalid_request()) }
+    }
+  }
+}
+
+fn id_text(id: Id) -> str ! alloc {
+  match id {
+    .number(n) { to_json(n) }
+    .text(t) { to_json(t) }
+    .null { "null" }
+  }
+}
+
+fn params_of(to: take Text, params: Option[RawJson]) -> Text ! alloc {
+  match params {
+    .some(p) { append(append(to, ",\"params\":"), raw_text(p)) }
+    .none { to }
+  }
+}
+
+pub fn write(to: take Text, message: Message) -> Text ! alloc {
+  start = append(to, "\{\"jsonrpc\":\"2.0\"")
+  match message {
+    .request(r) {
+      a = append(append(start, ",\"id\":"), id_text(r.id))
+      b = append(append(a, ",\"method\":"), to_json(r.method))
+      append(params_of(b, r.params), "\}")
+    }
+    .notification(n) {
+      a = append(append(start, ",\"method\":"), to_json(n.method))
+      append(params_of(a, n.params), "\}")
+    }
+    .response(r) {
+      a = append(append(start, ",\"id\":"), id_text(r.id))
+      match r.outcome {
+        .ok(v) { append(append(append(a, ",\"result\":"), raw_text(v)), "\}") }
+        .err(f) {
+          b = append(append(a, ",\"error\":\{\"code\":"), to_json(f.code))
+          c = append(append(b, ",\"message\":"), to_json(f.message))
+          d = match f.data {
+            .some(v) { append(append(c, ",\"data\":"), raw_text(v)) }
+            .none { c }
+          }
+          append(d, "\}\}")
+        }
+      }
+    }
+  }
+}
+
+pub fn write_batch(to: take Text, messages: List[Message]) -> Text ! alloc {
+  var written = append(to, "[")
+  var first = true
+  loop m in messages {
+    if not first { written = append(written, ",") }
+    first = false
+    written = write(written, m)
+  }
+  append(written, "]")
+}
