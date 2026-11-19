@@ -1,7 +1,7 @@
 ---
 type: specification
 title: The Smith compiler
-description: How the compiler is designed. It covers how for expressions and effects are compiled, the compiler's structure and commands, its representation, backends, what an executable depends on, testing, timings, releases, and bootstrap.
+description: How the compiler is designed. It covers how for expressions and effects are compiled, the compiler's structure and commands, its representation, backends, what an executable depends on, testing, timings, the map of an executable, releases, and bootstrap.
 ---
 
 # The Smith compiler
@@ -406,6 +406,15 @@ The time each step takes is measured from the first program, so a slowdown is se
 - After every merge to `main`, the `timings` workflow adds one line to `history.csv` on the `timings` branch and changes no earlier line. Pull requests record nothing. The job is the only one that can write to the repository, and it writes only to that branch. `.github/record-timings.sh` makes the line, and `--header` prints the first line.
 - The first line names the fields: `commit`, `date`, `compiler_build_ms`, `compiler_bytes` (the optimized executable), `test_ms`, `job_ms`, and `programs`. `programs` holds space-separated `<case>/<target>/<field>=<value>` entries, for each file in `bootstrap/tests/cases` that builds and each target the job's machine can build for. The fields are the five stages and `total` as `<stage>_ms`, and `bytes`, and `run_ms` only for the target the machine can run. The entries grow with the cases and targets, so the first line stays the same.
 - To trace a change for the worse, read `history.csv` on the `timings` branch, find the first line where a field jumped, and take its `commit`.
+
+## The map of an executable
+
+The compiler is a tool for agents, and an agent that makes a program faster must see where its cost goes. An executable holds no names and no table of lines, which keeps it small, so the compiler writes them beside it: `smith build --map` writes [the map](language/command-line.md#the-map), and the executable is the same to the byte with it and without it.
+
+- **Each instruction of the scalar form holds the place in the source it was lowered from, and the function that place is written in.** Every pass keeps both: an instruction that takes the place of others holds the place of the first of them, and inlining keeps the callee's. A target gives each instruction it emits the place of the instruction of the form it emits it for.
+- **The map is made by `emit` from what it has laid out,** so it costs a build without `--map` nothing but holding the places.
+- **Code the compiler adds, which no function of a program was written for, is named for what it does:** `<start>` for what runs before `main`, and one name for each piece of the runtime.
+- The map is this compiler's own form and no standard one. Symbol tables and debugging records inside the executable, which other tools read, are not built.
 
 ## Releases
 
