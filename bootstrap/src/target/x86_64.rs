@@ -4,6 +4,7 @@
 
 use super::alloc::{self, Home, Registers};
 use super::frame::{self, PAGE, call_area, round_up, size};
+use super::indexed::Folded;
 use super::moves::{self, Move, Step};
 use crate::scalar::{
     Binary, Compare, Constant, End, Function, Op, Program, Stream, System as Call, Value,
@@ -63,6 +64,8 @@ pub enum Place {
     Frame(u32),
     /// `[reg]`.
     At(Reg),
+    /// `[base + index * scale]`, with a scale of 1, 2, 4, or 8.
+    Indexed { base: Reg, index: Reg, scale: u8 },
 }
 
 /// Machine code with labels, each resolved once the code and its data are
@@ -175,7 +178,7 @@ impl Asm {
     }
 
     fn store_imm_bytes(&mut self, to: Place, value: u64, width: u32) -> bool {
-        let rex = Self::base(to) >> 3;
+        let rex = Self::rex_xb(to);
         match width {
             1 => {
                 if rex != 0 {
@@ -386,7 +389,7 @@ impl Asm {
     /// `imul r, [place], imm32` 0x69 with an immediate after it.
     fn with_memory(&mut self, opcode: u8, reg: Reg, place: Place) {
         self.writing(if opcode == 0x69 { Some(reg) } else { None }, |a| {
-            a.bytes(&[0x48 | (reg.0 >> 3) << 2 | Self::base(place) >> 3, opcode]);
+            a.bytes(&[0x48 | (reg.0 >> 3) << 2 | Self::rex_xb(place), opcode]);
             a.place(reg, place);
         });
     }
@@ -502,14 +505,24 @@ impl Asm {
                 5 => self.bytes(&[0x40 | reg | 5, 0]),
                 n => self.bytes(&[reg | n]),
             },
+            // rbp and r13 as a base take a displacement of 0.
+            Place::Indexed { base, index, scale } => {
+                let sib = (scale.trailing_zeros() as u8) << 6 | (index.0 & 7) << 3 | (base.0 & 7);
+                match base.0 & 7 {
+                    5 => self.bytes(&[0x44 | reg, sib, 0]),
+                    _ => self.bytes(&[0x04 | reg, sib]),
+                }
+            }
         }
     }
 
-    /// The register the place is based on, as a number, for the REX prefix.
-    fn base(place: Place) -> u8 {
+    /// The bits of the REX prefix that say the place's base register, and its
+    /// index register, are one of the last eight: `B` is 1, `X` is 2.
+    fn rex_xb(place: Place) -> u8 {
         match place {
             Place::Frame(_) => 0,
-            Place::At(base) => base.0,
+            Place::At(base) => base.0 >> 3,
+            Place::Indexed { base, index, .. } => (base.0 >> 3) | ((index.0 >> 3) << 1),
         }
     }
 
@@ -517,9 +530,8 @@ impl Asm {
     /// 64 bits as its sign says when `signed` and with zeros when not.
     pub fn load(&mut self, rd: Reg, width: u32, signed: bool, from: Place) {
         self.writing(Some(rd), |a| {
-            let rex = (u8::from(width == 8 || signed) << 3)
-                | ((rd.0 >> 3) << 2)
-                | (Self::base(from) >> 3);
+            let rex =
+                (u8::from(width == 8 || signed) << 3) | ((rd.0 >> 3) << 2) | (Self::rex_xb(from));
             if rex != 0 {
                 a.bytes(&[0x40 | rex]);
             }
@@ -542,7 +554,7 @@ impl Asm {
             if width == 2 {
                 a.bytes(&[0x66]);
             }
-            let rex = (u8::from(width == 8) << 3) | ((rs.0 >> 3) << 2) | (Self::base(to) >> 3);
+            let rex = (u8::from(width == 8) << 3) | ((rs.0 >> 3) << 2) | (Self::rex_xb(to));
             // The low byte of rsi, rdi, rbp, and rsp is reached with a prefix.
             if rex != 0 || (width == 1 && rs.0 >= 4) {
                 a.bytes(&[0x40 | rex]);
@@ -897,6 +909,8 @@ struct Writer<'a, S> {
     /// where it keeps what they held.
     saved: Vec<(Reg, u32)>,
     labels: Vec<usize>,
+    /// Which instructions are folded into the store that reads them.
+    folded: Vec<Vec<Folded>>,
     /// Which blocks end with a choice between two jumps on a comparison that
     /// is the last instruction of the block and that nothing else reads. That
     /// comparison is not made into a value: the branch tests it.
@@ -947,6 +961,7 @@ fn function<S: System>(
     let labels = f.blocks.iter().map(|_| asm.label()).collect();
     let branches_on_compare = super::branch::on_compare(f);
     let before_choice = super::branch::before_choice(f);
+    let folded = super::indexed::stores(f, &constants, &held, |_, _| true);
     let w = Writer::<S> {
         program,
         f,
@@ -959,6 +974,7 @@ fn function<S: System>(
         leave,
         saved,
         labels,
+        folded,
         branches_on_compare,
         before_choice,
         constants,
@@ -987,6 +1003,14 @@ fn function<S: System>(
         asm.bind(w.labels[b]);
         let made = block.instructions.len() - usize::from(w.branches_on_compare[b]);
         for (i, instruction) in block.instructions[..made].iter().enumerate() {
+            match w.folded[b][i] {
+                Folded::Skipped => continue,
+                Folded::Store { base, index, scale } => {
+                    w.indexed_store(asm, instruction, base, index, scale);
+                    continue;
+                }
+                Folded::No => {}
+            }
             if w.before_choice[b][i] {
                 continue;
             }
@@ -1274,6 +1298,31 @@ impl<S: System> Writer<'_, S> {
         self.read_into(asm, t, *otherwise);
         asm.cmov(cond, t, then);
         self.finish(asm, choose.results[0], t, true);
+    }
+
+    /// A store whose address is a base and an index times a scale, as one
+    /// instruction. The two instructions that made the address are not made.
+    fn indexed_store(
+        &self,
+        asm: &mut Asm,
+        store: &crate::scalar::Instruction,
+        base: Value,
+        index: Value,
+        scale: u8,
+    ) {
+        let Op::Store { ty, value, .. } = &store.op else {
+            unreachable!("a folded instruction is a store");
+        };
+        let base = self.read(asm, RAX, base);
+        let index = self.read(asm, RDX, index);
+        let place = Place::Indexed { base, index, scale };
+        match self.at[value.0] {
+            Loc::Imm(n) => self.store_imm(asm, place, n, size(*ty), RCX),
+            _ => {
+                let value = self.read(asm, RCX, *value);
+                asm.store(place, value, size(*ty));
+            }
+        }
     }
 
     fn instruction(&self, asm: &mut Asm, results: &[Value], operation: &Op) {

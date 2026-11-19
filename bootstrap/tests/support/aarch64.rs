@@ -329,6 +329,13 @@ impl Machine {
         } else if w & 0xffe0_fc00 == 0x9b40_7c00 {
             let product = self.get(rn) as i64 as i128 * self.get(rm) as i64 as i128;
             self.set(rd, (product >> 64) as u64);
+        } else if w & 0x3fe0_ec00 == 0x3820_6800 {
+            // str xt, [xn, xm, lsl #log2(size)], or with no shift.
+            let size = 1u64 << (w >> 30);
+            let by = if w >> 12 & 1 == 1 { size.trailing_zeros() } else { 0 };
+            let address = self.get_sp(rn) + (self.get(rm) << by);
+            let value = self.get(rd);
+            self.write(address, size, value);
         } else if w & 0x3f00_0000 == 0x3900_0000 {
             let size = 1u64 << (w >> 30);
             let address = self.get_sp(rn) + (((w >> 10) & 0xfff) as u64) * size;
