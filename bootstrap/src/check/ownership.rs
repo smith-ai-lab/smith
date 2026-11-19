@@ -182,6 +182,32 @@ enum Flow<'e> {
     Taken(&'e str),
 }
 
+/// The most rounds a loop's body is read, which is far more than it needs.
+const ROUNDS: usize = 1000;
+
+/// Whether two states know the same: the same places gone, and the same
+/// values held.
+fn same(a: &State, b: &State) -> bool {
+    match (a, b) {
+        (None, None) => true,
+        (Some(a), Some(b)) => {
+            let held = |x: &Moved, y: &Moved| {
+                x.held.iter().all(|h| {
+                    (y.held.iter())
+                        .any(|g| g.name == h.name && g.pos == h.pos && g.fields == h.fields)
+                })
+            };
+            let gone = |x: &Moved, y: &Moved| {
+                x.gone
+                    .iter()
+                    .all(|(p, _)| y.gone.iter().any(|(q, _)| p == q))
+            };
+            held(a, b) && held(b, a) && gone(a, b) && gone(b, a)
+        }
+        _ => false,
+    }
+}
+
 /// The state where two paths meet: a place is gone if it is gone on either.
 fn join(a: State, b: State) -> State {
     match (a, b) {
@@ -867,13 +893,25 @@ impl<'a> Walk<'a> {
         let before: Vec<Held> = entry.as_ref().map(|m| m.held.clone()).unwrap_or_default();
         let reused = self.reused.clone();
         self.breaks.push(Vec::new());
-        // The body is read again with what each round gave away or left
-        // held, as it is read again when the loop goes round. A value that a
-        // round made is dropped by the next round that assigns it, and a
-        // third round is the one that shows it.
+        // The body is read again, from what is known at the head of the loop
+        // when the loop goes round, until that stops changing. What is known
+        // is a set of places given away and a set of values held, `join` only
+        // adds to them, and each is among the names, fields and places of the
+        // function, so it stops growing after a number of rounds bounded by
+        // their count. The limit is far above that, so that a mistake in
+        // `join` is a failure and not a loop that never ends. A mistake is
+        // reported once, however many rounds read it. A value is known by the
+        // statement that made it and not by where it has moved to, so a chain
+        // of names that a round moves a value along is known after one round,
+        // and no program built for this has needed more than three.
         let mut rounds: Vec<State> = Vec::new();
         let mut head = st.clone();
-        for _ in 0..3 {
+        loop {
+            assert!(
+                rounds.len() < ROUNDS,
+                "what is known at a loop's head never settles"
+            );
+            let known = self.reused.len();
             let mut round = head.clone();
             if let (Some(range), Some(_)) = (&l.range, &round) {
                 self.bind(&mut round, &range.name, None);
@@ -882,8 +920,14 @@ impl<'a> Walk<'a> {
                 self.bind(&mut round, &over.name, Some(element.to_string()));
             }
             self.block(&mut round, &l.body, Flow::Lend);
-            head = join(head, round.clone());
+            let wider = join(head.clone(), round.clone());
             rounds.push(round);
+            // The names used after they were given away are known too, as a
+            // loop in the body reads them to tell what it is the first to find.
+            if same(&wider, &head) && self.reused.len() == known {
+                break;
+            }
+            head = wider;
         }
         let mut after: State = None;
         for exit in self.breaks.pop().unwrap_or_default() {
