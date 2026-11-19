@@ -74,6 +74,10 @@ pub const ONCE: &[Test] = &[
         a_range_is_taken_in_every_place_a_type_is_needed,
     ),
     (
+        "a_minus_before_a_number_gives_the_range_of_its_negation_and_groups_tighter_than_a_product",
+        a_minus_before_a_number_gives_the_range_of_its_negation_and_groups_tighter_than_a_product,
+    ),
+    (
         "a_sum_a_difference_and_a_product_give_the_exact_range_and_no_narrower_one",
         a_sum_a_difference_and_a_product_give_the_exact_range_and_no_narrower_one,
     ),
@@ -667,6 +671,44 @@ fn a_range_is_taken_in_every_place_a_type_is_needed() {
                 ));
                 assert_eq!(stdout(&wider), format!("{low}\n"), "for\n{wider}");
             }
+        },
+    );
+}
+
+/// `-x` of a range is the range from the negation of its greatest to the
+/// negation of its least, which a result that states it holds with nothing
+/// proven and none that leaves out an end holds, and it groups tighter than
+/// `*` and `+`, so `-a * b` is `(-a) * b` and `c - -a` is `c + a`.
+fn a_minus_before_a_number_gives_the_range_of_its_negation_and_groups_tighter_than_a_product() {
+    generate::check(
+        4011,
+        40,
+        |g: &mut Gen| (small_range(g), g.below(40) as i128 - 20),
+        |&((low, high), k)| {
+            let program = |result_low: i128, result_high: i128| {
+                with_header(format!(
+                    "fn f(a: {low}..{}) -> {result_low}..{} {{ -a }}\n\nfn main() ! console, alloc {{\n  print(\"{{f({low})}} {{f({high})}}\")\n}}\n",
+                    high + 1,
+                    result_high + 1
+                ))
+            };
+            let exact = program(-high, -low);
+            assert_eq!(stdout(&exact), format!("{} {}\n", -low, -high), "for\n{exact}");
+            if low < high {
+                for narrower in [program(-high + 1, -low), program(-high, -low - 1)] {
+                    assert!(!compiles(&narrower), "accepted\n{narrower}");
+                }
+            }
+            // It groups tighter than `*`, `+`, and `-`.
+            let grouped = with_header(format!(
+                "fn main() ! console, alloc {{\n  a: {low}..{} = {low}\n  print(\"{{-a * {k}}} {{{k} - -a}} {{-a + {k}}} {{-(a + {k})}}\")\n}}\n",
+                high + 1
+            ));
+            assert_eq!(
+                stdout(&grouped),
+                format!("{} {} {} {}\n", -low * k, k + low, -low + k, -(low + k)),
+                "for\n{grouped}"
+            );
         },
     );
 }

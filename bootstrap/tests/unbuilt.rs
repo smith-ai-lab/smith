@@ -77,11 +77,6 @@ const UNBUILT: &[Unbuilt] = &[
         parsed: true,
     },
     Unbuilt {
-        declares: "fn u{i}(x: Int) -> Int { @-x }\n",
-        call: "u{i}(1)",
-        parsed: true,
-    },
-    Unbuilt {
         declares: "fn u{i}() -> Int { (1)@(2) }\n",
         call: "u{i}()",
         parsed: true,
@@ -113,7 +108,7 @@ const UNBUILT: &[Unbuilt] = &[
     },
     // In a block inside a function, and in two blocks of one statement.
     Unbuilt {
-        declares: "fn u{i}(c: bool) -> Int {\n  if c {\n    y = 2\n    @-y\n  } else {\n    @1.5\n  }\n}\n",
+        declares: "fn u{i}(c: bool) -> Int {\n  if c {\n    @1.5\n  } else {\n    @1.5\n  }\n}\n",
         call: "u{i}(true)",
         parsed: true,
     },
@@ -124,7 +119,7 @@ const UNBUILT: &[Unbuilt] = &[
     },
     // A name a statement that is not built would bind is still bound.
     Unbuilt {
-        declares: "fn u{i}() -> Int {\n  a = 1\n  z = @-a\n  b = @1.5\n  (c, d) = @1.5\n  wrapping_add(z, wrapping_add(b, wrapping_add(c, d)))\n}\n",
+        declares: "fn u{i}() -> Int {\n  a = 1\n  z = a\n  b = @1.5\n  (c, d) = @1.5\n  wrapping_add(z, wrapping_add(b, wrapping_add(c, d)))\n}\n",
         call: "u{i}()",
         parsed: true,
     },

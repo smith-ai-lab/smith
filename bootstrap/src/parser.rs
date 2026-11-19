@@ -2644,6 +2644,23 @@ impl Parser<'_> {
                 let operand = self.operand()?;
                 return Ok(split(pos, operand));
             }
+            // `-x` is the number that `0 - x` is, so its range is the negation of
+            // the range of `x`.
+            Tok::Punct("-") => {
+                self.bump();
+                let operand = self.operand()?;
+                return Ok(Expr::Arith {
+                    op: ArithOp::Sub,
+                    left: Box::new(Expr::Number {
+                        text: "0".to_string(),
+                        magnitude: 0,
+                        negative: false,
+                        pos,
+                    }),
+                    right: Box::new(operand),
+                    op_pos: pos,
+                });
+            }
             Tok::Punct("(") => {
                 let mut items = self.list(Self::expr)?;
                 if items.len() == 1 {
@@ -2656,7 +2673,6 @@ impl Parser<'_> {
             Tok::Punct("[") => self.list_literal(pos)?,
             tok if starts_expression(tok) => {
                 let feature = match tok {
-                    Tok::Punct("-") => "the operator `-`",
                     Tok::Keyword(word) => {
                         return Err(Error::unsupported(pos, &format!("`{word}`")));
                     }
