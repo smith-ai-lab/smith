@@ -103,6 +103,7 @@ The files are a tour. Read them in the order below: each one uses only what the 
 - [dependencies.md](dependencies.md): outside code vendored into the project as ordinary modules, listed with its source and hash in `project.smith`, and checked by the build without the network.
 - [build-steps.md](build-steps.md): a function listed under `generate` in `project.smith`, which the build runs before compiling to write an ordinary source file.
 - [project-tasks.md](project-tasks.md): a public function in `project.smith`, run by name, whose parameters are its command-line flags and whose effects say what it may do.
+- [deployments.md](deployments.md): a public function of `project.smith` that installs the handlers that answer a program's effects and calls `main`, run by name and where a built executable starts.
 - [tests.md](tests.md): tests found by convention, a function named `test_` that returns a `Result`, the `expect` check, and a test file as an ordinary module.
 - [random.md](random.md): the `Random` trait, which gives a value of a type that is good at finding mistakes, who has it without writing it, and how to take it away or replace it.
 - [properties.md](properties.md): a test that takes a `Key`, or typed parameters, which runs many times on random inputs, is shrunk to the smallest failure, and is proved first when the checker can.

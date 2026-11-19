@@ -73,7 +73,7 @@ serving/
       parse.smith
 ```
 
-`project.smith` holds the package, its vendored folders, its build steps, and its tasks. `model/gpt_test.smith` holds the tests of `model/gpt.smith`, as [Tests](tests.md) describes.
+`project.smith` holds the package, its vendored folders, its build steps, and its tasks. A task that installs handlers and calls `main` is a [deployment](deployments.md). `model/gpt_test.smith` holds the tests of `model/gpt.smith`, as [Tests](tests.md) describes.
 
 ## The forms
 

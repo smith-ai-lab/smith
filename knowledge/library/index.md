@@ -18,6 +18,7 @@ The modules of the standard library, one file each, named for the module. A modu
 - [describe.md](describe.md): `Describe`, by which a type says what it is made of with no value in hand, each part with its comment, and `Describer`, which a format for descriptions has.
 - [json.md](json.md): `std.json`, which writes a value that has `Serialize` as JSON text and reads JSON text into a value that has `Deserialize`, the settings for how a case and a field's name look, and `RawJson`.
 - [http.md](http.md): `std.http`, with which a program answers HTTP requests with plain functions, and `at`, which puts a server of messages at a path.
+- [cloudflare.md](cloudflare.md): `std.cloudflare`, with which a program runs as a Cloudflare Worker: `durable`, which answers `store`, and `worker`, which writes what Cloudflare needs beside a built module.
 - [html.md](html.md): `std.html`, with which a page is written as calls of plain functions that write it as they run, with every text escaped.
 - [mcp.md](mcp.md): `std.mcp`, with which a program is a Model Context Protocol server whose tools are plain functions described by their comments and parameters.
 - [secret.md](secret.md): `Secret[T]`, a value the time a program takes must not depend on, which cannot steer a branch or be an index.
