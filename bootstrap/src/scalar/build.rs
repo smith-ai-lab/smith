@@ -1,8 +1,8 @@
 //! Builds a function of the scalar form one instruction at a time.
 
 use super::{
-    Binary, Bits, Block, Compare, Constant, End, Function, Instruction, Jump, Op, System, Type,
-    Value,
+    Binary, Bits, Block, Compare, Constant, End, FloatBinary, FloatBits, FloatCompare, Function,
+    Instruction, Jump, Op, System, Type, Value,
 };
 
 /// A function being built. Its first block is where it starts.
@@ -72,6 +72,37 @@ impl Builder {
     /// An integer of the size that holds the bits `n`.
     pub fn int(&mut self, bits: Bits, n: u64) -> Value {
         self.emit(Op::Constant(Constant::Int(n)), &[Type::Int(bits)])[0]
+    }
+
+    /// A float of the size that holds the bits `n`.
+    pub fn float(&mut self, bits: FloatBits, n: u64) -> Value {
+        self.emit(Op::Constant(Constant::Float(n)), &[Type::Float(bits)])[0]
+    }
+
+    pub fn float_binary(&mut self, op: FloatBinary, a: Value, b: Value) -> Value {
+        let ty = self.types[a.0];
+        self.emit(Op::FloatBinary { op, a, b }, &[ty])[0]
+    }
+
+    pub fn float_negate(&mut self, value: Value) -> Value {
+        let ty = self.types[value.0];
+        self.emit(Op::FloatNegate(value), &[ty])[0]
+    }
+
+    pub fn float_compare(&mut self, op: FloatCompare, a: Value, b: Value) -> Value {
+        self.emit(Op::FloatCompare { op, a, b }, &[Type::Int(Bits::B8)])[0]
+    }
+
+    pub fn float_from_int(&mut self, signed: bool, value: Value, to: FloatBits) -> Value {
+        self.emit(Op::FloatFromInt { signed, value }, &[Type::Float(to)])[0]
+    }
+
+    pub fn int_from_float(&mut self, signed: bool, value: Value, to: Bits) -> Value {
+        self.emit(Op::IntFromFloat { signed, value }, &[Type::Int(to)])[0]
+    }
+
+    pub fn float_resize(&mut self, value: Value, to: FloatBits) -> Value {
+        self.emit(Op::FloatResize(value), &[Type::Float(to)])[0]
     }
 
     pub fn null(&mut self) -> Value {

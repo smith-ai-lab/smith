@@ -18,7 +18,7 @@
 
 use std::collections::HashMap;
 
-use super::eval::{bits_of, mask};
+use super::eval::{bits_of, float_mask, mask};
 use super::graph::{self, jumps};
 use super::{Constant, Function, Op, Program, Type, Value};
 
@@ -40,6 +40,12 @@ fn pure(op: &Op) -> bool {
         Op::Constant(_)
             | Op::Binary { .. }
             | Op::Compare { .. }
+            | Op::FloatBinary { .. }
+            | Op::FloatNegate(_)
+            | Op::FloatCompare { .. }
+            | Op::FloatFromInt { .. }
+            | Op::IntFromFloat { .. }
+            | Op::FloatResize(_)
             | Op::Widen { .. }
             | Op::Narrow(_)
             | Op::Choose { .. }
@@ -74,8 +80,12 @@ fn shared(f: &Function) -> Function {
                     }
                     let ty = f.types[result.0];
                     let mut op = super::inline::renamed(&instruction.op, &|v| sub[v.0]);
-                    if let (Op::Constant(Constant::Int(n)), Type::Int(_)) = (&mut op, ty) {
-                        *n &= mask(bits_of(ty));
+                    match (&mut op, ty) {
+                        (Op::Constant(Constant::Int(n)), Type::Int(_)) => *n &= mask(bits_of(ty)),
+                        (Op::Constant(Constant::Float(n)), Type::Float(bits)) => {
+                            *n &= float_mask(bits)
+                        }
+                        _ => {}
                     }
                     match first.get(&(op.clone(), ty)) {
                         Some(&earlier) => sub[result.0] = earlier,

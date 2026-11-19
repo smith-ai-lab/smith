@@ -96,6 +96,7 @@ fn function_of(program: &Program, f: &Function) -> Result<(), Why> {
                     };
                     let fits = match c {
                         Constant::Int(_) => matches!(f.types[result.0], Type::Int(_)),
+                        Constant::Float(_) => matches!(f.types[result.0], Type::Float(_)),
                         Constant::Null => f.types[result.0] == Type::Address,
                         Constant::Data(t) => {
                             if *t >= program.data.len() {
@@ -139,6 +140,7 @@ fn function_of(program: &Program, f: &Function) -> Result<(), Why> {
                         }
                         // The only arithmetic on an address moves it by a
                         // number of bytes.
+                        Type::Float(_) => return Err(Why::WrongType(result)),
                         Type::Address => {
                             if !matches!(
                                 instruction.op,
@@ -183,6 +185,78 @@ fn function_of(program: &Program, f: &Function) -> Result<(), Why> {
                     }
                     used(a, i, ty)?;
                     used(b, i, ty)?;
+                }
+                Op::FloatBinary { a, b, .. } => {
+                    let [result] = instruction.results[..] else {
+                        return Err(Why::WrongCount);
+                    };
+                    let ty = f.types[result.0];
+                    if !matches!(ty, Type::Float(_)) {
+                        return Err(Why::WrongType(result));
+                    }
+                    used(a, i, ty)?;
+                    used(b, i, ty)?;
+                }
+                Op::FloatNegate(value) => {
+                    let [result] = instruction.results[..] else {
+                        return Err(Why::WrongCount);
+                    };
+                    let ty = f.types[result.0];
+                    if !matches!(ty, Type::Float(_)) {
+                        return Err(Why::WrongType(result));
+                    }
+                    used(value, i, ty)?;
+                }
+                Op::FloatCompare { a, b, .. } => {
+                    let [result] = instruction.results[..] else {
+                        return Err(Why::WrongCount);
+                    };
+                    if f.types[result.0] != Type::Int(Bits::B8) {
+                        return Err(Why::WrongType(result));
+                    }
+                    let ty = f.types.get(a.0).copied().ok_or(Why::Missing)?;
+                    if !matches!(ty, Type::Float(_)) {
+                        return Err(Why::WrongType(*a));
+                    }
+                    used(a, i, ty)?;
+                    used(b, i, ty)?;
+                }
+                Op::FloatFromInt { value, .. } => {
+                    let [result] = instruction.results[..] else {
+                        return Err(Why::WrongCount);
+                    };
+                    if !matches!(f.types[result.0], Type::Float(_)) {
+                        return Err(Why::WrongType(result));
+                    }
+                    let ty = f.types.get(value.0).copied().ok_or(Why::Missing)?;
+                    if !matches!(ty, Type::Int(_)) {
+                        return Err(Why::WrongType(*value));
+                    }
+                    used(value, i, ty)?;
+                }
+                Op::IntFromFloat { value, .. } => {
+                    let [result] = instruction.results[..] else {
+                        return Err(Why::WrongCount);
+                    };
+                    if !matches!(f.types[result.0], Type::Int(_)) {
+                        return Err(Why::WrongType(result));
+                    }
+                    let ty = f.types.get(value.0).copied().ok_or(Why::Missing)?;
+                    if !matches!(ty, Type::Float(_)) {
+                        return Err(Why::WrongType(*value));
+                    }
+                    used(value, i, ty)?;
+                }
+                Op::FloatResize(value) => {
+                    let [result] = instruction.results[..] else {
+                        return Err(Why::WrongCount);
+                    };
+                    let to = f.types[result.0];
+                    let ty = f.types.get(value.0).copied().ok_or(Why::Missing)?;
+                    if !matches!(to, Type::Float(_)) || !matches!(ty, Type::Float(_)) || to == ty {
+                        return Err(Why::WrongType(result));
+                    }
+                    used(value, i, ty)?;
                 }
                 Op::Widen { value, .. } | Op::Narrow(value) => {
                     let [result] = instruction.results[..] else {

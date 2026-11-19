@@ -73,12 +73,30 @@ impl Bits {
     }
 }
 
+/// How many bits a float has.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum FloatBits {
+    F32,
+    F64,
+}
+
+impl FloatBits {
+    pub fn count(self) -> u32 {
+        match self {
+            FloatBits::F32 => 32,
+            FloatBits::F64 => 64,
+        }
+    }
+}
+
 /// What a value is, which also says its size.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Type {
     /// An integer. Whether it is signed belongs to the operation that
     /// reads it, not to the value.
     Int(Bits),
+    /// A float of 32 or 64 bits, as IEEE 754 says.
+    Float(FloatBits),
     /// An address in the program's memory.
     Address,
 }
@@ -88,6 +106,7 @@ impl Type {
     pub fn bytes(self) -> u64 {
         match self {
             Type::Int(bits) => u64::from(bits.count() / 8),
+            Type::Float(bits) => u64::from(bits.count() / 8),
             Type::Address => 8,
         }
     }
@@ -127,6 +146,8 @@ pub enum Stream {
 pub enum Constant {
     /// An integer, which is the number's bits, in the value's width.
     Int(u64),
+    /// A float: the bits of the number, in the value's width.
+    Float(u64),
     /// The address that holds nothing.
     Null,
     /// The address of the first byte of one of the program's texts, by its
@@ -199,6 +220,42 @@ pub enum Compare {
     LessS,
 }
 
+/// What an instruction does with two floats of the same size. Every one gives
+/// a float of that size, rounded to the nearest, ties to even.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum FloatBinary {
+    Add,
+    Sub,
+    Mul,
+    Div,
+}
+
+/// What an instruction asks of two floats of the same size. It gives an
+/// integer of 8 bits that is 1 if it is so and 0 if it is not. A float that is
+/// not a number is neither below, above, nor equal to any, so every one of
+/// these but `NotEqual` is 0 when either is not a number, and `NotEqual` is 1.
+/// `0.0` and `-0.0` are equal.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum FloatCompare {
+    Equal,
+    NotEqual,
+    Less,
+    LessEqual,
+    Greater,
+    GreaterEqual,
+}
+
+impl FloatCompare {
+    pub const ALL: [FloatCompare; 6] = [
+        FloatCompare::Equal,
+        FloatCompare::NotEqual,
+        FloatCompare::Less,
+        FloatCompare::LessEqual,
+        FloatCompare::Greater,
+        FloatCompare::GreaterEqual,
+    ];
+}
+
 /// What an instruction does.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum Op {
@@ -225,6 +282,35 @@ pub enum Op {
         a: Value,
         b: Value,
     },
+    /// `a + b`, `a - b`, `a * b`, or `a / b` of two floats of one size. No
+    /// product is fused with a sum.
+    FloatBinary {
+        op: FloatBinary,
+        a: Value,
+        b: Value,
+    },
+    /// The float with its sign bit flipped, whatever it is, so that the
+    /// negation of zero is zero of the other sign.
+    FloatNegate(Value),
+    FloatCompare {
+        op: FloatCompare,
+        a: Value,
+        b: Value,
+    },
+    /// The float nearest the integer, which is read as signed or as unsigned.
+    FloatFromInt {
+        signed: bool,
+        value: Value,
+    },
+    /// The integer the float is cut to, which is read as signed or as
+    /// unsigned: the float without its fraction when that fits, the least or
+    /// the greatest integer when it does not, and 0 when it is not a number.
+    IntFromFloat {
+        signed: bool,
+        value: Value,
+    },
+    /// The float of the size of the result that is nearest the float.
+    FloatResize(Value),
     /// Gives an integer with more bits that stands for the same number,
     /// read as signed or as unsigned.
     Widen {
@@ -280,10 +366,17 @@ impl Op {
         values.clear();
         match self {
             Op::Constant(_) => {}
-            Op::Binary { a, b, .. } | Op::Compare { a, b, .. } | Op::Overflows { a, b, .. } => {
-                values.extend([*a, *b])
-            }
-            Op::Widen { value, .. } | Op::Narrow(value) => values.push(*value),
+            Op::Binary { a, b, .. }
+            | Op::Compare { a, b, .. }
+            | Op::Overflows { a, b, .. }
+            | Op::FloatBinary { a, b, .. }
+            | Op::FloatCompare { a, b, .. } => values.extend([*a, *b]),
+            Op::Widen { value, .. }
+            | Op::Narrow(value)
+            | Op::FloatNegate(value)
+            | Op::FloatFromInt { value, .. }
+            | Op::IntFromFloat { value, .. }
+            | Op::FloatResize(value) => values.push(*value),
             Op::Choose {
                 on,
                 then,

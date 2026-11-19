@@ -501,6 +501,7 @@ impl Lowering<'_> {
     fn bits(&self, v: Value) -> Bits {
         match self.f.types[v.0] {
             Type::Int(bits) => bits,
+            Type::Float(_) => unreachable!("wasm does not build floats yet"),
             Type::Address => panic!("an address where an integer is needed"),
         }
     }
@@ -609,9 +610,18 @@ impl Lowering<'_> {
         let f = self.f;
         let results = &instruction.results;
         match &instruction.op {
+            Op::FloatBinary { .. }
+            | Op::FloatNegate(_)
+            | Op::FloatCompare { .. }
+            | Op::FloatFromInt { .. }
+            | Op::IntFromFloat { .. }
+            | Op::FloatResize(_) => unreachable!("wasm does not build floats yet"),
             Op::Constant(constant) => {
                 let ty = f.types[results[0].0];
                 match (constant, ty) {
+                    (Constant::Float(_), _) | (Constant::Int(_), Type::Float(_)) => {
+                        unreachable!("wasm does not build floats yet")
+                    }
                     (Constant::Int(n), Type::Int(Bits::B64)) => self.code.i64_const(*n as i64),
                     (Constant::Int(n), Type::Int(bits)) => {
                         let mask = if bits == Bits::B32 {
@@ -632,6 +642,7 @@ impl Lowering<'_> {
             }
             Op::Binary { op, a, b } => {
                 match f.types[results[0].0] {
+                    Type::Float(_) => unreachable!("wasm does not build floats yet"),
                     Type::Address => {
                         self.get(*a);
                         self.get_wrapped(*b);
@@ -693,6 +704,7 @@ impl Lowering<'_> {
                     Type::Int(Bits::B16) => self.code.memory(I32_LOAD16_U),
                     Type::Int(Bits::B32) => self.code.memory(I32_LOAD),
                     Type::Int(Bits::B64) => self.code.memory(I64_LOAD),
+                    Type::Float(_) => unreachable!("wasm does not build floats yet"),
                     Type::Address => {
                         self.code.memory(I64_LOAD);
                         self.code.op(I32_WRAP_I64);
@@ -708,6 +720,7 @@ impl Lowering<'_> {
                     Type::Int(Bits::B16) => self.code.memory(I32_STORE16),
                     Type::Int(Bits::B32) => self.code.memory(I32_STORE),
                     Type::Int(Bits::B64) => self.code.memory(I64_STORE),
+                    Type::Float(_) => unreachable!("wasm does not build floats yet"),
                     Type::Address => {
                         self.code.op(I64_EXTEND_I32_U);
                         self.code.memory(I64_STORE);

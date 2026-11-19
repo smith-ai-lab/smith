@@ -1,7 +1,10 @@
 //! Runs a program in the scalar form, in-process. What it gives is what the
 //! program does.
 
-use super::{Binary, Bits, Compare, Constant, End, Jump, Op, Program, Stream, System, Type, Value};
+use super::{
+    Binary, Bits, Compare, Constant, End, FloatBinary, FloatBits, FloatCompare, Jump, Op, Program,
+    Stream, System, Type, Value,
+};
 
 /// What a program did: what it wrote to standard output, and the status it
 /// ended with.
@@ -351,13 +354,147 @@ pub(super) fn narrow(to: Bits, n: u64) -> u64 {
 pub(super) fn bits_of(ty: Type) -> Bits {
     match ty {
         Type::Int(bits) => bits,
+        Type::Float(_) => panic!("a float where an integer is needed"),
         Type::Address => panic!("an address where an integer is needed"),
+    }
+}
+
+/// How many bits a float type has.
+pub(super) fn float_bits_of(ty: Type) -> FloatBits {
+    match ty {
+        Type::Float(bits) => bits,
+        _ => panic!("what is not a float where a float is needed"),
+    }
+}
+
+/// The one float that is not a number which every result that is not a number
+/// is: positive, quiet, with no payload. The sign and the payload of such a
+/// result are the chip's, so no result holds more than that.
+fn not_a_number(bits: FloatBits) -> u64 {
+    match bits {
+        FloatBits::F32 => 0x7fc0_0000,
+        FloatBits::F64 => 0x7ff8_0000_0000_0000,
+    }
+}
+
+/// The bits of a float of the size, in a word.
+pub(super) fn float_mask(bits: FloatBits) -> u64 {
+    match bits {
+        FloatBits::F32 => u64::from(u32::MAX),
+        FloatBits::F64 => u64::MAX,
+    }
+}
+
+/// The float the bits stand for, as a number of 64 bits, which holds a float
+/// of 32 bits exactly.
+fn float_value(bits: FloatBits, n: u64) -> f64 {
+    match bits {
+        FloatBits::F32 => f64::from(f32::from_bits(n as u32)),
+        FloatBits::F64 => f64::from_bits(n),
+    }
+}
+
+/// The bits of a float of the size that is a result: the one float that is not
+/// a number when it is not.
+fn float_result_f32(x: f32) -> u64 {
+    if x.is_nan() {
+        not_a_number(FloatBits::F32)
+    } else {
+        u64::from(x.to_bits())
+    }
+}
+
+fn float_result_f64(x: f64) -> u64 {
+    if x.is_nan() {
+        not_a_number(FloatBits::F64)
+    } else {
+        x.to_bits()
+    }
+}
+
+/// What `op` gives for two floats of the size, as the bits of a float of that
+/// size.
+pub(super) fn float_binary(op: FloatBinary, bits: FloatBits, x: u64, y: u64) -> u64 {
+    match bits {
+        FloatBits::F32 => {
+            let (a, b) = (f32::from_bits(x as u32), f32::from_bits(y as u32));
+            float_result_f32(match op {
+                FloatBinary::Add => a + b,
+                FloatBinary::Sub => a - b,
+                FloatBinary::Mul => a * b,
+                FloatBinary::Div => a / b,
+            })
+        }
+        FloatBits::F64 => {
+            let (a, b) = (f64::from_bits(x), f64::from_bits(y));
+            float_result_f64(match op {
+                FloatBinary::Add => a + b,
+                FloatBinary::Sub => a - b,
+                FloatBinary::Mul => a * b,
+                FloatBinary::Div => a / b,
+            })
+        }
+    }
+}
+
+/// The float with its sign bit flipped.
+pub(super) fn float_negate(bits: FloatBits, x: u64) -> u64 {
+    (x ^ (1 << (bits.count() - 1))) & float_mask(bits)
+}
+
+/// 1 if the two floats of the size are as `op` asks, and 0 if not.
+pub(super) fn float_compare(op: FloatCompare, bits: FloatBits, x: u64, y: u64) -> u64 {
+    let (a, b) = (float_value(bits, x), float_value(bits, y));
+    (match op {
+        FloatCompare::Equal => a == b,
+        FloatCompare::NotEqual => a != b,
+        FloatCompare::Less => a < b,
+        FloatCompare::LessEqual => a <= b,
+        FloatCompare::Greater => a > b,
+        FloatCompare::GreaterEqual => a >= b,
+    }) as u64
+}
+
+/// The float of the size nearest the integer of `from` bits, read as signed or
+/// as unsigned.
+pub(super) fn float_from_int(read_signed: bool, from: Bits, to: FloatBits, n: u64) -> u64 {
+    match (to, read_signed) {
+        (FloatBits::F32, true) => u64::from((signed(n, from) as i64 as f32).to_bits()),
+        (FloatBits::F32, false) => u64::from((n as f32).to_bits()),
+        (FloatBits::F64, true) => (signed(n, from) as i64 as f64).to_bits(),
+        (FloatBits::F64, false) => (n as f64).to_bits(),
+    }
+}
+
+/// The integer of `to` bits the float of the size is cut to, read as signed or
+/// as unsigned, as bits: the least or the greatest number that fits when it
+/// does not, and 0 when it is not a number.
+pub(super) fn int_from_float(read_signed: bool, from: FloatBits, to: Bits, x: u64) -> u64 {
+    let f = float_value(from, x);
+    if read_signed {
+        let size = to.count();
+        let least = -(1i128 << (size - 1));
+        let greatest = (1i128 << (size - 1)) - 1;
+        // The cast gives 0 for a float that is not a number, and saturates.
+        ((i128::from(f as i64)).clamp(least, greatest) as u64) & mask(to)
+    } else {
+        (f as u64).min(mask(to))
+    }
+}
+
+/// The float of the size `to` that is nearest the float of the size `from`.
+pub(super) fn float_resize(from: FloatBits, to: FloatBits, x: u64) -> u64 {
+    match (from, to) {
+        (FloatBits::F32, FloatBits::F64) => float_result_f64(f64::from(f32::from_bits(x as u32))),
+        (FloatBits::F64, FloatBits::F32) => float_result_f32(f64::from_bits(x) as f32),
+        _ => x,
     }
 }
 
 /// How many bytes a value of the type takes in memory.
 fn width(ty: Type) -> usize {
     match ty {
+        Type::Float(bits) => bits.count() as usize / 8,
         Type::Int(bits) => bits.count() as usize / 8,
         Type::Address => 8,
     }
@@ -405,6 +542,61 @@ impl Machine<'_> {
                             panic!("arithmetic on what is not an integer")
                         };
                         vec![Word::Int(binary(*op, bits, x, y))]
+                    }
+                    Op::Constant(Constant::Float(n)) => {
+                        let bits = float_bits_of(f.types[instruction.results[0].0]);
+                        vec![Word::Int(n & float_mask(bits))]
+                    }
+                    Op::FloatBinary { op, a, b } => {
+                        let bits = float_bits_of(f.types[a.0]);
+                        let (Word::Int(x), Word::Int(y)) = (get(a), get(b)) else {
+                            panic!("arithmetic on what is not a float")
+                        };
+                        vec![Word::Int(float_binary(*op, bits, x, y))]
+                    }
+                    Op::FloatNegate(value) => {
+                        let bits = float_bits_of(f.types[value.0]);
+                        let Word::Int(x) = get(value) else {
+                            panic!("a negation of what is not a float")
+                        };
+                        vec![Word::Int(float_negate(bits, x))]
+                    }
+                    Op::FloatCompare { op, a, b } => {
+                        let bits = float_bits_of(f.types[a.0]);
+                        let (Word::Int(x), Word::Int(y)) = (get(a), get(b)) else {
+                            panic!("a comparison of what is not floats")
+                        };
+                        vec![Word::Int(float_compare(*op, bits, x, y))]
+                    }
+                    Op::FloatFromInt {
+                        signed: read,
+                        value,
+                    } => {
+                        let from = bits_of(f.types[value.0]);
+                        let to = float_bits_of(f.types[instruction.results[0].0]);
+                        let Word::Int(n) = get(value) else {
+                            panic!("a float made of what is not an integer")
+                        };
+                        vec![Word::Int(float_from_int(*read, from, to, n))]
+                    }
+                    Op::IntFromFloat {
+                        signed: read,
+                        value,
+                    } => {
+                        let from = float_bits_of(f.types[value.0]);
+                        let to = bits_of(f.types[instruction.results[0].0]);
+                        let Word::Int(x) = get(value) else {
+                            panic!("an integer made of what is not a float")
+                        };
+                        vec![Word::Int(int_from_float(*read, from, to, x))]
+                    }
+                    Op::FloatResize(value) => {
+                        let from = float_bits_of(f.types[value.0]);
+                        let to = float_bits_of(f.types[instruction.results[0].0]);
+                        let Word::Int(x) = get(value) else {
+                            panic!("a resizing of what is not a float")
+                        };
+                        vec![Word::Int(float_resize(from, to, x))]
                     }
                     Op::Overflows { op, signed, a, b } => {
                         let bits = bits_of(f.types[a.0]);
@@ -481,7 +673,7 @@ impl Machine<'_> {
                         }
                         vec![match ty {
                             Type::Address => Word::Address(n as usize),
-                            Type::Int(_) => Word::Int(n),
+                            Type::Int(_) | Type::Float(_) => Word::Int(n),
                         }]
                     }
                     Op::Store { ty, address, value } => {
