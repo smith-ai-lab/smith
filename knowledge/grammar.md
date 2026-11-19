@@ -11,7 +11,7 @@ This grammar is the single source of truth for syntax. It is a first draft, and 
 ## Lexical rules
 
 - Source text is UTF-8. Spaces and tabs separate tokens, and a line break is a line feed. A carriage return is an error anywhere in a file, inside a string or a comment too. Any other character that belongs to no token, string, or comment is an error.
-- A newline ends a statement, except inside `( )` or `[ ]`, after an operator or comma, or before `requires`, `ensures`, `decreases`, and the `{` that opens a function's body, or that opens an `impl`'s after a `requires`. A block inside `( )` or `[ ]` separates its own statements by newlines as usual.
+- A newline ends a statement, except inside `( )` or `[ ]`, after an operator or comma, or before `|>`, `requires`, `ensures`, `decreases`, and the `{` that opens a function's body, or that opens an `impl`'s after a `requires`. A block inside `( )` or `[ ]` separates its own statements by newlines as usual.
 - Commas appear only inside `( )` and `[ ]`, in a list of effects, and between the indices of a `for`.
 - An identifier, `IDENT`, is a letter or `_` followed by letters, digits, and `_`, and is not a keyword. The letters are `a` to `z` and `A` to `Z`.
 - The keywords are `and`, `as`, `break`, `decreases`, `derive`, `effect`, `else`, `ensures`, `enum`, `fn`, `for`, `foreign`, `if`, `impl`, `in`, `loop`, `match`, `not`, `or`, `out`, `pub`, `requires`, `return`, `struct`, `take`, `trait`, `try`, `use`, `var`, `with`, and `without`.
@@ -29,6 +29,7 @@ Operators bind more tightly further down the table.
 
 | Operators | Associativity |
 | --- | --- |
+| `\|>` | left |
 | `or` | left |
 | `and` | left |
 | `not` | prefix |
@@ -40,7 +41,7 @@ Operators bind more tightly further down the table.
 | `^` | right |
 | call, index, `.` | left |
 
-`not` covers the whole comparison that follows it, so `not a < b` means `not (a < b)`. The EBNF below gives the forms an expression can take, and this table alone says how its operators group.
+`not` covers the whole comparison that follows it, so `not a < b` means `not (a < b)`. The EBNF below gives the forms an expression can take, and this table alone says how its operators group. The `postfix` after a `|>` ends with a `call`, and one `arg` of that call may be `_`, which is where the value before the `|>` goes, as [Pipeline](language/pipeline.md) says.
 
 ## EBNF
 
@@ -89,7 +90,8 @@ pattern    = IDENT | "var" IDENT | "." IDENT [ "(" pattern ")" ]
            | "(" pattern { "," pattern } ")"
            | LITERAL | string | "[" [ pattern { "," pattern } ] "]" ;
 
-expr       = operand { BINOP operand } ;
+expr       = binary { "|>" [ "try" ] postfix } ;
+binary     = operand { BINOP operand } ;
 operand    = { "not" } unary ;
 unary      = [ "-" | "try" ] postfix ;
 postfix    = primary { call | "[" index { "," index } "]" | "." IDENT } ;

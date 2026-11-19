@@ -269,4 +269,4 @@ Only `try` converts. A function's own result is written out, as `.ok(p)` is.
 | `impl Try[C, R, T]` | How a type joins, with its own `split` |
 | `Result[T, E]` into `Result[U, F]` | Allowed when `Convert[E, F]` exists |
 
-Next: [`return`](return.md)
+Next: [Pipeline](pipeline.md)
