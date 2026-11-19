@@ -6,7 +6,10 @@
 //! hold one of them.
 //!
 //! A test that computes for more than a second fails the run, and the run
-//! names it, as `LIMIT` says. A test starts no thread, as the time of a
+//! names it, as `LIMIT` says. A test that is over it in its first measure is
+//! run once more, and is judged by the least of the two, as `support/limit.rs`
+//! says, so that a machine that was slow once does not fail it and its work does.
+//! A test starts no thread, as the time of a
 //! thread it starts is not the time of its own. A test that has made no
 //! progress for `clock::hang` and a little more on the wall fails the run, and
 //! the run names it, so that a program that never ends is a failing test and
@@ -15,7 +18,8 @@
 //! starts many programs, each of which ends, is never taken for one that hangs.
 //!
 //! `--hang=<ms>` sets that limit, which the tests of the limit itself make
-//! small, and `--group=hang` runs the tests they run. `--wait=<ms>` runs
+//! small, and `--group=hang` runs the tests they run. `--limit=<ms>` sets the
+//! limit of what a test computes for, and a small one makes every test run twice. `--wait=<ms>` runs
 //! nothing and ends after that long, as a program for them to start.
 //!
 //! `--fingerprint` runs nothing. It prints, for each target, a hash of
@@ -83,6 +87,10 @@ fn main() -> ExitCode {
     if let Some(limit) = args.iter().find_map(|a| a.strip_prefix("--hang=")) {
         clock::set_hang(Duration::from_millis(limit.parse().unwrap()));
     }
+    let limit = args
+        .iter()
+        .find_map(|a| a.strip_prefix("--limit="))
+        .map_or(LIMIT, |ms| Duration::from_millis(ms.parse().unwrap()));
     if args.iter().any(|a| a == "--fingerprint") {
         // The executables are the same for every commit, so that a change
         // that leaves them as they were needs no machine.
@@ -146,17 +154,19 @@ fn main() -> ExitCode {
                     let progress = clock::Progress::new(Mutex::new(Instant::now()));
                     clock::watch(Some(progress.clone()));
                     *slot.lock().unwrap() = Some((name, progress));
-                    let begin = clock::thread_time();
-                    MESSAGE.with(|m| *m.borrow_mut() = None);
-                    let passed = panic::catch_unwind(AssertUnwindSafe(test)).is_ok();
-                    if !passed {
-                        let message = MESSAGE.with(|m| m.borrow_mut().take());
-                        failures
-                            .lock()
-                            .unwrap()
-                            .push((*name, message.unwrap_or_default()));
+                    let (mut passed, mut time) = measure(name, *test, &failures);
+                    if passed {
+                        time = limit::least(time, limit, || {
+                            let (again, second) = measure(name, *test, &failures);
+                            println!(
+                                "{name} computed for {}, so it ran again and computed for {}",
+                                milliseconds(time),
+                                milliseconds(second)
+                            );
+                            passed = again;
+                            second
+                        });
                     }
-                    let time = clock::thread_time() - begin;
                     // A test the run gave up on has its result already.
                     if slot.lock().unwrap().take().is_none() {
                         return;
@@ -201,6 +211,7 @@ fn main() -> ExitCode {
                 results.lock().unwrap().clone(),
                 &failures.lock().unwrap(),
                 on_machine,
+                limit,
             );
             scratch::remove();
             std::process::exit(if ok { 0 } else { 1 });
@@ -210,6 +221,7 @@ fn main() -> ExitCode {
         results.into_inner().unwrap(),
         &failures.into_inner().unwrap(),
         on_machine,
+        limit,
     );
     scratch::remove();
     if passed {
@@ -219,11 +231,28 @@ fn main() -> ExitCode {
     }
 }
 
+/// Runs the test on this thread and gives whether it passed and what it computed for,
+/// keeping what a failing test said.
+fn measure(name: &'static str, test: fn(), failures: &Mutex<Failed>) -> (bool, Duration) {
+    let begin = clock::thread_time();
+    MESSAGE.with(|m| *m.borrow_mut() = None);
+    let passed = panic::catch_unwind(AssertUnwindSafe(test)).is_ok();
+    if !passed {
+        let message = MESSAGE.with(|m| m.borrow_mut().take());
+        failures
+            .lock()
+            .unwrap()
+            .push((name, message.unwrap_or_default()));
+    }
+    (passed, clock::thread_time() - begin)
+}
+
 /// Prints how the run went, and gives whether it passed.
 fn report(
     mut results: Vec<(&'static str, bool, Duration)>,
     failures: &Failed,
     on_machine: bool,
+    limit: Duration,
 ) -> bool {
     let failed: Vec<&str> = results
         .iter()
@@ -257,14 +286,14 @@ fn report(
     }
     let slow: Vec<&str> = results
         .iter()
-        .filter(|(_, _, time)| *time > LIMIT)
+        .filter(|(_, _, time)| *time > limit)
         .map(|(name, _, _)| *name)
         .collect();
     for name in &slow {
         println!(
             "{}: {name} computed for more than {}",
             if ENFORCED { "too slow" } else { "slow" },
-            milliseconds(LIMIT)
+            milliseconds(limit)
         );
     }
     failed.is_empty() && !(ENFORCED && !slow.is_empty())
