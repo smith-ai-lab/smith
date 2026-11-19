@@ -412,13 +412,23 @@ fn uses(g: &mut Gen) -> Uses {
         defined: Vec::new(),
     };
     let mut modules: Vec<&Module> = library().iter().collect();
+    // The names listed so far: a name that two modules have is refused when
+    // it is listed from both, so each is listed from one.
+    let mut listed: Vec<&str> = Vec::new();
     for _ in 0..1 + g.below(3) {
         if modules.is_empty() {
             break;
         }
         let module = modules.remove(g.below(modules.len()));
-        let names: Vec<&str> = module.names.iter().map(|(n, _)| n.as_str()).collect();
+        let names: Vec<&str> = (module.names.iter())
+            .map(|(n, _)| n.as_str())
+            .filter(|n| !listed.contains(n))
+            .collect();
+        if names.is_empty() {
+            continue;
+        }
         let first = *g.pick(&names);
+        listed.push(first);
         let m = format!("std.{}", module.name);
         // A function that a file may define, as it is no function of a trait.
         let definable: Vec<&str> = names
