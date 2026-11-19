@@ -598,19 +598,26 @@ fn every_function_of_the_source_that_runs_is_the_name_of_an_at_line() {
             .map(|f| f.name.as_str())
             .collect();
         let program = scalar::passes(&lowered);
-        let kept: std::collections::HashSet<&str> = (program.functions.iter())
-            .flat_map(|f| &f.blocks)
-            .flat_map(|b| &b.instructions)
-            .filter(|i| i.at.is_source())
-            .map(|i| scalar::names::name(i.at.function))
-            .collect();
-        for name in written {
-            // A function whose code a pass took away whole is not in the map,
-            // and there is none that the passes keep a line of and that the map
-            // does not name.
-            let present = kept.contains(name);
-            let called = program.functions.iter().any(|f| f.name == name);
-            assert!(present || !called, "{name} is kept and no at line names it");
+        let names: Vec<String> = program.functions.iter().map(|f| f.name.clone()).collect();
+        for target in buildable() {
+            let (_, parts) = target.emit_parts(&program);
+            let map = smith::target::map(&names, &parts);
+            let named: std::collections::HashSet<String> =
+                runs_of(&map).into_iter().map(|(_, r)| r.5).collect();
+            let lines: std::collections::HashSet<String> =
+                map.lines().filter(|l| l.starts_with("fn ")).map(|l| parse(l).3.to_string()).collect();
+            for name in &written {
+                // A function that has a line of its own is named by an `at` line,
+                // even when every instruction in it was built from what it calls
+                // or from defaults, as its own entry is the run that names it.
+                // One built in place everywhere has no line, and is named only
+                // where some code of it was written.
+                assert!(
+                    named.contains(*name) || !lines.contains(*name),
+                    "{name} has a line and no at line names it for {}\n{map}",
+                    target.name()
+                );
+            }
         }
     });
 }
