@@ -389,11 +389,29 @@ struct Uses {
     expected: Vec<(Pos, String)>,
     /// What the file defines after its `main`.
     defined: Vec<String>,
+    /// Each name that a `use` of the file lists, with the module it lists it
+    /// from, as a name may be in more than one module of the library, and a
+    /// file may list it from only one.
+    listed: Vec<(String, String)>,
 }
 
 impl Uses {
     fn push(&mut self, text: &str) {
         self.source.push_str(text);
+    }
+
+    /// Writes the name `name` of the module `module` in a list that is right
+    /// but for the name, which is one mistake when an earlier `use` lists the
+    /// same name from another module.
+    fn listed(&mut self, name: &str, module: &str) {
+        let taken = (self.listed.iter())
+            .any(|(listed, from)| listed == name && from != module);
+        if taken {
+            self.mistake(name, format!("`{name}` is listed from"));
+        } else {
+            self.push(name);
+        }
+        self.listed.push((name.to_string(), module.to_string()));
     }
 
     /// Writes `text`, which holds a mistake that is at its start.
@@ -410,6 +428,7 @@ fn uses(g: &mut Gen) -> Uses {
         source: String::new(),
         expected: Vec::new(),
         defined: Vec::new(),
+        listed: Vec::new(),
     };
     let mut modules: Vec<&Module> = library().iter().collect();
     for _ in 0..1 + g.below(3) {
@@ -425,9 +444,14 @@ fn uses(g: &mut Gen) -> Uses {
             .iter()
             .copied()
             .filter(|n| ["push", "utf8", "narrow"].contains(n) || n.ends_with("_narrow"))
+            .filter(|n| !file.listed.iter().any(|(listed, _)| listed == n))
             .collect();
         match g.below(7) {
-            0 => file.push(&format!("use {m} ({first})\n")),
+            0 => {
+                file.push(&format!("use {m} ("));
+                file.listed(first, &m);
+                file.push(")\n");
+            }
             1 => {
                 let bad = *g.pick(&["std.nope", "std.fs", "other.thing"]);
                 file.push("use ");
@@ -436,7 +460,9 @@ fn uses(g: &mut Gen) -> Uses {
             }
             2 => {
                 let bad = *g.pick(&["Zz", "nope", "input"]);
-                file.push(&format!("use {m} ({first}, "));
+                file.push(&format!("use {m} ("));
+                file.listed(first, &m);
+                file.push(", ");
                 file.mistake(bad, format!("`{m}` has no name `{bad}`"));
                 file.push(")\n");
             }
@@ -444,10 +470,14 @@ fn uses(g: &mut Gen) -> Uses {
                 let bad = *g.pick(&["Option", "Result", "List", "eq", "alloc", "Int"]);
                 file.push(&format!("use {m} ("));
                 file.mistake(bad, format!("`{bad}` is in the prelude"));
-                file.push(&format!(", {first})\n"));
+                file.push(", ");
+                file.listed(first, &m);
+                file.push(")\n");
             }
             4 => {
-                file.push(&format!("use {m} ({first}, "));
+                file.push(&format!("use {m} ("));
+                file.listed(first, &m);
+                file.push(", ");
                 file.mistake(first, format!("`{first}` is listed twice"));
                 file.push(")\n");
             }
@@ -459,7 +489,9 @@ fn uses(g: &mut Gen) -> Uses {
                 file.defined.push(own.to_string());
             }
             _ => {
-                file.push(&format!("use {m} ({first})\nuse "));
+                file.push(&format!("use {m} ("));
+                file.listed(first, &m);
+                file.push(")\nuse ");
                 file.mistake(&m, format!("`{m}` is already listed"));
                 file.push(&format!(" ({first})\n"));
             }
