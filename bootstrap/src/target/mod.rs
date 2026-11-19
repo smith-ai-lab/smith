@@ -6,6 +6,7 @@ mod arm64;
 mod branch;
 mod elf;
 mod frame;
+mod indexed;
 mod linux_arm64;
 mod linux_x64;
 mod macho;

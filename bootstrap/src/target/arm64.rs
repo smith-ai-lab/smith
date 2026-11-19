@@ -4,6 +4,7 @@
 
 use super::alloc::{self, Home, Registers};
 use super::frame::{self, PAGE, call_area, round_up, size};
+use super::indexed::{self, Folded};
 use super::moves::{self, Move, Step};
 use crate::scalar::{
     Binary, Compare, Constant, End, Function, Jump, Op, Program, Stream, System as Call, Value,
@@ -493,6 +494,9 @@ pub enum Place {
     Frame(u32),
     /// `[xn]`.
     At(u32),
+    /// `[xn, xm, lsl #log2(scale)]`, for a scale that is the number of bytes
+    /// written, which is 2, 4, or 8.
+    Indexed { base: u32, index: u32, scale: u8 },
 }
 
 impl Asm {
@@ -502,6 +506,7 @@ impl Asm {
     fn reach(&mut self, place: Place, width: u32) -> (u32, u32) {
         match place {
             Place::At(r) => (r, 0),
+            Place::Indexed { .. } => unreachable!("a place with an index is only written to"),
             Place::Frame(offset) => {
                 assert!(offset.is_multiple_of(width));
                 if offset / width < 1 << 12 {
@@ -533,6 +538,20 @@ impl Asm {
 
     /// Writes the low `width` bytes of `rt`.
     pub fn store(&mut self, to: Place, rt: u32, width: u32) {
+        if let Place::Indexed { base, index, scale } = to {
+            assert!(
+                u32::from(scale) == width,
+                "the index is scaled by the width"
+            );
+            let op = match width {
+                2 => 0x7820_7800,
+                4 => 0xb820_7800,
+                8 => 0xf820_7800,
+                _ => unreachable!("an integer of {width} bytes"),
+            };
+            self.word(op | index << 16 | base << 5 | rt);
+            return;
+        }
         let (base, at) = self.reach(to, width);
         let op = match width {
             1 => 0x3900_0000,
@@ -702,6 +721,8 @@ struct Writer<'a, S> {
     /// where it keeps what they held.
     saved: Vec<(u32, u32)>,
     labels: Vec<usize>,
+    /// Which instructions are folded into the store that reads them.
+    folded: Vec<Vec<Folded>>,
     /// Which blocks end with a choice between two jumps on a comparison that
     /// is the last instruction of the block and that nothing else reads. That
     /// comparison is not made into a value: the branch tests it.
@@ -726,7 +747,13 @@ fn function<S: System>(
 ) {
     let f = &crate::scalar::rematerialized(f);
     let constants = super::branch::constants(f);
-    let held = held(f, &constants);
+    // The multiplication that a store takes into itself is not made, so the
+    // constant it reads is not read.
+    let held_before = held(f, &constants, None);
+    let folded = indexed::stores(f, &constants, &held_before, |scale, width| {
+        u32::from(scale) == width
+    });
+    let held = held(f, &constants, Some(&folded));
     let allocation = alloc::allocate(f, REGISTERS, &held);
     let below = S::RESERVED + frame::outgoing(program, f, REGISTERS.passed);
     let saved_from = round_up(below + allocation.frame, 8);
@@ -767,6 +794,7 @@ fn function<S: System>(
             leave: leave.clone(),
             saved: saved.clone(),
             labels,
+            folded: folded.clone(),
             branches_on_compare: branches_on_compare.clone(),
             before_choice: before_choice.clone(),
             far,
@@ -796,6 +824,14 @@ fn function<S: System>(
             asm.bind(w.labels[b]);
             let made = block.instructions.len() - usize::from(w.branches_on_compare[b]);
             for (i, instruction) in block.instructions[..made].iter().enumerate() {
+                match w.folded[b][i] {
+                    Folded::Skipped => continue,
+                    Folded::Store { base, index, scale } => {
+                        w.indexed_store(asm, instruction, base, index, scale);
+                        continue;
+                    }
+                    Folded::No => {}
+                }
                 if w.before_choice[b][i] {
                     continue;
                 }
@@ -841,10 +877,14 @@ fn immediate(constants: &[Option<u64>], op: &Op) -> Option<u32> {
 /// `add` or a `sub`, as the value stored or chosen, or as what a jump, a
 /// call, or a return gives, which is moved there with the number. A value
 /// that anything else reads has a home as any other.
-fn held(f: &Function, constants: &[Option<u64>]) -> Vec<bool> {
+fn held(f: &Function, constants: &[Option<u64>], folded: Option<&[Vec<Folded>]>) -> Vec<bool> {
     let mut needs_a_home = vec![false; f.types.len()];
-    for block in &f.blocks {
-        for i in &block.instructions {
+    for (b, block) in f.blocks.iter().enumerate() {
+        for (n, i) in block.instructions.iter().enumerate() {
+            // An instruction that is not made reads nothing.
+            if folded.is_some_and(|folded| folded[b][n] == Folded::Skipped) {
+                continue;
+            }
             let embedded = immediate(constants, &i.op).is_some();
             for (k, v) in i.op.operands().into_iter().enumerate() {
                 needs_a_home[v.0] |= !match &i.op {
@@ -892,6 +932,31 @@ impl<S: System> Writer<'_, S> {
             (Loc::Register(to), Loc::Imm(n)) => asm.mov_imm(to, n),
             (Loc::Frame(to), Loc::Imm(n)) => self.store_imm(asm, Place::Frame(to), n, width, X16),
             (Loc::Imm(_), _) => unreachable!("a number is not a place to copy to"),
+        }
+    }
+
+    /// A store whose address is a base and an index times a scale, as one
+    /// instruction. The two instructions that made the address are not made.
+    fn indexed_store(
+        &self,
+        asm: &mut Asm,
+        store: &crate::scalar::Instruction,
+        base: Value,
+        index: Value,
+        scale: u8,
+    ) {
+        let Op::Store { ty, value, .. } = &store.op else {
+            unreachable!("a folded instruction is a store");
+        };
+        let base = self.read(asm, X16, base);
+        let index = self.read(asm, X17, index);
+        let place = Place::Indexed { base, index, scale };
+        match self.at[value.0] {
+            Loc::Imm(n) => self.store_imm(asm, place, n, size(*ty), X15),
+            _ => {
+                let value = self.read(asm, X15, *value);
+                asm.store(place, value, size(*ty));
+            }
         }
     }
 
