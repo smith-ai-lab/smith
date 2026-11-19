@@ -36,7 +36,7 @@ Two whole numbers are two ranges, and a wider range takes a narrower one with no
 fn widen(small: 0..256) -> 0..65536 { convert(small) }
 ```
 
-This is refused, as `0..256` has no `Convert` to `0..65536`. `fn widen(small: 0..256) -> 0..65536 { small }` is the way it is written. A value goes to a narrower range where it is shown to fit, as [Integer arithmetic](arithmetic.md#where-a-value-enters-a-narrower-range) says. A whole number becomes a float with `float(n)`, as [Number types](number-types.md#floats) says.
+This is refused, as `0..256` has no `Convert` to `0..65536`. `fn widen(small: 0..256) -> 0..65536 { small }` is the way it is written. A value goes to a narrower range where it is shown to fit, as [Integer arithmetic](arithmetic.md#where-a-value-enters-a-narrower-range) says, and with `narrow` or `clamp` where nothing shows it, as [Integer arithmetic](arithmetic.md#entering-a-range-with-no-proof) says. A whole number becomes a float with `float(n)`, as [Number types](number-types.md#floats) says.
 
 ## Types of a program's own
 

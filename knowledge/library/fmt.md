@@ -61,12 +61,12 @@ The largest `u64`, 18446744073709551615, is `"FFFFFFFFFFFFFFFF"` in `hex`, sixte
 
 ## Narrower numbers
 
-`n` is a `u64`. A number of a narrower unsigned type is given with `convert`, which [Conversion](../language/conversion.md) describes.
+`n` is a `u64`. A number of a narrower range is given as it is, as a wider range takes it, as [Number types](../language/number-types.md#a-range-as-a-type) says.
 
 ```
 use std.fmt (hex)
 
-fn byte(b: u8) -> str ! alloc { hex(convert(b), width: 2) }
+fn byte(b: u8) -> str ! alloc { hex(b, width: 2) }
 ```
 
 `byte(10)` is `"0A"`.

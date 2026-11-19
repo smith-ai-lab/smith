@@ -113,8 +113,8 @@ There are three ways out of `header`: the `try`, the `return`, and the last line
 ```
 fn port(text: str) -> Result[u16, PortError] {
   n = try parse_int(text)
-  if n > 65535 { return .err(.too_big) }
-  .ok(narrow(n))
+  if n < 0 or n > 65535 { return .err(.too_big) }
+  .ok(n)
 }
 ```
 
