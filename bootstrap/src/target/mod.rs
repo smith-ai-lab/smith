@@ -146,8 +146,13 @@ impl Target {
     /// does not stops, with one message that names the function.
     pub fn builds_vectors(self) -> bool {
         match self {
-            Target::LinuxX64 | Target::MacosX64 | Target::WindowsX64 => true,
-            Target::MacosArm64 | Target::LinuxArm64 | Target::WindowsArm64 | Target::Wasm => false,
+            Target::LinuxX64
+            | Target::MacosX64
+            | Target::WindowsX64
+            | Target::MacosArm64
+            | Target::LinuxArm64
+            | Target::WindowsArm64 => true,
+            Target::Wasm => false,
         }
     }
 
