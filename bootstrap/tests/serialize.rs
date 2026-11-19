@@ -96,7 +96,7 @@ const FUNCTIONS: &[(&str, &str)] = &[
 
 /// An `impl` of `Writer` for `name`, which gives each function's body, from
 /// the function's name and the names of its arguments.
-fn writer(name: &str, body: impl Fn(&str, &[&str]) -> String) -> String {
+pub fn writer(name: &str, body: impl Fn(&str, &[&str]) -> String) -> String {
     let mut out = format!("impl Writer[{name}] {{\n");
     for (function, params) in FUNCTIONS {
         let names: Vec<&str> = (params.split(", "))
@@ -344,7 +344,7 @@ pub fn ty(g: &mut Gen, defs: &mut Defs, depth: usize, parts: Parts) -> Ty {
 
 /// A value of the type, as source, and the calls the writer must receive for
 /// it, one for each line.
-fn value(g: &mut Gen, defs: &Defs, t: &Ty) -> (String, Vec<String>) {
+pub fn value(g: &mut Gen, defs: &Defs, t: &Ty) -> (String, Vec<String>) {
     match t {
         Ty::Bool => {
             let b = g.one_in(2);
