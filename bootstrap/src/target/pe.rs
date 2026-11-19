@@ -10,7 +10,8 @@
 //! the loader for the library and its symbols are written here.
 
 /// Where the image asks to be loaded.
-const IMAGE_BASE: u64 = 0x1_4000_0000;
+/// Where the executable asks to be loaded.
+pub const IMAGE_BASE: u64 = 0x1_4000_0000;
 /// Sections start on this boundary in memory.
 const SECTION_ALIGNMENT: u32 = 0x1000;
 /// Sections start on this boundary in the file.
