@@ -5017,7 +5017,7 @@ impl<'a> Defs<'a> {
 fn is_intrinsic(call: &Call) -> bool {
     call.qualifier.is_none()
         && call.callee.starts_with("__")
-        && !lists_and_text::is_library_append(call)
+        && !lists_and_text::is_library_call(call)
         && (of_prelude(call.pos) || of_std(call.pos))
 }
 
