@@ -12,7 +12,9 @@
 //! is made from `shrn`, `rbit`, and `clz`.
 
 use super::{Asm, Loc, NE, Place, SP, System, V29, V30, V31, Writer, X15, X16, X17};
-use crate::scalar::{Binary, FloatBinary, FloatBits, FloatCompare, Lane, Relation, Type, Value};
+use crate::scalar::{
+    Binary, FloatBinary, FloatBits, FloatCompare, Fused, Lane, Relation, Type, Value,
+};
 
 /// The `size` field of an instruction on lanes of the lane's size.
 fn size_of(lane: Lane) -> u32 {
@@ -294,6 +296,38 @@ impl<S: System> Writer<'_, S> {
         let (ra, rb) = (self.vector_read(asm, V30, a), self.vector_read(asm, V31, b));
         let t = self.vector_target(result);
         asm.vector_three(bits, t, ra, rb);
+        self.vector_finish(asm, result, t);
+    }
+
+    /// `a * b + c`, or the form of `op` of them, of floats, in each lane, rounded
+    /// once. `fmla` and `fmls` add to or take from the register they give the
+    /// result in, so it holds `c` first, or `-c` for `a * b - c`, which `fneg`
+    /// makes exactly. The register is not one that `a` or `b` is read from.
+    pub(super) fn vector_float_fused(
+        &self,
+        asm: &mut Asm,
+        result: Value,
+        op: Fused,
+        a: Value,
+        b: Value,
+        c: Value,
+    ) {
+        let lane = self.lane_of(result);
+        let double = u32::from(lane.bits() == 64) << 22;
+        let (ra, rb) = (self.vector_read(asm, V31, a), self.vector_read(asm, V29, b));
+        let t = match self.at[result.0] {
+            Loc::Float(r) if r != ra && r != rb => r,
+            _ => V30,
+        };
+        self.vector_into(asm, t, c);
+        match op {
+            Fused::MulAdd => asm.vector_three(0x4e20_cc00 | double, t, ra, rb),
+            Fused::NegMulAdd => asm.vector_three(0x4ea0_cc00 | double, t, ra, rb),
+            Fused::MulSub => {
+                asm.vector_two(0x6ea0_f800 | double, t, t);
+                asm.vector_three(0x4e20_cc00 | double, t, ra, rb);
+            }
+        }
         self.vector_finish(asm, result, t);
     }
 

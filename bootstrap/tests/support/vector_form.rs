@@ -110,6 +110,19 @@ pub fn observed(functions: Vec<Function>, f: usize, args: &[(Type, u128)], opaqu
     observe(functions, f, args, opaque, false)
 }
 
+/// As `observed`, except that each lane of a result that is not a number is written
+/// as the one number the evaluator gives, so that what an executable writes is what
+/// the evaluator writes, though the sign and the payload of such a number are the
+/// chip's.
+pub fn observed_canonically(
+    functions: Vec<Function>,
+    f: usize,
+    args: &[(Type, u128)],
+    opaque: bool,
+) -> Program {
+    observe(functions, f, args, opaque, true)
+}
+
 /// The float or the vector of floats, with each lane that is not a number the
 /// one number that is not a number the evaluator gives.
 fn canonical(b: &mut Builder, v: Value) -> Value {
@@ -232,6 +245,7 @@ pub fn vector_instructions(program: &Program) -> usize {
                 i.op,
                 Op::VectorBinary { .. }
                     | Op::VectorFloatBinary { .. }
+                    | Op::VectorFloatFused { .. }
                     | Op::VectorCompare { .. }
                     | Op::VectorFloatCompare { .. }
                     | Op::VectorChoose { .. }

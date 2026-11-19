@@ -282,6 +282,30 @@ fn function_of(program: &Program, f: &Function) -> Result<(), Why> {
                     used(a, i, ty)?;
                     used(b, i, ty)?;
                 }
+                Op::FloatFused { a, b, c, .. } => {
+                    let [result] = instruction.results[..] else {
+                        return Err(Why::WrongCount);
+                    };
+                    let ty = f.types[result.0];
+                    if !matches!(ty, Type::Float(_)) {
+                        return Err(Why::WrongType(result));
+                    }
+                    used(a, i, ty)?;
+                    used(b, i, ty)?;
+                    used(c, i, ty)?;
+                }
+                Op::VectorFloatFused { a, b, c, .. } => {
+                    let [result] = instruction.results[..] else {
+                        return Err(Why::WrongCount);
+                    };
+                    let ty = f.types[result.0];
+                    if !matches!(ty, Type::Vector(Lane::Float(_))) {
+                        return Err(Why::WrongType(result));
+                    }
+                    used(a, i, ty)?;
+                    used(b, i, ty)?;
+                    used(c, i, ty)?;
+                }
                 Op::VectorFloatBinary { op, a, b } => {
                     let [result] = instruction.results[..] else {
                         return Err(Why::WrongCount);

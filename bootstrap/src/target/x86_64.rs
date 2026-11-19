@@ -7,8 +7,8 @@ use super::frame::{self, PAGE, Passed, call_area, round_up, size};
 use super::indexed::Folded;
 use super::moves::{self, Move, Step};
 use crate::scalar::{
-    Binary, Compare, Constant, End, FloatBinary, FloatCompare, Function, Op, Program, Stream,
-    System as Call, Type, Value,
+    Binary, Compare, Constant, End, FloatBinary, FloatCompare, Function, Fused, Op, Program,
+    Stream, System as Call, Type, Value,
 };
 
 mod level;
@@ -805,6 +805,31 @@ impl Asm {
                 Rm::Reg(r) => a.bytes(&[Self::modrm(reg, r)]),
                 Rm::Place(place) => a.place(reg, place),
             }
+        });
+    }
+
+    /// A fused multiply and add of FMA, in the form where the register that
+    /// holds `c` is also the result: `rd = ra * rb + rd`, or the form of `op` of
+    /// it, on 128 bits or on one float. `w` says doubles, `scalar` one float. It
+    /// is a VEX instruction of three bytes before its opcode: the extensions of
+    /// the registers, the map of opcodes `0f38`, `w` and the second source, 128
+    /// bits, and the prefix `66`.
+    pub fn fused(&mut self, op: Fused, w: bool, scalar: bool, rd: Reg, ra: Reg, rb: Reg) {
+        // The opcode of the form with the 231 order of operands: of packed
+        // floats, and of one float one more.
+        let opcode = match op {
+            Fused::MulAdd => 0xb8,
+            Fused::MulSub => 0xba,
+            Fused::NegMulAdd => 0xbc,
+        } + u8::from(scalar);
+        self.writing(None, |a| {
+            a.bytes(&[
+                0xc4,
+                0x40 | (!(rd.0 >> 3) & 1) << 7 | (!(rb.0 >> 3) & 1) << 5 | 0x02,
+                u8::from(w) << 7 | (!ra.0 & 0xf) << 3 | 0x01,
+                opcode,
+                Self::modrm(rd, rb),
+            ]);
         });
     }
 
@@ -1620,6 +1645,27 @@ impl<S: System> Writer<'_, S> {
         self.float_finish(asm, result, t);
     }
 
+    /// `a * b + c`, or the form of `op` of them, of floats, in one instruction
+    /// that rounds once. The result is worked out in the register that holds
+    /// `c` is copied to, which is neither of the registers `a` and `b` are read
+    /// from.
+    fn float_fused(&self, asm: &mut Asm, result: Value, op: Fused, a: Value, b: Value, c: Value) {
+        let width = self.width(result);
+        let ra = self.float_read(asm, XMM13, a);
+        let rb = self.float_read(asm, XMM14, b);
+        let t = self.float_target(result, &[ra, rb]);
+        match self.float_operand(c) {
+            Rm::Reg(r) => {
+                if r != t {
+                    asm.movaps(t, r);
+                }
+            }
+            Rm::Place(place) => asm.float_load(t, width, place),
+        }
+        asm.fused(op, width == 8, true, t, ra, rb);
+        self.float_finish(asm, result, t);
+    }
+
     /// The comparison of two floats, as a value: 1 when it holds, and 0 when
     /// not, which is 0 for every comparison but `!=` when a float is not a
     /// number.
@@ -1856,6 +1902,10 @@ impl<S: System> Writer<'_, S> {
     fn instruction(&self, asm: &mut Asm, results: &[Value], operation: &Op) {
         match operation {
             Op::FloatBinary { op, a, b } => self.float_binary(asm, results[0], *op, *a, *b),
+            Op::FloatFused { op, a, b, c } => self.float_fused(asm, results[0], *op, *a, *b, *c),
+            Op::VectorFloatFused { op, a, b, c } => {
+                self.vector_float_fused(asm, results[0], *op, *a, *b, *c)
+            }
             Op::FloatNegate(value) => self.float_negate(asm, results[0], *value),
             Op::FloatCompare { op, a, b } => self.float_comparison(asm, results[0], *op, *a, *b),
             Op::FloatFromInt { signed, value } => {

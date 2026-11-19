@@ -210,6 +210,8 @@ impl Machine {
             // ldrsw xt, [xn, xm, lsl #2]
             let value = self.read(self.get_sp(rn) + 4 * self.get(rm), 4);
             self.set(rd, value as u32 as i32 as i64 as u64);
+        } else if w & 0xff00_0000 == 0x1f00_0000 {
+            self.fused_step(w);
         } else if self.vector_step(w) {
         } else if w & 0x7f20_0000 == 0x1e20_0000 {
             self.float_step(w);
@@ -412,6 +414,36 @@ impl Machine {
         None
     }
 
+    /// Runs `fmadd`, `fmsub`, `fnmadd`, or `fnmsub`, which work out `a * b` and
+    /// the addend exactly and round once, as the host's `mul_add` does.
+    fn fused_step(&mut self, w: u32) {
+        let (rd, rn, rm, ra) = (
+            (w & 31) as usize,
+            ((w >> 5) & 31) as usize,
+            ((w >> 16) & 31) as usize,
+            ((w >> 10) & 31) as usize,
+        );
+        let (negate_product, negate_addend) = (w >> 15 & 1 == 1, w >> 21 & 1 == 1);
+        let (n, m, c) = (self.f[rn] as u64, self.f[rm] as u64, self.f[ra] as u64);
+        // `fmadd` is `a + n * m`, `fmsub` `a - n * m`, `fnmadd` `-a - n * m`, and
+        // `fnmsub` `-a + n * m`.
+        self.f[rd] = match w >> 22 & 3 {
+            0 => {
+                let (x, y, z) = (f32::from_bits(n as u32), f32::from_bits(m as u32), f32::from_bits(c as u32));
+                let x = if negate_product { -x } else { x };
+                let z = if negate_addend { -z } else { z };
+                u128::from(x.mul_add(y, z).to_bits())
+            }
+            1 => {
+                let (x, y, z) = (f64::from_bits(n), f64::from_bits(m), f64::from_bits(c));
+                let x = if negate_product { -x } else { x };
+                let z = if negate_addend { -z } else { z };
+                u128::from(x.mul_add(y, z).to_bits())
+            }
+            _ => panic!("unknown instruction {w:#010x}"),
+        };
+    }
+
     /// Runs one instruction of floats, the arithmetic and the conversions, which
     /// the host's own floats do as the chip does: round to the nearest, ties to
     /// even, and a conversion to an integer that saturates and gives 0 for a
@@ -534,6 +566,16 @@ impl Machine {
         };
         let signed = |n: u64, bits: u32| -> i64 { ((n << (64 - bits)) as i64) >> (64 - bits) };
         let ones = |bits: u32| -> u64 { if bits == 64 { u64::MAX } else { (1u64 << bits) - 1 } };
+        if w & 0xffbf_fc00 == 0x6ea0_f800 {
+            // fneg vd.4s or vd.2d, vn
+            let flip = if size & 1 == 1 {
+                (1u128 << 63) | (1u128 << 127)
+            } else {
+                (0..4).fold(0u128, |v, i| v | (1u128 << (32 * i + 31)))
+            };
+            self.f[rd] = a ^ flip;
+            return true;
+        }
         if w & 0x9f20_0400 == 0x0e20_0400 {
             // Three registers of the same arrangement.
             assert!(w >> 30 & 1 == 1, "unknown instruction {w:#010x}");
@@ -584,6 +626,27 @@ impl Machine {
                 }),
                 (true, 0x06) => make(bits, &|i| if lane(a, i, bits) > lane(b, i, bits) { ones(bits) } else { 0 }),
                 (true, 0x07) => make(bits, &|i| if lane(a, i, bits) >= lane(b, i, bits) { ones(bits) } else { 0 }),
+                (false, 0x19) => {
+                    // fmla and fmls add the product to the destination, or take
+                    // it from it, rounding once.
+                    let (acc, take) = (self.f[rd], w >> 23 & 1 == 1);
+                    if double {
+                        make(64, &|i| {
+                            let x = f64::from_bits(lane(a, i, 64));
+                            let x = if take { -x } else { x };
+                            x.mul_add(f64::from_bits(lane(b, i, 64)), f64::from_bits(lane(acc, i, 64))).to_bits()
+                        })
+                    } else {
+                        make(32, &|i| {
+                            let x = f32::from_bits(lane(a, i, 32) as u32);
+                            let x = if take { -x } else { x };
+                            u64::from(
+                                x.mul_add(f32::from_bits(lane(b, i, 32) as u32), f32::from_bits(lane(acc, i, 32) as u32))
+                                    .to_bits(),
+                            )
+                        })
+                    }
+                }
                 (false, 0x1a) if w >> 23 & 1 == 0 => float(&|x, y| x + y, &|x, y| x + y),
                 (false, 0x1a) => float(&|x, y| x - y, &|x, y| x - y),
                 (true, 0x1b) if w >> 23 & 1 == 0 => float(&|x, y| x * y, &|x, y| x * y),

@@ -364,6 +364,7 @@ pub fn float_instructions(program: &Program) -> usize {
             matches!(
                 i.op,
                 Op::FloatBinary { .. }
+                    | Op::FloatFused { .. }
                     | Op::FloatNegate(_)
                     | Op::FloatCompare { .. }
                     | Op::FloatFromInt { .. }

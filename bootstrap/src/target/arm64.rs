@@ -7,8 +7,8 @@ use super::frame::{self, PAGE, Passed, call_area, round_up, size};
 use super::indexed::{self, Folded};
 use super::moves::{self, Move, Step};
 use crate::scalar::{
-    Binary, Compare, Constant, End, FloatBinary, FloatCompare, Function, Jump, Op, Program, Stream,
-    System as Call, Type, Value,
+    Binary, Compare, Constant, End, FloatBinary, FloatCompare, Function, Fused, Jump, Op, Program,
+    Stream, System as Call, Type, Value,
 };
 
 mod vector;
@@ -672,6 +672,18 @@ impl Asm {
     /// `fadd`, `fsub`, `fmul`, or `fdiv fd, fn, fm`, by the bits that choose it.
     pub fn float_arithmetic(&mut self, bits: u32, width: u32, rd: u32, rn: u32, rm: u32) {
         self.word(bits | Self::double(width) | rm << 16 | rn << 5 | rd);
+    }
+
+    /// `fmadd`, `fmsub`, or `fnmsub fd, fn, fm, fa`, which is `a * b + c`,
+    /// `c - a * b`, or `a * b - c`, worked out exactly and rounded once, for
+    /// `n` as `a`, `m` as `b`, and `fa` as `c`.
+    pub fn float_fused(&mut self, op: Fused, width: u32, rd: u32, rn: u32, rm: u32, ra: u32) {
+        let form = match op {
+            Fused::MulAdd => 0x1f00_0000,
+            Fused::NegMulAdd => 0x1f00_8000,
+            Fused::MulSub => 0x1f20_8000,
+        };
+        self.word(form | Self::double(width) | rm << 16 | ra << 10 | rn << 5 | rd);
     }
 
     /// `fneg fd, fn`.
@@ -1372,6 +1384,17 @@ impl<S: System> Writer<'_, S> {
                 let t = self.float_target(results[0]);
                 asm.float_arithmetic(bits, self.width(results[0]), t, ra, rb);
                 self.float_finish(asm, results[0], t);
+            }
+            Op::FloatFused { op, a, b, c } => {
+                let ra = self.float_read(asm, V30, *a);
+                let rb = self.float_read(asm, V31, *b);
+                let rc = self.float_read(asm, V29, *c);
+                let t = self.float_target(results[0]);
+                asm.float_fused(*op, self.width(results[0]), t, ra, rb, rc);
+                self.float_finish(asm, results[0], t);
+            }
+            Op::VectorFloatFused { op, a, b, c } => {
+                self.vector_float_fused(asm, results[0], *op, *a, *b, *c)
             }
             Op::FloatNegate(value) => {
                 let r = self.float_read(asm, V30, *value);
