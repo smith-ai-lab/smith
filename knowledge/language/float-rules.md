@@ -52,7 +52,7 @@ fn named(a: f32, b: f32, c: f32) -> f32 {
 }
 ```
 
-Both are one instruction. A product that is used twice is not fused, since its only use is not one add or subtract.
+Both are one instruction. A product that is used twice is not fused, since its only use is not one add or subtract. Every chip a program is built for has the instruction, as [The instructions a chip must have](../compiler.md#the-instructions-a-chip-must-have) says, so a fused product is never worked out by a function.
 
 ```
 fn both(a: f32, b: f32, c: f32) -> (f32, f32) {
