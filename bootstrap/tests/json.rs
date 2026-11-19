@@ -1041,7 +1041,7 @@ fn a_rawjson_is_written_as_the_bytes_it_holds_and_under_value_when_a_case_holds_
         "\"a\\u00e9\\/b\"",
     ];
     let mut source = String::from(
-        "use std.json (to_json, to_json_as, Json, Clash, RawJson)\n\n\
+        "use std.json (to_json, to_json_as, Json, Clash, RawJson, raw_json)\n\n\
          struct Call {\n  args: RawJson\n}\n\n\
          enum Reply {\n  result: RawJson\n  nothing\n}\n\n",
     );
@@ -1051,12 +1051,12 @@ fn a_rawjson_is_written_as_the_bytes_it_holds_and_under_value_when_a_case_holds_
     );
     for text in texts {
         source.push_str(&format!(
-            "  print(to_json(Call(args: RawJson(text: {}))))\n",
+            "  match raw_json({}) {{\n    .ok(r) {{ print(to_json(Call(args: r))) }}\n    .err(e) {{ print(\"err\") }}\n  }}\n",
             text_source(text.as_bytes())
         ));
     }
     source.push_str(
-        "  r = Reply.result(RawJson(text: \"7\"))\n  show(to_json_as(r, Json(cases: .key, names: .written)))\n  show(to_json_as(r, Json(cases: .tag(\"type\"), names: .written)))\n  show(to_json_as(r, Json(cases: .tag(\"value\"), names: .written)))\n}\n",
+        "  match raw_json(\"7\") {\n    .ok(seven) {\n      r = Reply.result(seven)\n      show(to_json_as(r, Json(cases: .key, names: .written)))\n      show(to_json_as(r, Json(cases: .tag(\"type\"), names: .written)))\n      show(to_json_as(r, Json(cases: .tag(\"value\"), names: .written)))\n    }\n    .err(e) { print(\"err\") }\n  }\n}\n",
     );
     let printed = String::from_utf8(prints(&source)).unwrap();
     let mut expected: Vec<String> = texts.iter().map(|t| format!("{{\"args\":{t}}}")).collect();

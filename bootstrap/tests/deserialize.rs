@@ -490,7 +490,7 @@ fn main() ! console, alloc {{
 /// reads a text and gives its bytes.
 fn a_rawjson_read_from_a_reader_of_another_format_is_the_bytes_of_its_text() {
     let source = format!(
-        "{IMPORT}use std.json (RawJson)\n\n{}fn main() ! console, alloc {{\n  xs: List[Shape] = [Shape.text(\"[1.50, 1e400]\")]\n  (r, v): (Rd, Result[RawJson, ReadError]) = read({})\n  match v {{\n    .ok(x) {{ print(x.text) }}\n    .err(e) {{ print(show(e)) }}\n  }}\n}}\n",
+        "{IMPORT}use std.json (RawJson, raw_text)\n\n{}fn main() ! console, alloc {{\n  xs: List[Shape] = [Shape.text(\"[1.50, 1e400]\")]\n  (r, v): (Rd, Result[RawJson, ReadError]) = read({})\n  match v {{\n    .ok(x) {{ print(raw_text(x)) }}\n    .err(e) {{ print(show(e)) }}\n  }}\n}}\n",
         reader(),
         fresh("xs", false, false)
     );

@@ -61,6 +61,14 @@ pub const ONCE: &[Test] = &[
         reading_asks_for_memory_for_the_texts_and_lists_of_the_value_and_for_nothing_else,
     ),
     (
+        "raw_json_is_ok_exactly_when_reading_a_rawjson_is_and_what_a_rawjson_writes_is_json",
+        raw_json_is_ok_exactly_when_reading_a_rawjson_is_and_what_a_rawjson_writes_is_json,
+    ),
+    (
+        "a_rawjson_built_by_hand_from_text_that_is_not_json_is_not_written_as_it_is",
+        a_rawjson_built_by_hand_from_text_that_is_not_json_is_not_written_as_it_is,
+    ),
+    (
         "a_rawjson_that_is_read_and_written_is_the_bytes_it_was_less_the_space_round_it",
         a_rawjson_that_is_read_and_written_is_the_bytes_it_was_less_the_space_round_it,
     ),
@@ -1491,29 +1499,33 @@ fn mutate(g: &mut Gen, text: &[u8]) -> Vec<u8> {
     out
 }
 
-fn text_the_reader_of_the_test_refuses_is_refused_where_it_refuses_it() {
-    generate::check(6005, 8, |g: &mut Gen| {
-        let t = tree(g, 3);
-        let pad = *g.pick(&["", " ", "\n", "\r\n\t "]);
-        let escape = g.one_in(2);
-        let mut text = pad.as_bytes().to_vec();
-        tree_text(&t, pad, escape, &mut text);
-        text.extend_from_slice(pad.as_bytes());
-        let mut texts = vec![text.clone()];
-        while texts.len() < 14 {
-            let broken = mutate(g, &text);
-            if std::str::from_utf8(&broken).is_ok() {
-                texts.push(broken);
-            }
+/// Texts of JSON that a generator draws and the same texts changed in one
+/// place each, so that some are JSON and some are not.
+fn drawn_texts(g: &mut Gen) -> Vec<Vec<u8>> {
+    let t = tree(g, 3);
+    let pad = *g.pick(&["", " ", "\n", "\r\n\t "]);
+    let escape = g.one_in(2);
+    let mut text = pad.as_bytes().to_vec();
+    tree_text(&t, pad, escape, &mut text);
+    text.extend_from_slice(pad.as_bytes());
+    let mut texts = vec![text.clone()];
+    while texts.len() < 14 {
+        let broken = mutate(g, &text);
+        if std::str::from_utf8(&broken).is_ok() {
+            texts.push(broken);
         }
-        texts
-    }, |texts| {
+    }
+    texts
+}
+
+fn text_the_reader_of_the_test_refuses_is_refused_where_it_refuses_it() {
+    generate::check(6005, 8, drawn_texts, |texts| {
         let mut source = format!(
-            "use std.json (from_json, RawJson)\nuse std.deserialize (ReadError, Problem)\n\n{TEXT}fn main() ! console, alloc {{\n"
+            "use std.json (from_json, RawJson, raw_text)\nuse std.deserialize (ReadError, Problem)\n\n{TEXT}fn main() ! console, alloc {{\n"
         );
         for (i, text) in texts.iter().enumerate() {
             source.push_str(&format!(
-                "  r{i}: Result[RawJson, ReadError] = from_json({})\n  match r{i} {{\n    .ok(w) {{ print(\"ok {{w.text.size}}\") }}\n    .err(e) {{ print(say(e)) }}\n  }}\n",
+                "  r{i}: Result[RawJson, ReadError] = from_json({})\n  match r{i} {{\n    .ok(w) {{ print(\"ok {{raw_text(w).size}}\") }}\n    .err(e) {{ print(say(e)) }}\n  }}\n",
                 text_source(text)
             ));
         }
@@ -1554,7 +1566,7 @@ fn a_rawjson_holds_the_bytes_of_its_value_and_reads_later_to_the_value_a_direct_
         let text = [&b"{\"head\":1,\"body\":"[..], &written.bytes, &b",\"tail\":null}"[..]].concat();
         let name = defs.name(t);
         let source = format!(
-            "use std.json (from_json_as, to_json, Json, RawJson)\nuse std.deserialize (ReadError, Problem)\n\n{TEXT}{WRAP}{}fn main() ! console, alloc {{\n  v: {name} = {}\n  j = {}\n  r: Result[Wrap, ReadError] = from_json_as({}, j)\n  match r {{\n    .ok(w) {{\n      print(w.body.text)\n      later: Result[{name}, ReadError] = from_json_as(w.body.text, j)\n      match later {{\n        .ok(x) {{ print(\"{{to_json(x) == to_json(v)}}\") }}\n        .err(e) {{ print(say(e)) }}\n      }}\n    }}\n    .err(e) {{ print(say(e)) }}\n  }}\n}}\n",
+            "use std.json (from_json_as, to_json, Json, RawJson, raw_text)\nuse std.deserialize (ReadError, Problem)\n\n{TEXT}{WRAP}{}fn main() ! console, alloc {{\n  v: {name} = {}\n  j = {}\n  r: Result[Wrap, ReadError] = from_json_as({}, j)\n  match r {{\n    .ok(w) {{\n      print(raw_text(w.body))\n      later: Result[{name}, ReadError] = from_json_as(raw_text(w.body), j)\n      match later {{\n        .ok(x) {{ print(\"{{to_json(x) == to_json(v)}}\") }}\n        .err(e) {{ print(say(e)) }}\n      }}\n    }}\n    .err(e) {{ print(say(e)) }}\n  }}\n}}\n",
             defs.source(),
             v.source(),
             settings.source(false),
@@ -1592,12 +1604,12 @@ const MAKE: &str = "fn make(n: Nat) -> str ! alloc {
 fn a_rawjson_shares_the_memory_of_the_input() {
     let program = |n: usize, read: bool| {
         let tail = if read {
-            format!("  r: Result[Wrap, ReadError] = from_json(t)\n  match r {{\n    .ok(w) {{ print(if w.body.text.size == {} {{ \"ok\" }} else {{ \"wrong\" }}) }}\n    .err(e) {{ print(say(e)) }}\n  }}\n", 2 * n + 1)
+            format!("  r: Result[Wrap, ReadError] = from_json(t)\n  match r {{\n    .ok(w) {{ print(if raw_text(w.body).size == {} {{ \"ok\" }} else {{ \"wrong\" }}) }}\n    .err(e) {{ print(say(e)) }}\n  }}\n", 2 * n + 1)
         } else {
             "  print(\"ok\")\n".to_string()
         };
         format!(
-            "use std.json (from_json, RawJson)\nuse std.deserialize (ReadError, Problem)\n\n{TEXT}{WRAP}{MAKE}fn main() ! console, alloc {{\n  t = make({n})\n{tail}}}\n"
+            "use std.json (from_json, RawJson, raw_text)\nuse std.deserialize (ReadError, Problem)\n\n{TEXT}{WRAP}{MAKE}fn main() ! console, alloc {{\n  t = make({n})\n{tail}}}\n"
         )
     };
     // What the reading asks for, beyond building the text, is the same for a
@@ -1709,4 +1721,71 @@ fn a_rawjson_that_is_read_and_written_is_the_bytes_it_was_less_the_space_round_i
             .collect();
         assert_eq!(printed.join("\n") + "\n", expected, "{source}");
     });
+}
+
+fn raw_json_is_ok_exactly_when_reading_a_rawjson_is_and_what_a_rawjson_writes_is_json() {
+    generate::check(6009, 6, drawn_texts, |texts| {
+        let mut source = format!(
+            "use std.json (from_json, to_json, raw_json, raw_text, RawJson)\nuse std.deserialize (ReadError, Problem)\n\n{TEXT}fn show(t: str) ! console, alloc {{
+  a: Result[RawJson, ReadError] = from_json(t)
+  b = raw_json(t)
+  match a {{
+    .ok(x) {{
+      match b {{
+        .ok(y) {{
+          print(if raw_text(x) == raw_text(y) {{ \"ok\" }} else {{ \"texts differ\" }})
+          print(to_json(y))
+        }}
+        .err(f) {{ print(\"only reading\") }}
+      }}
+    }}
+    .err(e) {{
+      match b {{
+        .ok(y) {{ print(\"only raw_json\") }}
+        .err(f) {{ print(if say(e) == say(f) {{ \"err\" }} else {{ \"errors differ\" }}) }}
+      }}
+    }}
+  }}
+  print(\"--\")
+}}
+
+fn main() ! console, alloc {{\n"
+        );
+        for text in texts {
+            source.push_str(&format!("  show({})\n", text_source(text)));
+        }
+        source.push_str("}\n");
+        let printed = String::from_utf8(prints(&source)).unwrap();
+        // What the reader of the test says of each text, and what is written,
+        // which is the text less the space round it, and is JSON.
+        let expected: String = texts
+            .iter()
+            .map(|text| match model(text) {
+                Ok(_) => {
+                    let written = String::from_utf8(text.trim_ascii().to_vec()).unwrap();
+                    assert!(model(written.as_bytes()).is_ok(), "{written:?} is not JSON");
+                    format!("ok\n{written}\n--\n")
+                }
+                Err(_) => "err\n--\n".to_string(),
+            })
+            .collect();
+        assert_eq!(printed, expected, "{source}");
+    });
+}
+
+fn a_rawjson_built_by_hand_from_text_that_is_not_json_is_not_written_as_it_is() {
+    // The text that adds a member to an object that holds it, if it were
+    // written as it is.
+    let text = "] not json \", \"admin\": true";
+    let source = format!(
+        "use std.json (to_json, RawJson)\n\n{TEXT}struct Call {{\n  name: str\n  arguments: RawJson\n}}\n\nfn main() ! console, alloc {{\n  bad = RawJson(text: {})\n  print(to_json(Call(name: \"f\", arguments: bad)))\n}}\n",
+        text_source(text.as_bytes())
+    );
+    // A program that builds one by hand is refused where the compiler keeps
+    // a field that is not `pub` private to the library, and where it does not,
+    // the text is written as a text.
+    if let Ok(program) = lower(source.as_bytes()) {
+        let printed = String::from_utf8(scalar::run(&program).stdout).unwrap();
+        assert_eq!(printed, "{\"name\":\"f\",\"arguments\":\"] not json \\\", \\\"admin\\\": true\"}\n", "{source}");
+    }
 }

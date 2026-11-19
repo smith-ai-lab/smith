@@ -171,7 +171,7 @@ fn main() ! console, alloc {{
 /// writes them as a text, as `text` does.
 fn a_rawjson_written_to_a_writer_of_another_format_is_a_text() {
     let source = format!(
-        "use std.serialize (Serialize, Writer, write)\nuse std.json (RawJson)\n\n{}struct Call {{\n  args: RawJson\n}}\n\nfn main() ! console, alloc {{\n  l = write(Call(args: RawJson(text: \"[1.50, 1e400]\")), Log(lines: \"\"))\n  print(l.lines)\n}}\n",
+        "use std.serialize (Serialize, Writer, write)\nuse std.json (RawJson, raw_json)\n\n{}struct Call {{\n  args: RawJson\n}}\n\nfn main() ! console, alloc {{\n  match raw_json(\"[1.50, 1e400]\") {{\n    .ok(r) {{\n      l = write(Call(args: r), Log(lines: \"\"))\n      print(l.lines)\n    }}\n    .err(e) {{ print(\"err\") }}\n  }}\n}}\n",
         log()
     );
     let found = errors(&source);
