@@ -42,6 +42,10 @@ pub const ONCE: &[Test] = &[
         a_tag_that_is_also_a_member_is_refused_wherever_it_is_met_and_nothing_else_is,
     ),
     (
+        "a_rawjson_is_written_as_the_bytes_it_holds_and_under_value_when_a_case_holds_it",
+        a_rawjson_is_written_as_the_bytes_it_holds_and_under_value_when_a_case_holds_it,
+    ),
+    (
         "a_program_that_does_not_import_std_json_is_the_program_it_was",
         a_program_that_does_not_import_std_json_is_the_program_it_was,
     ),
@@ -1023,4 +1027,41 @@ fn to_json_asks_for_memory_in_proportion_to_the_text_it_gives() {
         assert!(asked <= 8 * text, "{asked} bytes asked for {text} bytes, {n} elements");
         assert!(with.len() - without.len() <= 2 * (text.ilog2() as usize + 2), "{} requests, {n} elements", with.len() - without.len());
     }
+}
+
+fn a_rawjson_is_written_as_the_bytes_it_holds_and_under_value_when_a_case_holds_it() {
+    // The bytes of each are kept, with the space in them and every digit of the
+    // numbers.
+    let texts = [
+        "1.50",
+        "1e400",
+        "1234567890123456789012345678901234567890",
+        "-0.0",
+        "[ 1 , {\"a\" : null} ]",
+        "\"a\\u00e9\\/b\"",
+    ];
+    let mut source = String::from(
+        "use std.json (to_json, to_json_as, Json, Clash, RawJson)\n\n\
+         struct Call {\n  args: RawJson\n}\n\n\
+         enum Reply {\n  result: RawJson\n  nothing\n}\n\n",
+    );
+    source.push_str(TEXT);
+    source.push_str(
+        "fn show(r: Result[str, Clash]) ! console, alloc {\n  match r {\n    .ok(t) { print(t) }\n    .err(c) { print(\"err {c.of} {c.case} {c.member}\") }\n  }\n}\n\nfn main() ! console, alloc {\n",
+    );
+    for text in texts {
+        source.push_str(&format!(
+            "  print(to_json(Call(args: RawJson(text: {}))))\n",
+            text_source(text.as_bytes())
+        ));
+    }
+    source.push_str(
+        "  r = Reply.result(RawJson(text: \"7\"))\n  show(to_json_as(r, Json(cases: .key, names: .written)))\n  show(to_json_as(r, Json(cases: .tag(\"type\"), names: .written)))\n  show(to_json_as(r, Json(cases: .tag(\"value\"), names: .written)))\n}\n",
+    );
+    let printed = String::from_utf8(prints(&source)).unwrap();
+    let mut expected: Vec<String> = texts.iter().map(|t| format!("{{\"args\":{t}}}")).collect();
+    expected.push("{\"result\":7}".to_string());
+    expected.push("{\"type\":\"result\",\"value\":7}".to_string());
+    expected.push("err Reply result value".to_string());
+    assert_eq!(printed.lines().collect::<Vec<_>>(), expected, "{source}");
 }

@@ -7,7 +7,8 @@ built:
   - "`std.json`, which a program imports with `use std.json (to_json, to_json_as, Json)`, with `to_json` and `to_json_as` of any value that has `Serialize` and the `Json`, `Cases`, and `Names` of the settings, written in Smith from `Serialize` and `Writer` alone"
   - "every shape of the table below, a case of an enum as a key and as a tag, `Names.camel`, and the refusal of a tag that is also a member, with `Clash`"
   - "`from_json` and `from_json_as` of any type that has `Deserialize` and `Discard`, which read the text with a `Reader` written in Smith, with `Unknown` in the settings, the errors with their line, column, and path, `describe`, and `RawJson` with its `Deserialize`, and nothing is built between the text and the value"
-  - "not writing a `RawJson`, which is refused, not a float, which waits for `f64`, not a `Map`, which is not built, and not `JsonValue`"
+  - "`RawJson` written with `to_json` as the bytes it holds, with `raw` of `Writer` and `Reader`, and under `value` where a case that is written with a tag holds it"
+  - "not a float, which waits for `f64`, not a `Map`, which is not built, and not `JsonValue`"
 ---
 
 # JSON
@@ -243,7 +244,9 @@ struct Call {
 }
 ```
 
-`{"name":"f","arguments":{"x": [1.5e3, "y"]}}` read as a `Call` has `{"x": [1.5e3, "y"]}` for `arguments.text`, with the space in it as it was. A `RawJson` has no `Serialize`, so `to_json` of a value that holds one is refused: "there is no implementation of `Serialize` for `Call`, as `RawJson` has no `Serialize`".
+`{"name":"f","arguments":{"x": [1.5e3, "y"]}}` read as a `Call` has `{"x": [1.5e3, "y"]}` for `arguments.text`, with the space in it as it was.
+
+It has `Serialize` too, which writes its bytes where the value goes, as they are, with each space in them and every digit of each number: `to_json` of that `Call` is `{"name":"f","arguments":{"x": [1.5e3, "y"]}}`, and `1.50`, `1e400`, and a number of 40 digits are written as they were read. A `RawJson` that a case holds is a value that is not a struct, so with `Cases.tag` it is written under `value`, and `.tag("value")` clashes with it as it does with any such value. Both use `raw` with `"json"`, which [Serialize](serialize.md#the-shapes) and [Deserialize](deserialize.md#the-shapes) say. Written by another format, a `RawJson` is a text, and read from another format, it is the bytes of a text, so what a format writes it reads back.
 
 ## Memory
 

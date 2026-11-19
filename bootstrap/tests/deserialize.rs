@@ -21,6 +21,10 @@ use crate::serialize::{self, Defs, INTS, Parts, Ty};
 
 pub const ONCE: &[Test] = &[
     (
+        "a_rawjson_read_from_a_reader_of_another_format_is_the_bytes_of_its_text",
+        a_rawjson_read_from_a_reader_of_another_format_is_the_bytes_of_its_text,
+    ),
+    (
         "a_struct_is_read_from_its_name_each_field_and_its_end",
         a_struct_is_read_from_its_name_each_field_and_its_end,
     ),
@@ -366,8 +370,11 @@ fn peek(r: Rd) -> Shape {
     out.push_str(&simple("text", "str", ".text(v)", "v"));
     out.push_str(&simple("nothing", "()", ".nothing", "()"));
     out.push_str(
-        "  fn raw(r: take Rd) -> (Rd, Result[Slice[u8], ReadError]) ! alloc {
-    (note(r, \"raw\"), Result.err(wrong(r, \"raw\")))
+        "  fn raw(r: take Rd, of: str) -> (Rd, Result[Slice[u8], ReadError]) ! alloc {
+    match peek(r) {
+      .text(v) { (step(r, \"raw\"), Result.ok(v.bytes)) }
+      _ { (note(r, \"raw\"), Result.err(wrong(r, \"raw\"))) }
+    }
   }
 ",
     );
@@ -477,6 +484,19 @@ fn main() ! console, alloc {{
         prints(&source),
         "structure Point\nfield\nsigned\nfield\nsigned\nfield\n\n3 4\n"
     );
+}
+
+/// `raw` names the format that its bytes are in, and a reader of another format
+/// reads a text and gives its bytes.
+fn a_rawjson_read_from_a_reader_of_another_format_is_the_bytes_of_its_text() {
+    let source = format!(
+        "{IMPORT}use std.json (RawJson)\n\n{}fn main() ! console, alloc {{\n  xs: List[Shape] = [Shape.text(\"[1.50, 1e400]\")]\n  (r, v): (Rd, Result[RawJson, ReadError]) = read({})\n  match v {{\n    .ok(x) {{ print(x.text) }}\n    .err(e) {{ print(show(e)) }}\n  }}\n}}\n",
+        reader(),
+        fresh("xs", false, false)
+    );
+    let found = errors(&source);
+    assert!(found.is_empty(), "{found:?}\n{source}");
+    assert_eq!(prints(&source), "[1.50, 1e400]\n");
 }
 
 // What the generator makes of a value: the shapes the reader is given, the
