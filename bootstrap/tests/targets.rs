@@ -438,7 +438,7 @@ pub fn starting(b: &mut Builder, types: &[Type], starts: &[u64]) -> Vec<Value> {
         .zip(starts)
         .map(|(ty, n)| match ty {
             Type::Int(bits) => b.int(*bits, *n),
-            Type::Float(_) => unreachable!("these programs have no floats"),
+            Type::Float(_) | Type::Vector(_) => unreachable!("these programs have no floats"),
             Type::Address => {
                 let text = Constant::Data(*n as usize % 2);
                 b.emit(Op::Constant(text), &[Type::Address])[0]
@@ -456,7 +456,7 @@ pub fn write_all(b: &mut Builder, types: &[Type], values: &[Value]) {
         let wide = match ty {
             Type::Int(Bits::B64) => *v,
             Type::Int(_) => b.widen(false, *v, Bits::B64),
-            Type::Float(_) => unreachable!("these programs have no floats"),
+            Type::Float(_) | Type::Vector(_) => unreachable!("these programs have no floats"),
             Type::Address => {
                 let byte = b.load(Type::Int(Bits::B8), *v);
                 b.widen(false, byte, Bits::B64)

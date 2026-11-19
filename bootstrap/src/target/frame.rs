@@ -14,6 +14,7 @@ pub fn size(ty: Type) -> u32 {
         Type::Int(Bits::B32) => 4,
         Type::Float(FloatBits::F32) => 4,
         Type::Int(Bits::B64) | Type::Float(FloatBits::F64) | Type::Address => 8,
+        Type::Vector(_) => 16,
     }
 }
 

@@ -301,7 +301,7 @@ fn observe(
         let v = match ty {
             Type::Float(bits) => b.float(*bits, *n),
             Type::Int(bits) => b.int(*bits, *n),
-            Type::Address => panic!("an argument that is an address"),
+            Type::Vector(_) | Type::Address => panic!("an argument that is not a number"),
         };
         if opaque {
             let place = at(&mut b, buffer, k);
@@ -673,7 +673,7 @@ fn generated(g: &mut Gen, canonically: bool) -> Program {
         .map(|ty| match ty {
             Type::Float(bits) => (*ty, float(g, *bits)),
             Type::Int(bits) => (*ty, int(g, *bits)),
-            Type::Address => unreachable!(),
+            Type::Vector(_) | Type::Address => unreachable!(),
         })
         .collect();
     let opaque = g.below(2) == 0;

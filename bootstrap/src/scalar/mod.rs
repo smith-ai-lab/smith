@@ -25,6 +25,7 @@ pub mod runtime;
 mod sink;
 mod thread;
 mod trim;
+mod vector;
 mod wellformed;
 mod words;
 
@@ -89,6 +90,58 @@ impl FloatBits {
     }
 }
 
+/// What each lane of a vector is: an integer or a float. A vector is 128
+/// bits whole, so the lane says how many lanes it has.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum Lane {
+    Int(Bits),
+    Float(FloatBits),
+}
+
+impl Lane {
+    /// Every lane a vector has.
+    pub const ALL: [Lane; 6] = [
+        Lane::Int(Bits::B8),
+        Lane::Int(Bits::B16),
+        Lane::Int(Bits::B32),
+        Lane::Int(Bits::B64),
+        Lane::Float(FloatBits::F32),
+        Lane::Float(FloatBits::F64),
+    ];
+
+    /// How many bits a lane has.
+    pub fn bits(self) -> u32 {
+        match self {
+            Lane::Int(bits) => bits.count(),
+            Lane::Float(bits) => bits.count(),
+        }
+    }
+
+    /// How many lanes a vector of the lane has: 2, 4, 8, or 16.
+    pub fn count(self) -> u32 {
+        128 / self.bits()
+    }
+
+    /// The type of a lane read alone.
+    pub fn scalar(self) -> Type {
+        match self {
+            Lane::Int(bits) => Type::Int(bits),
+            Lane::Float(bits) => Type::Float(bits),
+        }
+    }
+
+    /// The type of a mask over vectors of the lane: a vector of integers as
+    /// wide as the lane.
+    pub fn mask(self) -> Type {
+        Type::Vector(Lane::Int(match self.bits() {
+            8 => Bits::B8,
+            16 => Bits::B16,
+            32 => Bits::B32,
+            _ => Bits::B64,
+        }))
+    }
+}
+
 /// What a value is, which also says its size.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Type {
@@ -97,6 +150,9 @@ pub enum Type {
     Int(Bits),
     /// A float of 32 or 64 bits, as IEEE 754 says.
     Float(FloatBits),
+    /// A vector of a fixed number of one of those, 128 bits in all: lane 0 is
+    /// the lowest bits, and a lane is as an integer or a float of its size is.
+    Vector(Lane),
     /// An address in the program's memory.
     Address,
 }
@@ -107,6 +163,7 @@ impl Type {
         match self {
             Type::Int(bits) => u64::from(bits.count() / 8),
             Type::Float(bits) => u64::from(bits.count() / 8),
+            Type::Vector(_) => 16,
             Type::Address => 8,
         }
     }
@@ -153,6 +210,24 @@ pub enum Constant {
     /// The address of the first byte of one of the program's texts, by its
     /// place in `Program::data`.
     Data(usize),
+    /// A vector: the bits of the whole, with lane 0 in the lowest, as the low
+    /// 64 bits and then the high 64, which keeps a constant as small as it was.
+    Vector(u64, u64),
+}
+
+impl Constant {
+    /// The constant that is a vector of the bits.
+    pub fn vector(bits: u128) -> Constant {
+        Constant::Vector(bits as u64, (bits >> 64) as u64)
+    }
+
+    /// The bits of a constant that is a vector.
+    pub fn vector_bits(self) -> Option<u128> {
+        match self {
+            Constant::Vector(low, high) => Some(u128::from(low) | (u128::from(high) << 64)),
+            _ => None,
+        }
+    }
 }
 
 /// A call into the system.
@@ -256,6 +331,29 @@ impl FloatCompare {
     ];
 }
 
+/// What an instruction asks of each pair of lanes of two vectors of integers.
+/// For `Equal` and `NotEqual` whether the lanes are signed makes no difference.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum Relation {
+    Equal,
+    NotEqual,
+    Less,
+    LessEqual,
+    Greater,
+    GreaterEqual,
+}
+
+impl Relation {
+    pub const ALL: [Relation; 6] = [
+        Relation::Equal,
+        Relation::NotEqual,
+        Relation::Less,
+        Relation::LessEqual,
+        Relation::Greater,
+        Relation::GreaterEqual,
+    ];
+}
+
 /// What an instruction does.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum Op {
@@ -311,6 +409,71 @@ pub enum Op {
     },
     /// The float of the size of the result that is nearest the float.
     FloatResize(Value),
+    /// Each lane of two vectors of integers, `a` and `b`, by `Add`, `Sub`,
+    /// `Mul`, `And`, `Or`, or `Xor`: the vector of what the instruction of that
+    /// operation gives for each pair of lanes.
+    VectorBinary {
+        op: Binary,
+        a: Value,
+        b: Value,
+    },
+    /// Each lane of two vectors of floats, by `Add`, `Sub`, or `Mul`: what the
+    /// instruction of that operation gives for each pair of lanes.
+    VectorFloatBinary {
+        op: FloatBinary,
+        a: Value,
+        b: Value,
+    },
+    /// A mask: for each pair of lanes of two vectors of integers, a lane of
+    /// the same size that is all ones when the pair is as `op` says, read as
+    /// signed or as unsigned numbers, and all zeros when it is not.
+    VectorCompare {
+        op: Relation,
+        signed: bool,
+        a: Value,
+        b: Value,
+    },
+    /// A mask: for each pair of lanes of two vectors of floats, an integer lane
+    /// as wide as the float that is all ones when the comparison holds, as
+    /// `FloatCompare` says it, and all zeros when it does not.
+    VectorFloatCompare {
+        op: FloatCompare,
+        a: Value,
+        b: Value,
+    },
+    /// Takes each bit from `then` where the bit of the mask is 1, and from
+    /// `otherwise` where it is 0. For a mask that a comparison gave, each lane
+    /// is `then` or `otherwise` as the scalar choice on the lane of the mask.
+    VectorChoose {
+        mask: Value,
+        then: Value,
+        otherwise: Value,
+    },
+    /// The vector whose every lane is the integer or the float.
+    VectorSplat(Value),
+    /// The lane of the vector at the place, which is below the number of lanes.
+    VectorExtract {
+        vector: Value,
+        lane: u8,
+    },
+    /// The vector with the lane at the place, which is below the number of
+    /// lanes, replaced by the value.
+    VectorInsert {
+        vector: Value,
+        lane: u8,
+        value: Value,
+    },
+    /// The sum of the lanes. Of integers it is the sum with the bits that do not
+    /// fit left off. Of floats it is added in pairs of lanes that lie
+    /// next to each other, and then in pairs of those sums, so that the sum of
+    /// lanes 0 to 3 is `(l0 + l1) + (l2 + l3)`, and each addition rounds as
+    /// that of `FloatBinary` does.
+    VectorSum(Value),
+    /// The place of the first lane of the mask whose top bit is 1, as an integer
+    /// of 64 bits, and the number of lanes when none has. A lane of a mask that
+    /// a comparison gave is all ones or all zeros, so this is its first lane that
+    /// is set.
+    VectorFirstSet(Value),
     /// Gives an integer with more bits that stands for the same number,
     /// read as signed or as unsigned.
     Widen {
@@ -370,9 +533,17 @@ impl Op {
             | Op::Compare { a, b, .. }
             | Op::Overflows { a, b, .. }
             | Op::FloatBinary { a, b, .. }
-            | Op::FloatCompare { a, b, .. } => values.extend([*a, *b]),
+            | Op::FloatCompare { a, b, .. }
+            | Op::VectorBinary { a, b, .. }
+            | Op::VectorFloatBinary { a, b, .. }
+            | Op::VectorCompare { a, b, .. }
+            | Op::VectorFloatCompare { a, b, .. } => values.extend([*a, *b]),
             Op::Widen { value, .. }
             | Op::Narrow(value)
+            | Op::VectorSplat(value)
+            | Op::VectorSum(value)
+            | Op::VectorFirstSet(value)
+            | Op::VectorExtract { vector: value, .. }
             | Op::FloatNegate(value)
             | Op::FloatFromInt { value, .. }
             | Op::IntFromFloat { value, .. }
@@ -381,7 +552,13 @@ impl Op {
                 on,
                 then,
                 otherwise,
+            }
+            | Op::VectorChoose {
+                mask: on,
+                then,
+                otherwise,
             } => values.extend([*on, *then, *otherwise]),
+            Op::VectorInsert { vector, value, .. } => values.extend([*vector, *value]),
             Op::Load { address, .. } => values.push(*address),
             Op::Store { address, value, .. } => values.extend([*address, *value]),
             Op::Call { args, .. } | Op::System { args, .. } => values.extend(args),

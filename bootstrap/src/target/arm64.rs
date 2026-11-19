@@ -1421,12 +1421,25 @@ impl<S: System> Writer<'_, S> {
                 let address = self.read(asm, X16, *address);
                 self.float_store(asm, Place::At(address), *value);
             }
+            Op::VectorBinary { .. }
+            | Op::VectorFloatBinary { .. }
+            | Op::VectorCompare { .. }
+            | Op::VectorFloatCompare { .. }
+            | Op::VectorChoose { .. }
+            | Op::VectorSplat(_)
+            | Op::VectorExtract { .. }
+            | Op::VectorInsert { .. }
+            | Op::VectorSum(_)
+            | Op::VectorFirstSet(_) => {
+                unreachable!("arm64 does not build vectors yet")
+            }
             Op::Constant(_) if matches!(self.at[results[0].0], Loc::Imm(_)) => {}
             Op::Constant(c) => {
                 let result = results[0];
                 let t = self.target(result);
                 match c {
                     Constant::Float(_) => unreachable!("a float constant is made as one"),
+                    Constant::Vector(..) => unreachable!("arm64 does not build vectors yet"),
                     Constant::Int(n) => {
                         let n = match self.width(result) {
                             8 => *n,

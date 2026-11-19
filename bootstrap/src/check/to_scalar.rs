@@ -421,6 +421,7 @@ impl<'a> Out<'a> {
             form::Type::Address => self.constant(form::Constant::Null, ty),
             form::Type::Int(_) => self.constant(form::Constant::Int(0), ty),
             form::Type::Float(_) => self.constant(form::Constant::Float(0), ty),
+            form::Type::Vector(_) => self.constant(form::Constant::vector(0), ty),
         }
     }
 

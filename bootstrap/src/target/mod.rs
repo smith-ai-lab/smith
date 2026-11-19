@@ -28,7 +28,7 @@ mod x86_64;
 /// the jump.
 pub use wasm_structure::is_structured;
 
-use crate::scalar::Program;
+use crate::scalar::{Program, Type};
 
 /// Declares the `Target` enum along with `Target::ALL`, its list of cases,
 /// and each case's name, so that a case cannot be added without joining
@@ -105,8 +105,19 @@ impl Target {
         }
     }
 
-    /// The executable for the program.
+    /// The executable for the program. A program with a vector is refused by a
+    /// target that does not build them, with one message that names the first
+    /// function that has one.
     pub fn emit(self, program: &Program) -> Vec<u8> {
+        if !self.builds_vectors()
+            && let Some(function) = (program.functions.iter())
+                .position(|f| f.types.iter().any(|ty| matches!(ty, Type::Vector(_))))
+        {
+            panic!(
+                "{} does not build vectors yet: function {function} has one",
+                self.name()
+            );
+        }
         match self {
             Target::LinuxX64 => linux_x64::emit(program),
             Target::MacosX64 => macos_x64::emit(program),
@@ -128,6 +139,20 @@ impl Target {
             | Target::LinuxArm64
             | Target::WindowsArm64 => true,
             Target::Wasm => false,
+        }
+    }
+
+    /// Whether the target builds a function that has a vector. A target that
+    /// does not stops, with one message that names the function.
+    pub fn builds_vectors(self) -> bool {
+        match self {
+            Target::LinuxX64
+            | Target::MacosX64
+            | Target::WindowsX64
+            | Target::MacosArm64
+            | Target::LinuxArm64
+            | Target::WindowsArm64
+            | Target::Wasm => false,
         }
     }
 

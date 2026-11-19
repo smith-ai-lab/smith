@@ -253,6 +253,52 @@ pub(super) fn renamed(op: &Op, rename: &impl Fn(Value) -> Value) -> Op {
             value: rename(*value),
         },
         Op::FloatResize(value) => Op::FloatResize(rename(*value)),
+        Op::VectorBinary { op, a, b } => Op::VectorBinary {
+            op: *op,
+            a: rename(*a),
+            b: rename(*b),
+        },
+        Op::VectorFloatBinary { op, a, b } => Op::VectorFloatBinary {
+            op: *op,
+            a: rename(*a),
+            b: rename(*b),
+        },
+        Op::VectorCompare { op, signed, a, b } => Op::VectorCompare {
+            op: *op,
+            signed: *signed,
+            a: rename(*a),
+            b: rename(*b),
+        },
+        Op::VectorFloatCompare { op, a, b } => Op::VectorFloatCompare {
+            op: *op,
+            a: rename(*a),
+            b: rename(*b),
+        },
+        Op::VectorChoose {
+            mask,
+            then,
+            otherwise,
+        } => Op::VectorChoose {
+            mask: rename(*mask),
+            then: rename(*then),
+            otherwise: rename(*otherwise),
+        },
+        Op::VectorSplat(value) => Op::VectorSplat(rename(*value)),
+        Op::VectorExtract { vector, lane } => Op::VectorExtract {
+            vector: rename(*vector),
+            lane: *lane,
+        },
+        Op::VectorInsert {
+            vector,
+            lane,
+            value,
+        } => Op::VectorInsert {
+            vector: rename(*vector),
+            lane: *lane,
+            value: rename(*value),
+        },
+        Op::VectorSum(vector) => Op::VectorSum(rename(*vector)),
+        Op::VectorFirstSet(mask) => Op::VectorFirstSet(rename(*mask)),
         Op::Widen { signed, value } => Op::Widen {
             signed: *signed,
             value: rename(*value),

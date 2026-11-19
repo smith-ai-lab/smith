@@ -1,9 +1,13 @@
 //! Runs a program in the scalar form, in-process. What it gives is what the
 //! program does.
 
+use super::vector::{
+    lane_of, lane_type, vector_binary, vector_choose, vector_compare, vector_first_set,
+    vector_float_binary, vector_float_compare, vector_splat, vector_sum, with_lane,
+};
 use super::{
-    Binary, Bits, Compare, Constant, End, FloatBinary, FloatBits, FloatCompare, Jump, Op, Program,
-    Stream, System, Type, Value,
+    Binary, Bits, Compare, Constant, End, FloatBinary, FloatBits, FloatCompare, Jump, Lane, Op,
+    Program, Stream, System, Type, Value,
 };
 
 /// What a program did: what it wrote to standard output, and the status it
@@ -33,6 +37,8 @@ const BASE: usize = 0x1000;
 enum Word {
     Int(u64),
     Address(usize),
+    /// The bits of a vector, lane 0 in the lowest.
+    Vector(u128),
 }
 
 struct Machine<'a> {
@@ -260,6 +266,7 @@ pub fn call(program: &Program, function: usize, args: &[u64]) -> Vec<u64> {
     .map(|w| match w {
         Word::Int(n) => n,
         Word::Address(_) => panic!("a function that gives an address"),
+        Word::Vector(_) => panic!("a function that gives a vector"),
     })
     .collect()
 }
@@ -355,6 +362,7 @@ pub(super) fn bits_of(ty: Type) -> Bits {
     match ty {
         Type::Int(bits) => bits,
         Type::Float(_) => panic!("a float where an integer is needed"),
+        Type::Vector(_) => panic!("a vector where an integer is needed"),
         Type::Address => panic!("an address where an integer is needed"),
     }
 }
@@ -496,6 +504,7 @@ fn width(ty: Type) -> usize {
     match ty {
         Type::Float(bits) => bits.count() as usize / 8,
         Type::Int(bits) => bits.count() as usize / 8,
+        Type::Vector(_) => 16,
         Type::Address => 8,
     }
 }
@@ -598,6 +607,96 @@ impl Machine<'_> {
                         };
                         vec![Word::Int(float_resize(from, to, x))]
                     }
+                    Op::Constant(c @ Constant::Vector(..)) => {
+                        vec![Word::Vector(c.vector_bits().expect("a vector"))]
+                    }
+                    Op::VectorBinary { op, a, b } => {
+                        let Lane::Int(bits) = lane_type(f.types[a.0]) else {
+                            panic!("arithmetic on lanes that are not integers")
+                        };
+                        let (Word::Vector(x), Word::Vector(y)) = (get(a), get(b)) else {
+                            panic!("arithmetic on what is not a vector")
+                        };
+                        vec![Word::Vector(vector_binary(*op, bits, x, y))]
+                    }
+                    Op::VectorFloatBinary { op, a, b } => {
+                        let Lane::Float(bits) = lane_type(f.types[a.0]) else {
+                            panic!("arithmetic on lanes that are not floats")
+                        };
+                        let (Word::Vector(x), Word::Vector(y)) = (get(a), get(b)) else {
+                            panic!("arithmetic on what is not a vector")
+                        };
+                        vec![Word::Vector(vector_float_binary(*op, bits, x, y))]
+                    }
+                    Op::VectorCompare { op, signed, a, b } => {
+                        let Lane::Int(bits) = lane_type(f.types[a.0]) else {
+                            panic!("a comparison of lanes that are not integers")
+                        };
+                        let (Word::Vector(x), Word::Vector(y)) = (get(a), get(b)) else {
+                            panic!("a comparison of what is not vectors")
+                        };
+                        vec![Word::Vector(vector_compare(*op, *signed, bits, x, y))]
+                    }
+                    Op::VectorFloatCompare { op, a, b } => {
+                        let Lane::Float(bits) = lane_type(f.types[a.0]) else {
+                            panic!("a comparison of lanes that are not floats")
+                        };
+                        let (Word::Vector(x), Word::Vector(y)) = (get(a), get(b)) else {
+                            panic!("a comparison of what is not vectors")
+                        };
+                        vec![Word::Vector(vector_float_compare(*op, bits, x, y))]
+                    }
+                    Op::VectorChoose {
+                        mask,
+                        then,
+                        otherwise,
+                    } => {
+                        let (Word::Vector(m), Word::Vector(t), Word::Vector(o)) =
+                            (get(mask), get(then), get(otherwise))
+                        else {
+                            panic!("a choice of what is not vectors")
+                        };
+                        vec![Word::Vector(vector_choose(m, t, o))]
+                    }
+                    Op::VectorSplat(value) => {
+                        let lane = lane_type(f.types[instruction.results[0].0]);
+                        let Word::Int(n) = get(value) else {
+                            panic!("a vector of what is not a number")
+                        };
+                        vec![Word::Vector(vector_splat(lane, n))]
+                    }
+                    Op::VectorExtract { vector, lane: at } => {
+                        let lane = lane_type(f.types[vector.0]);
+                        let Word::Vector(v) = get(vector) else {
+                            panic!("a lane of what is not a vector")
+                        };
+                        vec![Word::Int(lane_of(lane, v, u32::from(*at)))]
+                    }
+                    Op::VectorInsert {
+                        vector,
+                        lane: at,
+                        value,
+                    } => {
+                        let lane = lane_type(f.types[vector.0]);
+                        let (Word::Vector(v), Word::Int(n)) = (get(vector), get(value)) else {
+                            panic!("a lane put in what is not a vector")
+                        };
+                        vec![Word::Vector(with_lane(lane, v, u32::from(*at), n))]
+                    }
+                    Op::VectorSum(vector) => {
+                        let lane = lane_type(f.types[vector.0]);
+                        let Word::Vector(v) = get(vector) else {
+                            panic!("the sum of what is not a vector")
+                        };
+                        vec![Word::Int(vector_sum(lane, v))]
+                    }
+                    Op::VectorFirstSet(mask) => {
+                        let lane = lane_type(f.types[mask.0]);
+                        let Word::Vector(m) = get(mask) else {
+                            panic!("the first lane set of what is not a vector")
+                        };
+                        vec![Word::Int(vector_first_set(lane, m))]
+                    }
                     Op::Overflows { op, signed, a, b } => {
                         let bits = bits_of(f.types[a.0]);
                         let (Word::Int(x), Word::Int(y)) = (get(a), get(b)) else {
@@ -667,13 +766,14 @@ impl Machine<'_> {
                         };
                         let size = width(*ty);
                         let from = at - BASE;
-                        let mut n = 0u64;
+                        let mut n = 0u128;
                         for (k, byte) in self.memory[from..from + size].iter().enumerate() {
-                            n |= (*byte as u64) << (8 * k);
+                            n |= (*byte as u128) << (8 * k);
                         }
                         vec![match ty {
                             Type::Address => Word::Address(n as usize),
-                            Type::Int(_) | Type::Float(_) => Word::Int(n),
+                            Type::Int(_) | Type::Float(_) => Word::Int(n as u64),
+                            Type::Vector(_) => Word::Vector(n),
                         }]
                     }
                     Op::Store { ty, address, value } => {
@@ -681,8 +781,9 @@ impl Machine<'_> {
                             panic!("a write through what is not an address")
                         };
                         let n = match get(value) {
-                            Word::Int(n) => n,
-                            Word::Address(a) => a as u64,
+                            Word::Int(n) => u128::from(n),
+                            Word::Address(a) => a as u128,
+                            Word::Vector(v) => v,
                         };
                         let size = width(*ty);
                         let from = at - BASE;

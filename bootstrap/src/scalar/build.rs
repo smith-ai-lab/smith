@@ -110,6 +110,92 @@ impl Builder {
         self.emit(Op::FloatResize(value), &[Type::Float(to)])[0]
     }
 
+    /// A vector of the lane that holds the bits `n`, lane 0 in the lowest.
+    pub fn vector(&mut self, lane: super::Lane, n: u128) -> Value {
+        self.emit(Op::Constant(Constant::vector(n)), &[Type::Vector(lane)])[0]
+    }
+
+    pub fn vector_binary(&mut self, op: Binary, a: Value, b: Value) -> Value {
+        let ty = self.types[a.0];
+        self.emit(Op::VectorBinary { op, a, b }, &[ty])[0]
+    }
+
+    pub fn vector_float_binary(&mut self, op: FloatBinary, a: Value, b: Value) -> Value {
+        let ty = self.types[a.0];
+        self.emit(Op::VectorFloatBinary { op, a, b }, &[ty])[0]
+    }
+
+    pub fn vector_compare(
+        &mut self,
+        op: super::Relation,
+        signed: bool,
+        a: Value,
+        b: Value,
+    ) -> Value {
+        let Type::Vector(lane) = self.types[a.0] else {
+            panic!("a comparison of what is not vectors")
+        };
+        self.emit(Op::VectorCompare { op, signed, a, b }, &[lane.mask()])[0]
+    }
+
+    pub fn vector_float_compare(&mut self, op: FloatCompare, a: Value, b: Value) -> Value {
+        let Type::Vector(lane) = self.types[a.0] else {
+            panic!("a comparison of what is not vectors")
+        };
+        self.emit(Op::VectorFloatCompare { op, a, b }, &[lane.mask()])[0]
+    }
+
+    pub fn vector_choose(&mut self, mask: Value, then: Value, otherwise: Value) -> Value {
+        let ty = self.types[then.0];
+        self.emit(
+            Op::VectorChoose {
+                mask,
+                then,
+                otherwise,
+            },
+            &[ty],
+        )[0]
+    }
+
+    pub fn vector_splat(&mut self, value: Value) -> Value {
+        let lane = match self.types[value.0] {
+            Type::Int(bits) => super::Lane::Int(bits),
+            Type::Float(bits) => super::Lane::Float(bits),
+            _ => panic!("a vector of what is not an integer or a float"),
+        };
+        self.emit(Op::VectorSplat(value), &[Type::Vector(lane)])[0]
+    }
+
+    pub fn vector_extract(&mut self, vector: Value, lane: u8) -> Value {
+        let Type::Vector(of) = self.types[vector.0] else {
+            panic!("a lane of what is not a vector")
+        };
+        self.emit(Op::VectorExtract { vector, lane }, &[of.scalar()])[0]
+    }
+
+    pub fn vector_insert(&mut self, vector: Value, lane: u8, value: Value) -> Value {
+        let ty = self.types[vector.0];
+        self.emit(
+            Op::VectorInsert {
+                vector,
+                lane,
+                value,
+            },
+            &[ty],
+        )[0]
+    }
+
+    pub fn vector_sum(&mut self, vector: Value) -> Value {
+        let Type::Vector(lane) = self.types[vector.0] else {
+            panic!("the sum of what is not a vector")
+        };
+        self.emit(Op::VectorSum(vector), &[lane.scalar()])[0]
+    }
+
+    pub fn vector_first_set(&mut self, mask: Value) -> Value {
+        self.emit(Op::VectorFirstSet(mask), &[Type::Int(Bits::B64)])[0]
+    }
+
     pub fn null(&mut self) -> Value {
         self.emit(Op::Constant(Constant::Null), &[Type::Address])[0]
     }
