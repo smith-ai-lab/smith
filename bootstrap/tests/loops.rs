@@ -202,8 +202,9 @@ fn reach(g: &mut Gen) -> Reach {
     }
 }
 
-/// Inside `loop i in lo..hi`, `i + c` compiles exactly when `hi - 1 + c` is a
-/// number of the type, and `i - c` exactly when `lo - c` is, with no `if`.
+/// Inside `loop i in lo..hi`, `i + c` given to a binding of the type compiles
+/// exactly when `hi - 1 + c` is a number of the type, and `i - c` exactly when
+/// `lo - c` is, with no `if`.
 fn inside_a_loop_over_a_range_arith_knows_the_counter_is_inside_the_range() {
     generate::check(43, 150, reach, |r| {
         let operation = if r.up {
@@ -212,7 +213,7 @@ fn inside_a_loop_over_a_range_arith_knows_the_counter_is_inside_the_range() {
             format!("i - {}", r.by)
         };
         let source = with_header(format!(
-            "fn main() ! console, alloc {{\n  lo: {t} = {lo}\n  hi: {t} = {hi}\n  loop i in lo..hi {{\n    x = {operation}\n    print(\"{{x}}\")\n  }}\n}}\n",
+            "fn main() ! console, alloc {{\n  lo: {t} = {lo}\n  hi: {t} = {hi}\n  loop i in lo..hi {{\n    x: {t} = {operation}\n    print(\"{{x}}\")\n  }}\n}}\n",
             t = r.ty.name,
             lo = r.lo,
             hi = r.hi,
@@ -299,14 +300,14 @@ fn a_var_assigned_in_a_loop_is_known_to_arith_in_the_round_that_gave_it_and_only
         let t = ty.name;
         let goal = format!("x + 1 <= {}", ty.max());
         let inside = with_header(format!(
-            "fn main() ! console, alloc {{\n  var x: {t} = 1\n  loop i in 0..2 {{\n    x = 1\n    y = x + 1\n    print(\"{{y}}\")\n  }}\n}}\n"
+            "fn main() ! console, alloc {{\n  var x: {t} = 1\n  loop i in 0..2 {{\n    x = 1\n    y: {t} = x + 1\n    print(\"{{y}}\")\n  }}\n}}\n"
         ));
         assert_eq!(refused(&inside), Vec::<String>::new(), "for {inside}");
         let after = with_header(format!(
-            "fn main() ! console, alloc {{\n  var x: {t} = 1\n  loop i in 0..2 {{ x = 1 }}\n  y = x + 1\n  print(\"{{y}}\")\n}}\n"
+            "fn main() ! console, alloc {{\n  var x: {t} = 1\n  loop i in 0..2 {{ x = 1 }}\n  y: {t} = x + 1\n  print(\"{{y}}\")\n}}\n"
         ));
         let earlier = with_header(format!(
-            "fn main() ! console, alloc {{\n  var x: {t} = 1\n  loop i in 0..2 {{\n    y = x + 1\n    print(\"{{y}}\")\n    x = 1\n  }}\n}}\n"
+            "fn main() ! console, alloc {{\n  var x: {t} = 1\n  loop i in 0..2 {{\n    y: {t} = x + 1\n    print(\"{{y}}\")\n    x = 1\n  }}\n}}\n"
         ));
         for source in [after, earlier] {
             let errors = refused(&source);

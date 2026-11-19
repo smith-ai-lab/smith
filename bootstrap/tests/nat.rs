@@ -65,6 +65,31 @@ fn stdout(source: &str) -> String {
     String::from_utf8(out.stdout).unwrap()
 }
 
+/// Whether the exact range of `op` on a number of `a` and one of `b` is one
+/// that a type of 64 bits holds.
+fn exact_is_held(op: &str, a: &Whole, b: &Whole) -> bool {
+    let results = [
+        (a.min, b.min),
+        (a.min, b.max),
+        (a.max, b.min),
+        (a.max, b.max),
+    ]
+    .map(|(x, y)| match op {
+        "+" => x.checked_add(y),
+        "-" => x.checked_sub(y),
+        _ => x.checked_mul(y),
+    });
+    let Some(all) = results.into_iter().collect::<Option<Vec<i128>>>() else {
+        return false;
+    };
+    let (low, high) = (all.iter().min().copied(), all.iter().max().copied());
+    match (low, high) {
+        (Some(low), Some(high)) if low < 0 => low >= i64::MIN as i128 && high <= i64::MAX as i128,
+        (Some(_), Some(high)) => high <= u64::MAX as i128,
+        _ => false,
+    }
+}
+
 fn compiles(source: &str) -> bool {
     check(source.as_bytes()).is_ok()
 }
@@ -149,22 +174,40 @@ fn a_loop_over_the_size_gives_a_nat_that_indexes_and_no_other_type_indexes() {
     });
 }
 
-/// `+`, `-`, and `*` take two sides of one type, so two types meeting in one
-/// are refused. A comparison takes any two ranges, and is refused only where
-/// no type holds the numbers of both.
+/// `+`, `-`, and `*` of two numbers give the exact range of the result where a
+/// type holds it, and the result is then taken where it is needed only if it
+/// is shown to fit. Where no type holds it, the two sides must be of one type,
+/// and are refused if they are not. A comparison takes any two ranges, and is
+/// refused only where no type holds the numbers of both.
 fn an_operator_between_two_types_compiles_exactly_when_they_are_one_type_for_nat_and_every_whole_number_type()
 {
     const COMPARE: [&str; 6] = ["==", "!=", "<", "<=", ">", ">="];
     let all = whole();
     for (i, a) in all.iter().enumerate() {
         for (j, b) in all.iter().enumerate() {
-            let mut proven = true;
+            let mut expected = true;
+            let mut single_mistake = false;
             let mut compared = false;
             let source = if (i + j) % 2 == 0 {
                 // A difference is not proven to fit from the ranges of its sides,
                 // and a product of two variables is not one `arith` reasons about.
                 let op = ["+", "-", "*"][(i / 2 + j) % 3];
-                proven = op == "+";
+                // The numbers of the sides are below 9, so where a type holds the
+                // exact range, a sum fits what takes it, a difference does where
+                // it takes a negative number, and a product of two variables is not
+                // one `arith` reasons about. Where none does, the sides must be of
+                // one type, and only a sum is proven.
+                let held = exact_is_held(op, a, b);
+                expected = if held {
+                    match op {
+                        "+" => true,
+                        "-" => a.min < 0,
+                        _ => false,
+                    }
+                } else {
+                    a == b && op == "+"
+                };
+                single_mistake = !held && a != b && op == "+";
                 with_header(format!(
                     "fn f(x: {}, y: {}) -> {}\n  requires 0 <= x and x < 9 and 0 <= y and y < 9\n{{\n  x {op} y\n}}\n\nfn main() ! console, alloc {{\n  print(\"{{f(1, 1)}}\")\n}}\n",
                     a.name, b.name, a.name
@@ -185,8 +228,8 @@ fn an_operator_between_two_types_compiles_exactly_when_they_are_one_type_for_nat
                 assert_eq!(compiles(&source), held, "for\n{source}");
                 continue;
             }
-            assert_eq!(compiles(&source), a == b && proven, "for\n{source}");
-            if a != b && proven {
+            assert_eq!(compiles(&source), expected, "for\n{source}");
+            if single_mistake {
                 assert_eq!(mistakes(&source), 1, "for\n{source}");
             }
         }
