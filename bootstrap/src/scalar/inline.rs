@@ -181,6 +181,7 @@ fn inlined(f: &Function, done: &[Option<Function>], sites: &[usize]) -> Function
                         .map(|i| Instruction {
                             results: i.results.iter().map(|v| rename(*v)).collect(),
                             op: renamed(&i.op, &rename),
+                            at: i.at,
                         })
                         .collect(),
                     end,

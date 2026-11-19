@@ -38,6 +38,26 @@ pub const ONCE: &[Test] = &[
         "run_and_check_take_no_map",
         run_and_check_take_no_map,
     ),
+    (
+        "the_at_lines_of_hello_name_its_file_and_the_line_of_the_print_call",
+        the_at_lines_of_hello_name_its_file_and_the_line_of_the_print_call,
+    ),
+    (
+        "the_at_lines_of_a_function_follow_its_line_in_order_and_cover_it_for_every_target",
+        the_at_lines_of_a_function_follow_its_line_in_order_and_cover_it_for_every_target,
+    ),
+    (
+        "a_function_built_in_place_keeps_its_own_name_on_the_at_lines_of_its_code",
+        a_function_built_in_place_keeps_its_own_name_on_the_at_lines_of_its_code,
+    ),
+    (
+        "no_pass_makes_a_place_the_program_did_not_have",
+        no_pass_makes_a_place_the_program_did_not_have,
+    ),
+    (
+        "an_instruction_a_pass_makes_in_place_of_others_holds_the_place_of_the_first",
+        an_instruction_a_pass_makes_in_place_of_others_holds_the_place_of_the_first,
+    ),
 ];
 
 const HELLO: &str = "use std.console (console, print)\n\nfn main() ! console { print(\"hello world\") }\n";
@@ -59,10 +79,10 @@ fn build_map_writes_the_map_beside_the_executable_with_a_line_for_main() {
         assert!(built.status.success(), "{}: {}", target.name(), stderr(&built));
         assert!(dir.join(target.executable_name("hello")).is_file());
         let map = std::fs::read_to_string(dir.join("hello.map")).unwrap();
-        let names: Vec<&str> = map.lines().map(|l| parse(l).3).collect();
+        let fns = map.lines().filter(|l| l.starts_with("fn "));
+        let names: Vec<&str> = fns.map(|l| parse(l).3).collect();
         assert!(names.contains(&"hello.main"), "{}: {names:?}", target.name());
-        // Nothing but `fn` lines is there yet.
-        assert!(map.lines().all(|l| l.starts_with("fn ")), "{}", target.name());
+        assert!(map.lines().all(|l| l.starts_with("fn ") || l.starts_with("at ")), "{}", target.name());
     }
 }
 
@@ -133,7 +153,8 @@ fn the_fn_lines_are_in_the_order_of_their_addresses_and_cover_the_code_for_every
             assert!(last.address + last.size <= address_of_end(&executable, target, &parts), "{}", target.name());
             // The text of the map is the lines, one for each part.
             let names: Vec<String> = program.functions.iter().map(|f| f.name.clone()).collect();
-            assert_eq!(smith::target::map(&names, &parts).lines().count(), parts.len());
+            let text = smith::target::map(&names, &parts);
+            assert_eq!(text.lines().filter(|l| l.starts_with("fn ")).count(), parts.len());
         }
     });
 }
@@ -257,4 +278,196 @@ fn run_and_check_take_no_map() {
         assert!(said.contains("usage: smith build"), "{command}: {said}");
         assert!(!Path::new(&dir.join("hello.map")).exists(), "{command}");
     }
+}
+
+/// The lines of an `at` line: the address, the size, the file, the line, the
+/// column, and the name.
+fn parse_at(line: &str) -> (u64, u64, &str, usize, usize, &str) {
+    let words: Vec<&str> = line.split(' ').collect();
+    assert_eq!(words.len(), 5, "{line}");
+    assert_eq!(words[0], "at", "{line}");
+    let address = u64::from_str_radix(words[1].strip_prefix("0x").expect("hex"), 16).unwrap();
+    let mut place = words[3].rsplitn(3, ':');
+    let col = place.next().unwrap().parse().unwrap();
+    let row = place.next().unwrap().parse().unwrap();
+    (address, words[2].parse().unwrap(), place.next().unwrap(), row, col, words[4])
+}
+
+/// Each function of a map with the `at` lines after it.
+fn functions(map: &str) -> Vec<(&str, Vec<&str>)> {
+    let mut found: Vec<(&str, Vec<&str>)> = Vec::new();
+    for line in map.lines() {
+        if line.starts_with("fn ") {
+            found.push((line, Vec::new()));
+        } else {
+            found.last_mut().expect("an at line follows a fn line").1.push(line);
+        }
+    }
+    found
+}
+
+const SPREAD: &str = "use std.console (console, print)\n\nfn main() ! console {\n  print(\"one\")\n  print(\"two\")\n}\n";
+
+fn the_at_lines_of_hello_name_its_file_and_the_line_of_the_print_call() {
+    let dir = folder("map_at_hello");
+    std::fs::write(dir.join("hello.smith"), SPREAD).unwrap();
+    for target in buildable() {
+        let built = smith(&dir, &["build", "--map", "--target", target.name(), "hello.smith"]);
+        assert!(built.status.success(), "{}: {}", target.name(), stderr(&built));
+        let map = std::fs::read_to_string(dir.join("hello.map")).unwrap();
+        let parts = functions(&map);
+        let (_, at) = parts
+            .iter()
+            .find(|(line, at)| !at.is_empty() && parse(line).3 == "hello.main")
+            .unwrap_or_else(|| panic!("{}: main has no at lines\n{map}", target.name()));
+        let lines: Vec<usize> = at.iter().map(|l| parse_at(l).3).collect();
+        assert!(at.iter().all(|l| parse_at(l).2 == "hello.smith"), "{}", target.name());
+        assert!(at.iter().all(|l| parse_at(l).5 == "hello.main"), "{}", target.name());
+        // The two calls of `print` are on lines 4 and 5, and `main` on 3 to 6.
+        assert!(lines.contains(&4) && lines.contains(&5), "{}: {lines:?}", target.name());
+        assert!(lines.iter().all(|l| (3..=6).contains(l)), "{}: {lines:?}", target.name());
+    }
+}
+
+fn the_at_lines_of_a_function_follow_its_line_in_order_and_cover_it_for_every_target() {
+    generate::check(9203, 10, programs::program, |case| {
+        if case.mistake.is_some() {
+            return;
+        }
+        let program = passed(&case.source);
+        let lines = String::from_utf8_lossy(&case.source).lines().count();
+        for target in buildable() {
+            let (_, parts) = target.emit_parts(&program);
+            let names: Vec<String> = program.functions.iter().map(|f| f.name.clone()).collect();
+            let map = smith::target::map(&names, &parts);
+            for (line, at) in functions(&map) {
+                let (address, size, _, _) = parse(line);
+                let mut next = address;
+                for run in &at {
+                    let (from, length, file, row, col, name) = parse_at(run);
+                    assert_eq!(from, next, "a gap or an overlap in {line} for {}", target.name());
+                    assert!(length > 0, "{run}");
+                    next = from + length;
+                    assert!(row >= 1 && col >= 1, "{run}");
+                    assert!(file.ends_with(".smith"), "{run}");
+                    if file == "main.smith" {
+                        assert!(row <= lines, "{run}: the file has {lines} lines");
+                    }
+                    assert!(!name.is_empty() && !name.contains(' '), "{run}");
+                }
+                if !at.is_empty() {
+                    assert_eq!(next, address + size, "{line} is not covered for {}", target.name());
+                }
+            }
+        }
+    });
+}
+
+fn a_function_built_in_place_keeps_its_own_name_on_the_at_lines_of_its_code() {
+    let source = "use std.console (console, print)\n\nfn greet() ! console {\n  print(\"hi\")\n}\n\nfn main() ! console {\n  greet()\n}\n";
+    let program = passed(source.as_bytes());
+    let names: Vec<String> = program.functions.iter().map(|f| f.name.clone()).collect();
+    for target in buildable() {
+        let (_, parts) = target.emit_parts(&program);
+        let map = smith::target::map(&names, &parts);
+        // `greet` is built in place of its call, so no line is its own, and the
+        // lines of the function that holds its code name it.
+        let own = functions(&map).into_iter().any(|(line, _)| parse(line).3 == "main.greet");
+        let kept = functions(&map).into_iter().any(|(line, at)| {
+            let holder = parse(line).3;
+            holder != "main.greet" && at.iter().any(|l| parse_at(l).5 == "main.greet")
+        });
+        assert!(!own && kept, "{}\n{map}", target.name());
+    }
+}
+
+/// Every place the instructions of a program hold.
+fn places_of(program: &Program) -> std::collections::HashSet<(u32, u32, u32, u32)> {
+    program
+        .functions
+        .iter()
+        .flat_map(|f| &f.blocks)
+        .flat_map(|b| &b.instructions)
+        .map(|i| (i.at.file, i.at.function, i.at.line, i.at.col))
+        .collect()
+}
+
+fn no_pass_makes_a_place_the_program_did_not_have() {
+    type Pass = fn(&Program) -> Program;
+    let passes: [(&str, Pass); 8] = [
+        ("inline", scalar::inline),
+        ("trim", scalar::trim),
+        ("thread", scalar::thread),
+        ("fold", scalar::fold),
+        ("fuse", scalar::fuse),
+        ("common", scalar::common),
+        ("remove", scalar::remove),
+        ("passes", scalar::passes),
+    ];
+    generate::check(9204, 10, programs::program, |case| {
+        if case.mistake.is_some() {
+            return;
+        }
+        let program = smith::lower(&case.source).expect("a program that builds");
+        let before = places_of(&program);
+        // A place was given, so the program has some.
+        assert!(before.iter().any(|p| p.2 > 0));
+        for (name, pass) in passes {
+            let after = places_of(&pass(&program));
+            // The code a pass adds has none, and the rest keeps one it had.
+            assert!(
+                after.iter().all(|p| p.2 == 0 || before.contains(p)),
+                "{name} made a place"
+            );
+        }
+    });
+}
+
+fn an_instruction_a_pass_makes_in_place_of_others_holds_the_place_of_the_first() {
+    use smith::scalar::{Binary, Bits, Builder, Fused, Op, Place, Type};
+    let at = |line| Place { file: 1, function: 1, line, col: 1 };
+    let places = |program: &Program| -> Vec<(String, u32)> {
+        program
+            .functions
+            .iter()
+            .flat_map(|f| &f.blocks)
+            .flat_map(|b| &b.instructions)
+            .map(|i| (format!("{:?}", i.op), i.at.line))
+            .collect()
+    };
+    // A sum of two constants is a constant, and is where the sum was.
+    let mut b = Builder::new();
+    let one = b.int(Bits::B64, 1);
+    let two = b.int(Bits::B64, 2);
+    let sum = b.binary(Binary::Add, one, two);
+    b.ret(vec![sum]);
+    let mut f = b.finish(&[Type::Int(Bits::B64)]);
+    f.blocks[0].instructions[2].at = at(7);
+    let mut main = Builder::new();
+    main.ret(vec![]);
+    let program = Program { data: Vec::new(), functions: vec![f, main.finish(&[])], main: 1 };
+    let folded = scalar::fold(&program);
+    let sum_at = places(&folded).into_iter().rev().find(|(op, _)| op.starts_with("Constant(Int(3"));
+    assert_eq!(sum_at.map(|(_, line)| line), Some(7));
+    // A product and the sum that uses it are one fused instruction, which is
+    // where the product was.
+    let ty = Type::Float(smith::scalar::FloatBits::F64);
+    let mut b = Builder::new();
+    let v = b.params(&[ty, ty, ty]);
+    let p = b.float_binary(smith::scalar::FloatBinary::Mul, v[0], v[1]);
+    let s = b.float_binary(smith::scalar::FloatBinary::Add, p, v[2]);
+    b.ret(vec![s]);
+    let mut f = b.finish(&[ty]);
+    f.blocks[0].instructions[0].at = at(3);
+    f.blocks[0].instructions[1].at = at(4);
+    let mut main = Builder::new();
+    main.ret(vec![]);
+    let program = Program { data: Vec::new(), functions: vec![f, main.finish(&[])], main: 1 };
+    let fused = scalar::fuse(&program);
+    let found = fused.functions[0].blocks[0]
+        .instructions
+        .iter()
+        .find(|i| matches!(i.op, Op::FloatFused { op: Fused::MulAdd, .. }))
+        .expect("a fused instruction");
+    assert_eq!(found.at.line, 3);
 }

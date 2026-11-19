@@ -131,6 +131,7 @@ pub(super) fn lower(typed: &Typed, start: Instance) -> form::Program {
         copies: Map::default(),
         runtimes: Vec::new(),
         data: Vec::new(),
+        files: Map::default(),
     };
     lowering.add(Body::Copy(start));
     if takes {
@@ -171,6 +172,8 @@ struct Lowering<'a> {
     /// them has no hash, as it is defined where the runtime is.
     runtimes: Vec<(Runtime, usize)>,
     data: Vec<Vec<u8>>,
+    /// The number of the name of the file of each module, once it is asked for.
+    files: Map<usize, u32>,
 }
 
 /// A function being lowered.
@@ -191,6 +194,12 @@ struct Out<'a> {
     returns: Vec<Returns>,
     /// The blocks that follow a `return`, which nothing reaches.
     dead: Vec<usize>,
+    /// The place in the source of what is being lowered, which each
+    /// instruction made holds.
+    place: form::Place,
+    /// The number of the name of the function the code being lowered is written
+    /// in, and of the name of its file's module, for the places made.
+    written: u32,
 }
 
 /// A `loop` being lowered: the names its body assigns, which each round
@@ -280,6 +289,8 @@ impl<'a> Out<'a> {
             loops: Vec::new(),
             returns: Vec::new(),
             dead: Vec::new(),
+            place: form::Place::NONE,
+            written: 0,
         };
         out.new_block();
         out
@@ -330,6 +341,7 @@ impl<'a> Out<'a> {
             .push(form::Instruction {
                 results: results.clone(),
                 op,
+                at: self.place,
             });
         results
     }
@@ -830,7 +842,9 @@ impl<'a> Lowering<'a> {
                 .named(spaceless(format!("<{name}[{ty}]>")));
         }
         let view = defs.view(instance.template);
+        let name = self.name_of(instance);
         let mut out = Out::new();
+        out.written = form::names::intern(&name);
         for (name, ty) in &view.params {
             let ty = ty.subst(&instance.args);
             let types = self.scalars(&ty);
@@ -850,7 +864,7 @@ impl<'a> Lowering<'a> {
             results,
             blocks: out.blocks,
             cold: false,
-            name: self.name_of(instance),
+            name,
         }
     }
 
@@ -1148,8 +1162,12 @@ impl<'a> Lowering<'a> {
     /// The values an expression gives, and their type, where `env` stands
     /// for the type parameters of the definition it is written in.
     fn expr(&mut self, out: &mut Out<'a>, expr: &'a Expr, env: &[Ty]) -> (Ty, Vec<form::Value>) {
+        // What the expression makes is placed where it is written, and what
+        // follows it in the expression it is part of is placed there again.
+        let outer = out.place;
+        out.place = self.place_of(out, expr.pos());
         let (ty, values) = self.as_written(out, expr, env);
-        match (&ty, self.typed.widened.get(&addr(expr))) {
+        let given = match (&ty, self.typed.widened.get(&addr(expr))) {
             (Ty::Int(from), Some(&to)) => {
                 // A range taken where a wider one is needed is the same number
                 // at the size the wider one is kept at.
@@ -1157,6 +1175,30 @@ impl<'a> Lowering<'a> {
                 (Ty::Int(to), vec![wide])
             }
             _ => (ty, values),
+        };
+        out.place = outer;
+        given
+    }
+
+    /// The place in the source a position is, in the function being lowered.
+    /// The code of the prelude has none.
+    fn place_of(&mut self, out: &Out<'a>, pos: Pos) -> form::Place {
+        if of_prelude(pos) {
+            return form::Place::NONE;
+        }
+        let module = module_of(pos);
+        let defs = self.typed.defs;
+        let file = *self.files.entry(module).or_insert_with(|| {
+            let name = (defs.file.modules.iter())
+                .find(|(n, _)| *n == module)
+                .map_or("main", |(_, name)| name.as_str());
+            form::names::intern(&format!("{}.smith", name.replace('.', "/")))
+        });
+        form::Place {
+            file,
+            function: out.written,
+            line: (pos.line % STEP) as u32,
+            col: pos.col as u32,
         }
     }
 
@@ -1598,8 +1640,11 @@ impl<'a> Lowering<'a> {
         let limits = out.frames.iter().map(Vec::len).collect();
         out.frames.push(frame);
         let caller = std::mem::replace(&mut out.at, out.frames.len() - 1);
+        let written = out.written;
+        out.written = form::names::intern(&self.name_of(&instance));
         let code = Code::Stmts(&view.f.body);
         let mut result = self.leaving(out, code, &instance.args, (&gives, false), limits);
+        out.written = written;
         out.frames.pop();
         out.at = caller;
         if gives == Ty::Nothing {
@@ -1648,8 +1693,11 @@ impl<'a> Lowering<'a> {
         let limits: Vec<usize> = out.frames.iter().map(Vec::len).collect();
         out.frames.push(vec![walked, body]);
         let caller = std::mem::replace(&mut out.at, out.frames.len() - 1);
+        let written = out.written;
+        out.written = form::names::intern(&self.name_of(&instance));
         let code = Code::Stmts(&view.f.body);
         let result = self.leaving(out, code, &instance.args, (&flow, false), limits);
+        out.written = written;
         out.frames.pop();
         out.at = caller;
         // A loop reads nothing of the `Flow` that `each` gives, so a constant

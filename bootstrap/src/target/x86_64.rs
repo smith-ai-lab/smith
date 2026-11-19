@@ -7,8 +7,8 @@ use super::frame::{self, PAGE, Passed, call_area, round_up, size};
 use super::indexed::Folded;
 use super::moves::{self, Move, Step};
 use crate::scalar::{
-    Binary, Compare, Constant, End, FloatBinary, FloatCompare, Function, Fused, Op, Program,
-    Stream, System as Call, Type, Value,
+    Binary, Compare, Constant, End, FloatBinary, FloatCompare, Function, Fused, Op,
+    Place as Written, Program, Stream, System as Call, Type, Value,
 };
 
 mod level;
@@ -136,9 +136,20 @@ pub struct Asm {
     /// instructions that may have changed it were written. A value that is
     /// held in one of them is still there while its number is the same.
     versions: [u32; 3],
+    /// Where in the code the code of an instruction with a new place begins, with
+    /// that place, for the map of an executable.
+    places: Vec<(usize, Written)>,
 }
 
 impl Asm {
+    /// Notes that the code written from here on is for an instruction that is
+    /// written at `at`, when that is not the place of the code before it.
+    pub fn note_place(&mut self, at: Written) {
+        if self.places.last().is_none_or(|(_, last)| *last != at) {
+            self.places.push((self.code.len(), at));
+        }
+    }
+
     /// How many instructions that may have changed the register were
     /// written, for rax, rcx, and rdx, and 0 for any other.
     pub fn version(&self, r: Reg) -> u32 {
@@ -1101,7 +1112,7 @@ pub fn code<S: System>(program: &Program) -> super::Laid<'_, Asm> {
         ));
     }
     let offsets: Vec<usize> = functions.iter().map(|&l| asm.label_offset(l)).collect();
-    let parts = super::parts(&offsets, &frames, asm.code_len());
+    let parts = super::parts(&offsets, &frames, asm.code_len(), &asm.places);
     let data = texts
         .into_iter()
         .zip(program.data.iter().map(Vec::as_slice))
@@ -1264,6 +1275,7 @@ fn function<S: System>(
             if w.before_choice[b][i] {
                 continue;
             }
+            asm.note_place(instruction.at);
             match i.checked_sub(1).filter(|j| w.before_choice[b][*j]) {
                 Some(j) => w.choice(asm, &block.instructions[j], instruction),
                 None => w.instruction(asm, &instruction.results, &instruction.op),

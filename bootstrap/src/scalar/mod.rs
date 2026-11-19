@@ -613,11 +613,71 @@ impl Op {
     }
 }
 
-/// An instruction: what it does, and the values it defines.
-#[derive(Clone, Debug, PartialEq, Eq)]
+/// An instruction: what it does, the values it defines, and the place in the
+/// source it was built from, which the map of an executable holds. Two
+/// instructions are equal when they do the same, wherever they were written.
+#[derive(Clone, Debug)]
 pub struct Instruction {
     pub results: Vec<Value>,
     pub op: Op,
+    pub at: Place,
+}
+
+impl PartialEq for Instruction {
+    fn eq(&self, other: &Instruction) -> bool {
+        self.results == other.results && self.op == other.op
+    }
+}
+
+impl Eq for Instruction {}
+
+/// A place in the source: the file and the function it is written in, each as the
+/// number `place::intern` gives its name, and a line and a column of the file
+/// that count from 1. A line of 0 says there is no place, as the code of the
+/// runtime has none.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Place {
+    pub file: u32,
+    pub function: u32,
+    pub line: u32,
+    pub col: u32,
+}
+
+impl Place {
+    /// No place.
+    pub const NONE: Place = Place {
+        file: 0,
+        function: 0,
+        line: 0,
+        col: 0,
+    };
+
+    pub fn is_none(self) -> bool {
+        self.line == 0
+    }
+}
+
+/// The names a place holds, which are kept once for the process: a name is the
+/// number it is given, and the same name is always the same number.
+pub mod names {
+    use std::sync::Mutex;
+
+    static NAMES: Mutex<Vec<&'static str>> = Mutex::new(Vec::new());
+
+    /// The number of the name. The names are few, a file and a function each.
+    pub fn intern(name: &str) -> u32 {
+        let mut names = NAMES.lock().expect("the names are not left held");
+        if let Some(at) = names.iter().position(|n| *n == name) {
+            return at as u32;
+        }
+        names.push(Box::leak(name.to_string().into_boxed_str()));
+        names.len() as u32 - 1
+    }
+
+    /// The name with the number.
+    pub fn name(number: u32) -> &'static str {
+        NAMES.lock().expect("the names are not left held")[number as usize]
+    }
 }
 
 /// A jump to a block, giving it a value for each of its parameters.

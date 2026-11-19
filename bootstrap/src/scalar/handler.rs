@@ -24,7 +24,7 @@
 //! is left as it is. Nothing is given back to the system.
 
 use super::{
-    Binary, Bits, Builder, Compare, Constant, End, Function, Instruction, Jump, Op, Program,
+    Binary, Bits, Builder, Compare, Constant, End, Function, Instruction, Jump, Op, Place, Program,
     System, Type, Value, escape, runtime,
 };
 
@@ -244,6 +244,7 @@ fn with_state(
                                     function: take + 1,
                                     args: vec![at, left],
                                 },
+                                at: Place::NONE,
                             });
                             *stack = Some(made);
                         }
@@ -292,6 +293,7 @@ fn with_state(
                     function: take + 1,
                     args: vec![at, left],
                 },
+                at: Place::NONE,
             });
             now.temporaries = Some(made);
         }
