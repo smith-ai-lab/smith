@@ -1,154 +1,170 @@
 ---
 type: specification
 title: Integer arithmetic
-description: Why a plain +, -, or * compiles only when its result provably fits, and the functions that wrap, saturate, or check where it cannot be proven.
-status: built
+description: The exact range that a plain +, -, *, or / gives, the proof asked where a value enters a narrower range, and the functions that wrap.
+status: partial
+built:
+  - "a plain `+`, `-`, or `*` on `u8` to `i64`, which compiles when `arith` proves that the result fits the type of its operands, and an error that says what could not be proven"
+  - "`wrapping_`, `saturating_`, and `checked_` of `add`, `sub`, and `mul`"
+  - "not a range as a type, the exact range of a result, `/`, or `%`"
 ---
 
 # Integer arithmetic
 
-Integer arithmetic never overflows silently. A plain `+`, `-`, or `*` compiles only when the result provably fits the type of its operands, each operation by itself, and no check is ever inserted behind the author's back.
+A plain `+`, `-`, or `*` gives the exact range of its result, so it cannot fail and asks for nothing.
 
 ```
 fn main() ! console, alloc {
-  a: u8 = 20
-  b: u8 = 5
+  a: 0..256 = 20
+  b: 0..256 = 5
   print("{a + b} {a - b} {a * b}")
 }
 ```
 
-This prints `25 15 100`. The compiler knows that `a` is 20 and `b` is 5, so each result fits a `u8`.
+This prints `25 15 100`. The result of `a + b` is a `0..511`, of `a - b` a `-255..256`, and of `a * b` a `0..65026`, whatever `a` and `b` hold.
 
-## When it cannot be proven
+## The range of a result
 
-When the compiler cannot prove that the result fits, the operation is refused, and the message states what it could not prove.
-
-```
-fn next(i: u8) -> u8 { i + 1 }
-```
-
-This gives "cannot prove that `i + 1 <= 255`, so `i + 1` may not fit `u8`", with the fix "check the operands first, or use `wrapping_add`, `saturating_add`, or `checked_add`". `i` may be 255.
-
-`-` and `*` are refused the same way, and the goal they state is the bound they could break.
+The range of `a + b` runs from the least of `a` plus the least of `b` to the greatest of `a` plus the greatest of `b`. The range of `a - b` runs from the least of `a` less the greatest of `b` to the greatest of `a` less the least of `b`. The range of `a * b` runs from the least to the greatest of the four products of the ends.
 
 ```
-fn gap(a: u8, b: u8) -> u8 { a - b }
+fn sum(a: 0..256, b: 0..256) -> 0..511 { a + b }
 ```
 
-This gives "cannot prove that `a - b >= 0`, so `a - b` may not fit `u8`".
+`sum(255, 255)` is `510`. A literal is the range that holds it alone, as [Literals](literals.md) says, so `a + 1` of a `0..256` is a `1..257`.
+
+## Where a value enters a narrower range
+
+A proof is asked for only where a value enters a range narrower than its own. That is a binding or a `var` with a stated type, an argument of a narrower parameter, and a narrower result.
 
 ```
-fn area(w: u8, h: u8) -> u8 { w * h }
+fn average(a: 0..256, b: 0..256) -> 0..256 {
+  sum = a + b
+  sum / 2
+}
 ```
 
-This gives "cannot prove that `w * h <= 255`, so `w * h` may not fit `u8`".
+This compiles with no proof. `sum` is a `0..511`, which a binding with no stated type keeps, and `sum / 2` is a `0..256`, which the result holds.
+
+Each of these is refused, as the value is wider than the range it enters.
+
+```
+fn next(i: 0..256) -> 0..256 { i + 1 }
+```
+
+`i + 1` is a `1..257` and the result is a `0..256`: `i` may be 255. The result is where it enters.
+
+```
+fn narrow_binding(i: 0..256) {
+  level: 0..101 = i
+}
+```
+
+```
+fn takes(level: 0..101) -> 0..101 { level }
+
+fn call(i: 0..256) -> 0..101 { takes(i) }
+```
+
+The binding states `0..101`, and the argument of `takes` is a `0..101`, so each is where `i` enters a narrower range. The compiler states what it could not prove, such as that `i + 1` is below 256.
 
 ## Checking first
 
-A condition that bounds the operands is a proof, inside the block it guards.
+A condition that bounds the value is a proof, inside the block it guards.
 
 ```
-fn gap(a: u8, b: u8) -> u8 {
+fn next(i: 0..256) -> 0..256 {
+  if i < 255 { i + 1 } else { 255 }
+}
+
+fn gap(a: 0..256, b: 0..256) -> 0..256 {
   if a >= b { a - b } else { 0 }
 }
 
 fn main() ! console, alloc {
-  print("{gap(5, 3)} {gap(3, 5)}")
+  print("{next(7)} {next(255)} {gap(5, 3)} {gap(3, 5)}")
 }
 ```
 
-This prints `2 0`. In the first block `a >= b` holds, so `a - b` is at least 0, and in the `else` the subtraction is not written. The same holds for a condition with `and`, `or`, and `not`. Most integer arithmetic is on indices and sizes, whose limits are already in their types, so the proof is usually automatic. What the compiler can prove appears under [What arith proves](arith.md), and how to state a fact once for a whole function under [Contracts](contracts.md).
+This prints `8 255 2 0`. In the first block of `gap`, `a >= b` holds, so `a - b` is at least 0, and in the `else` the subtraction is not written. The same holds for a condition with `and`, `or`, and `not`. What the compiler can prove appears under [What arith proves](arith.md), and how to state a fact once for a whole function under [Contracts](contracts.md).
 
-## Choosing what happens
+## More than 64 bits
 
-Where the author does not want to check first, the behaviour is picked by name. Each exists for `add`, `sub`, and `mul`, as the functions of the traits `Wrapping`, `Saturating`, and `Checked`, which every integer type implements.
+A result whose range needs more than 64 bits has no type that holds it, so it is refused until it is narrowed. It is narrowed where it enters a range of 64 bits or fewer, with the proof that it fits.
 
 ```
-// 255 becomes 0.
-fn next_wrapping(i: u8) -> u8 { wrapping_add(i, 1) }
+fn doubled(n: Nat) -> Nat { n * 2 }
+```
 
-// 255 stays 255.
-fn next_saturating(i: u8) -> u8 { saturating_add(i, 1) }
+This is refused: `n * 2` is a `0..36893488147419103231`, and `n` may be too great for it to fit a `Nat`.
 
-// 255 gives .none.
-fn next_checked(i: u8) -> Option[u8] { checked_add(i, 1) }
-
-fn main() ! console, alloc {
-  print("{next_wrapping(255)} {next_wrapping(7)}")
-  print("{next_saturating(255)} {next_saturating(7)}")
-  match next_checked(255) {
-    .some(n) { print("some {n}") }
-    .none { print("none") }
-  }
-  match next_checked(7) {
-    .some(n) { print("some {n}") }
-    .none { print("none") }
-  }
+```
+fn doubled(n: Nat) -> Nat
+  requires n < 1000
+{
+  n * 2
 }
 ```
 
-This prints `0 8`, `255 8`, `none`, and `some 8`. The same holds below zero and at the other end of a type.
-
-```
-fn main() ! console, alloc {
-  x: u8 = 0
-  y: i8 = 100
-  print("{wrapping_sub(x, 1)} {saturating_sub(x, 1)}")
-  print("{wrapping_mul(y, 2)} {saturating_mul(y, 2)}")
-}
-```
-
-This prints `255 0` and `-56 127`. `checked_mul(y, 2)` is `.none`, and `checked_sub(y, 1)` is `.some(99)`.
-
-A literal operand takes the type of the other, so the `1` above is a `u8`, as [Literals](literals.md) says. Two operands of different types are refused, as [Number types](number-types.md) says.
+`doubled(21)` is `42`.
 
 ## Dividing
 
-`a / b` divides, and `a % b` is what is left over. Both round toward zero, which is what a processor's instruction gives, so `7 / 2` is `3` and `7 % 2` is `1`, and `-7 / 2` is `-3` and `-7 % 2` is `-1`. What is left over has the sign of the first operand, so `(a / b) * b + a % b` is always `a`.
+`a / b` divides, and `a % b` is what is left over. Both round toward zero, which is what a processor's instruction gives, so `7 / 2` is `3` and `7 % 2` is `1`, and `-7 / 2` is `-3` and `-7 % 2` is `-1`. What is left over has the sign of the first operand, so `(a / b) * b + a % b` is always `a`. Both give the exact range of their results.
 
-No number is divided by zero. `a / b` and `a % b` compile only when [`arith`](arith.md) proves that `b` is not zero, and nothing is checked when the program runs.
+No number is divided by zero. `a / b` and `a % b` compile only when the range of `b` excludes zero, and nothing is checked when the program runs.
 
 ```
-fn share(total: u64, n: u64) -> u64
-  requires n > 0
-{
-  total / n
+fn share(total: Nat, n: 1..101) -> Nat { total / n }
+```
+
+`share(10, 4)` is `2`. A divisor that is a literal other than `0` is a range that excludes zero, so `total / 4` compiles. A divisor that may be zero is refused.
+
+```
+fn share(total: Nat, n: Nat) -> Nat { total / n }
+```
+
+This is refused, as the range of `n` includes 0. A divisor enters a narrower range as any value does, so a check first is a proof.
+
+```
+fn share_of(total: Nat, n: 0..101) -> Nat {
+  if n > 0 { share(total, n) } else { 0 }
 }
 ```
 
-`share(10, 4)` is `2`. Without the `requires`, `total / n` is refused, as `n` may be zero. A divisor that is a literal other than `0` needs nothing: `total / 4` compiles.
+`share_of(10, 4)` is `2` and `share_of(10, 0)` is `0`. In the block, `n > 0` holds, so `n` enters the `1..101` that `share` asks for.
 
-A signed type has one division whose result does not fit: its lowest value divided by `-1`. So with signed operands `arith` must also prove that this is not the one, as it proves that a `+` fits.
+## Wrapping
 
-Where it cannot be proven, the behaviour is picked by name, as for `+`.
-
-```
-// A zero divisor, or a result that does not fit, gives .none.
-fn share_or_none(total: u64, n: u64) -> Option[u64] { checked_div(total, n) }
-```
-
-`share_or_none(10, 0)` is `.none`, and `share_or_none(10, 4)` is `.some(2)`. `checked_rem` is the same for `%`. `wrapping_div` and `wrapping_rem` give the low bits where the result does not fit, and still need the divisor proven not zero, as no result of dividing by zero has low bits to keep.
-
-`arith` learns from both. What is left over from dividing by `b` is below `b`, for unsigned numbers, so a digit is narrowed with nothing to check:
+Nothing wraps unless a function that wraps is called. `wrapping_add`, `wrapping_sub`, and `wrapping_mul` keep the low bits of the result, and they are functions of the ranges that fill a size exactly, `0..256`, `0..65536`, and the others that [Bit operations](bits.md#the-ranges-that-fill-a-size) lists.
 
 ```
-fn last_digit(n: u64) -> u8 { narrow(n % 10) }
+fn next_wrapping(i: Byte) -> Byte { wrapping_add(i, 1) }
+
+fn main() ! console, alloc {
+  x: Byte = 0
+  y: -128..128 = 100
+  print("{next_wrapping(255)} {next_wrapping(7)}")
+  print("{wrapping_sub(x, 1)} {wrapping_mul(y, 2)}")
+}
 ```
 
-`last_digit(1234)` is `4`. Dividing by a literal gives a result whose range `arith` knows, so `n / 2 + n / 2` fits wherever `n` does. Dividing by a name is one unknown quantity to it, as a product of two names is.
+This prints `0 8` and `255 -56`. The `1` is a `Byte`, as it is a range that fits one.
 
-`%` is the trait function `Rem.rem`, as `/` is `Div.div`, which [Operators](operators.md) lists.
+```
+fn next(i: 0..101) -> 0..101 { wrapping_add(i, 1) }
+```
+
+This is refused, as `0..101` does not fill a size, so it has no wrapping function.
 
 ## The forms
 
-| Written | When the result does not fit |
+| Written | Is |
 | --- | --- |
-| `a + b`, `a - b`, `a * b` | Does not compile |
-| `a / b`, `a % b` | Does not compile, and neither does a divisor not proven other than zero |
-| `wrapping_add(a, b)`, `wrapping_sub(a, b)`, `wrapping_mul(a, b)` | Keeps the low bits |
-| `saturating_add(a, b)`, `saturating_sub(a, b)`, `saturating_mul(a, b)` | Gives the nearest value the type holds |
-| `checked_add(a, b)`, `checked_sub(a, b)`, `checked_mul(a, b)` | Gives `.none`, and `.some(r)` otherwise |
-| `checked_div(a, b)`, `checked_rem(a, b)` | Gives `.none` for a zero divisor too |
-| `wrapping_div(a, b)`, `wrapping_rem(a, b)` | Keeps the low bits, with the divisor proven not zero |
+| `a + b`, `a - b`, `a * b` | The exact range of the result, which cannot fail |
+| `a / b`, `a % b` | The exact range, with the range of `b` excluding zero |
+| A value where a narrower range is expected | Compiles when it is shown to fit, refused otherwise |
+| A result of more than 64 bits | Refused until it is narrowed |
+| `wrapping_add(a, b)`, `wrapping_sub(a, b)`, `wrapping_mul(a, b)` | The low bits, for a range that fills a size |
 
 Next: [Bit operations](bits.md)

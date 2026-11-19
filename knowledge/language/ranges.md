@@ -1,17 +1,17 @@
 ---
 type: specification
 title: Ranges and slices
-description: A range a..b runs from a up to but not including b, and x[a..b] is the part of x between them, with x[..k] and x[k..] as short forms.
+description: A range a..b runs from a up to but not including b and is also the type of those numbers, and x[a..b] is the part of x between them, with x[..k] and x[k..] as short forms.
 status: partial
 built:
   - "`a..b` as the range of a `loop`, which runs in order and not at all when `a >= b`"
   - "`x[a..b]`, `x[..k]`, and `x[k..]` on a [`Slice`](../library/slice.md), a `Slice` that shares the memory of `x`, compiled when `arith` proves `a <= b` and `b <= x.size`, and a piece of a piece"
-  - "not a range outside a `loop` and an index, or a piece of an array, a text, or a list"
+  - "not a range outside a `loop` and an index, a range as a type, or a piece of an array, a text, or a list"
 ---
 
 # Ranges and slices
 
-A range `a..b` is the numbers from `a` up to `b`, and it excludes `b`. A slice `x[a..b]` is the part of `x` that a range picks out.
+A range `a..b` is the numbers from `a` up to `b`, and it excludes `b`. It is also the type of those numbers. A slice `x[a..b]` is the part of `x` that a range picks out.
 
 ## A range
 
@@ -26,6 +26,16 @@ fn main() ! console, alloc {
 ```
 
 This prints `0`, `1`, and `2`. A range whose first end is not below its second, as `3..3` or `5..2`, runs the body no times.
+
+## A range as a type
+
+The numbers of `0..3` are the values of the type `0..3`, as [Number types](number-types.md) says. A bound may be a name that cannot change, as a size may, as in `0..n`.
+
+```
+fn pick[n: Nat](i: 0..n) -> Nat { i }
+```
+
+`pick` takes a number below `n`, whatever `n` is, and gives it back as a `Nat`. A `0..n` has no value when `n` is `0`, since the range has no numbers.
 
 ## A slice
 
@@ -85,7 +95,7 @@ fn take_two(a: [4]u8) -> [2]u8 { a[..2] }
 
 | Written | Is |
 | --- | --- |
-| `a..b` | The numbers from `a` up to `b`, excluding `b` |
+| `a..b` | The numbers from `a` up to `b`, excluding `b`, and the type that holds them |
 | `x[a..b]` | The elements of `x` from `a` up to `b`, of size `b - a`, compiled when `a <= b` and `b <= x.size` are proven |
 | `xs[a..b]` on a `List` | A lent piece of `xs`, for a function that reads |
 | `s[a..b]` on a `Slice` | A `Slice` that shares the memory of `s` |

@@ -4,13 +4,13 @@ title: The prelude
 description: The names that are in scope in every file without a use, and what a file imports for everything else.
 status: partial
 built:
-  - "the names below, in scope in every file"
+  - "every name below but `Int` and `Byte`, in scope in every file, with `u8` to `i64`, which are in scope too until `std.bits` has them"
   - "not `use`, so every other name of the standard library that the compiler builds, such as `print`, `console`, `push`, `narrow`, and the `wrapping_` functions, is in scope too until it is, and the examples of the other pages are written without their `use` lines until then"
 ---
 
 # The prelude
 
-A small set of names is in scope in every file with no `use`. It is called the prelude, and it is as small as it can be: a name is in it only when the syntax of the language means that name. There is no other way in, and so no name is in it for convenience.
+A small set of names is in scope in every file with no `use`. It is called the prelude, and it is as small as it can be: a name is in it only when the syntax of the language means that name, or, for `Int`, `Nat`, and `Byte`, when it says what a number is for. There is no other way in, and so no name is in it for convenience.
 
 ```
 use std.console (console, print)
@@ -26,7 +26,7 @@ No syntax means `print`, or the `console` effect it needs, so a program that pri
 
 | In the prelude | The syntax that means it |
 | --- | --- |
-| `i8` to `i64`, `u8` to `u64`, the float types, `bool`, `str`, `Nat` | A literal, and the size of an array |
+| `Int`, `Nat`, `Byte`, the float types, `bool`, `str` | A literal, the size of an array, and a byte of a text |
 | `List` | A list written in brackets, as `[1, 2, 3]` |
 | `Option`, `Result`, `Flow` with its two types, and `Try` with its `split` | `try` |
 | `Order`, `Eq`, and `Ord`, with `eq` and `compare` | `==`, `!=`, `<`, `<=`, `>`, and `>=` |
@@ -48,12 +48,12 @@ A name that is not in the table is imported. That holds for the rest of the stan
 use std.list (push)
 use std.fs (fs, read_all, FsError)
 
-fn lines_of(path: str) -> Result[List[u8], FsError] ! fs, alloc {
+fn lines_of(path: str) -> Result[List[Byte], FsError] ! fs, alloc {
   read_all(path)
 }
 ```
 
-`push` grows a list, and no syntax means it, so it is imported. So are `narrow` and the `wrapping_`, `saturating_`, and `checked_` functions, from [`std.int`](../library/int.md), the functions of `Bits`, from [`std.bits`](../library/bits.md), `utf8`, `Map`, and the array functions such as `sum` and `map`. An effect the standard library declares is imported as any effect is, by its name, with each operation the file calls: `fs` and `read_all` above, and `console` and `print` in the first program.
+`push` grows a list, and no syntax means it, so it is imported. So are the functions of [`std.int`](../library/int.md), the names of sizes, `u8` to `i64`, and the functions of `Bits`, from [`std.bits`](../library/bits.md), `utf8`, `Map`, and the array functions such as `sum` and `map`. An effect the standard library declares is imported as any effect is, by its name, with each operation the file calls: `fs` and `read_all` above, and `console` and `print` in the first program.
 
 A name used and not imported is refused, and the error names the module to import it from, as [Importing with use](use.md#a-name-that-is-missing) says.
 
@@ -63,8 +63,8 @@ A bare name has exactly one meaning in a file. So a file cannot define, or impor
 
 ```
 struct Rect {
-  w: i64
-  h: i64
+  w: Int
+  h: Int
 }
 
 fn add(a: Rect, b: Rect) -> Rect { Rect(w: a.w + b.w, h: a.h + b.h) }
@@ -80,7 +80,7 @@ Two different functions never share a bare name. Where two traits each have a fu
 | --- | --- |
 | A type, trait, or function that some syntax means | No |
 | `alloc`, `diverge`, and the other built-in effects | No |
-| `push`, `narrow`, `sum`, `Map`, and every other name of `std` | Yes |
+| `push`, `wrapping_add`, `u32`, `sum`, `Map`, and every other name of `std` | Yes |
 | `console`, `fs`, `net`, `time`, `ui`, and their operations, `print` among them | Yes |
 | A name of a program's own module | Yes |
 | A definition named as a prelude name is, or as a name the file imported | Refused: a name means one thing |

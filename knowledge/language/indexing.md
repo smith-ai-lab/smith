@@ -1,7 +1,7 @@
 ---
 type: specification
 title: Indexing
-description: x[i] reads one element, an index is proven to be in range when the program is built, and indexing is the Index trait, whose valid says which indices a container has.
+description: x[i] reads one element, an index is proven to be in range when the program is built or has a range for a type that says so, and indexing is the Index trait, whose valid says which indices a container has.
 status: partial
 built:
   - "indexing a `List` of whole numbers or `bool`s as `xs[i]`, which compiles when `arith` proves `i < xs.size` from the size of a list written out or given to a name, the range of a `loop`, an `if`, or a `requires` over a list's `size`, where `i` is a whole number of an unsigned type"
@@ -26,7 +26,7 @@ This prints `10` and `30`. The same is written on an array, as `a[0]` for a `[3]
 
 ## An index must be proven in range
 
-An index is a whole number, and it must be below the size of what it reads. The compiler proves that, with the procedure [`arith`](arith.md), from what is in scope. When it cannot, the program is refused.
+An index is a whole number, and it must be at least 0 and below the size of what it reads. The compiler proves that, with the procedure [`arith`](arith.md), from what is in scope, which includes the range that is the type of the index. When it cannot, the program is refused.
 
 ```
 fn main() ! console, alloc {
@@ -38,6 +38,20 @@ fn main() ! console, alloc {
 This is refused: "cannot prove that `3 < xs.size`, which indexing `xs` needs", with the fix "put `3` in the range of a `loop` over `0..xs.size`, check `3 < xs.size` with an `if`, or state it in a `requires`". The compiler states what it needs, such as `3 < xs.size`, and the author supplies it in one of the three ways the fix names. A literal index on an array whose size is in its type, as `a[3]` on a `[3]f32`, is a compile error in the same way.
 
 The size of a list that is written out, or that is given to a name, is known, so `xs[0]` above compiles. An empty list has no index that compiles: `xs[0]` on `xs: List[u8] = []` is refused with the same words, "cannot prove that `0 < xs.size`, which indexing `xs` needs".
+
+### From the type of the index
+
+An index whose type is `0..n` is below `n` and at least 0, and the type says it, so nothing is proven.
+
+```
+fn get[n: Nat](xs: [n]f32, i: 0..n) -> f32 { xs[i] }
+```
+
+`get([1.0, 2.0, 3.0], 2)` is `3.0`. The `2` is a `2..3`, which goes where a `0..3` is expected, as [Number types](number-types.md) says. A call with `3` is refused, as 3 is not in `0..3`. A matrix is read the same way, with a range for each size.
+
+```
+fn entry[m: Nat, k: Nat](a: [m, k]f32, r: 0..m, c: 0..k) -> f32 { a[r, c] }
+```
 
 ### From a `loop`
 
@@ -60,12 +74,12 @@ fn largest(xs: List[u32]) -> u32 {
 Inside the block of `if i < xs.size`, the index is proven.
 
 ```
-fn at_or_zero(xs: List[u8], i: u64) -> u8 {
+fn at_or_zero(xs: List[Byte], i: Nat) -> Byte {
   if i < xs.size { xs[i] } else { 0 }
 }
 ```
 
-`at_or_zero` of `[5, 6, 7]` and `1` is `6`, and with `5` it is `0`. Without the `if`, `fn third(xs: List[u8], i: u64) -> u8 { xs[i] }` is refused: "cannot prove that `i < xs.size`, which indexing `xs` needs".
+`at_or_zero` of `[5, 6, 7]` and `1` is `6`, and with `5` it is `0`. Without the `if`, `fn third(xs: List[Byte], i: Nat) -> Byte { xs[i] }` is refused: "cannot prove that `i < xs.size`, which indexing `xs` needs".
 
 ### From a `requires`
 
@@ -91,9 +105,17 @@ fn entry[m: Nat, k: Nat](a: [m, k]f32, r: Nat, c: Nat) -> f32
 
 ## What an index is
 
-An index is a whole number of an unsigned type. A `u8` is one. An `i32` is not, and `xs[i]` with `i: i32` is refused: "an index is a whole number of an unsigned type". A `size` is a `u64`, as [Arrays and sizes](arrays.md) says, so an `i32` also does not compare with it.
+An index is a whole number, a range. A `Byte` and a `Nat` are indices when they are proven below the size, and an `Int` is one when it is also proven at least 0.
 
-Only a type that implements `Index` can be indexed. With `n: u8`, `n[0]` is refused: "an index is read from a list, and this is a `u8`".
+```
+fn at_or_zero(xs: List[Byte], i: Int) -> Byte {
+  if 0 <= i and i < xs.size { xs[i] } else { 0 }
+}
+```
+
+`at_or_zero([5, 6, 7], 1)` is `6`, and with `-1` or `5` it is `0`. With `if i < xs.size` alone, `xs[i]` is refused, as `i` may be below 0. A `size` is a `Nat`, as [Arrays and sizes](arrays.md) says, and any two ranges are compared, so an `Int` compares with it.
+
+Only a type that implements `Index` can be indexed. With `n: Byte`, `n[0]` is refused, as an index is read from a list and this is a `Byte`.
 
 ## Indexing is a trait
 
@@ -107,7 +129,7 @@ trait Index[C, I, out T] {
 }
 ```
 
-`valid` says which indices a container has, and `at` requires it. For an array, `valid` is that the index is below the size. That is why `x[i]` is written with nothing beside it, and compiles when `arith` proves `valid(x, i)`. `valid` is used to prove, and it is never run for an index.
+`valid` says which indices a container has, and `at` requires it. For an array, `valid` is that the index is at least 0 and below the size. That is why `x[i]` is written with nothing beside it, and compiles when `arith` proves `valid(x, i)`. `valid` is used to prove, and it is never run for an index.
 
 A [`List`](../library/list.md) implements `Index` with the index below `size`, and a text implements it for a range, as [Ranges and slices](ranges.md) shows. A type whose `at` answers for every index, as one that returns an `Option` does, has a `valid` that is `true`. A [`Map`](../library/map.md) is one, so `m[key]` is `.some` of the value or `.none`, and is never refused.
 
@@ -133,6 +155,7 @@ fn bump(a: [3]f32) -> [3]f32 {
 | `a[r, c]` | The element of a matrix at row `r` and column `c` |
 | `a[0] = e` | Assigns an element of a `var` array |
 | `valid(x, i)` | Whether `x` has the index `i`, used to prove and never run |
+| `i: 0..n` on an index of size `n` | An index whose type proves it |
 | `loop i in 0..xs.size`, `if i < xs.size`, `requires i < xs.size` | The three ways to prove an index |
 
 Next: [Ranges and slices](ranges.md)

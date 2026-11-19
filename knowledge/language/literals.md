@@ -6,29 +6,30 @@ status: partial
 built:
   - "string literals that become `str`, `bool` with `true` and `false`, whole number literals in decimal, hexadecimal, and binary, with a `-` before one, that become `i8` to `i64` and `u8` to `u64`, as a binding's uses decide or `i64` when nothing does, including a literal given for a type parameter, which the place of the call's result decides when it names the parameter, a literal operand taking the type of the other, and a character between single quotes, with the escapes `\'`, `\\`, `\n`, and `\t`, as a whole number, an error as a `u8` when it is not ASCII"
   - "a whole number that ends a block of an `if` or a `match` that gives a value, which takes the type of the other blocks, or of the place the value is used when every block ends in one"
+  - "not a whole number as the range that holds it alone"
 ---
 
 # Literals
 
-A literal is a value written where it is used. Every literal form is backed by a trait, and the type that is expected picks which implementation runs.
+A literal is a value written where it is used. Every literal form is backed by a trait, and the type that is expected picks which implementation runs. A whole number that becomes a range has no choice to make, as it is the range that holds it alone.
 
 | Literal | Trait | Can become |
 | --- | --- | --- |
-| `5` | `FromInt[T]` | `i32`, `u8`, `f32` |
+| `5` | `FromInt[T]` | The range `5..6`, `f32` |
 | `2.5` | `FromFloat[T]` | `f16`, `bf16`, `f32`, `f64` |
 | `"hi"` | `FromString[T]` | `str` |
 | `[1, 2, 3]` | `FromArray[T]` | An array of three elements |
 
-That is why the `2.0` in the default of [`scale`](functions.md#defaults) is an `f32`: `scale` asked for one. The types a number can become are on [Number types](number-types.md).
+That is why the `2.0` in the default of [`scale`](functions.md#defaults) is an `f32`: `scale` asked for one. The ranges and floats a number can become are on [Number types](number-types.md).
 
 ## A whole number
 
-A whole number is written in digits. The type that is expected picks which type it is.
+A whole number is written in digits. It is the range that holds it alone, so `5` is the range from 5 up to but not including 6, written `5..6`, as [Number types](number-types.md) says. It goes wherever a range that holds it is expected.
 
 ```
 fn main() ! console, alloc {
-  small: u8 = 200
-  wide: i32 = 70000
+  small: 0..256 = 200
+  wide: 0..100000 = 70000
   print("{small} {wide}")
 }
 ```
@@ -61,11 +62,11 @@ y = 0xZZ
 
 This gives "`0xZZ` is not a number: `Z` is not a hexadecimal digit".
 
-A `-` directly before a number is part of the literal, so `-128` is an `i8`, though `128` is not.
+A `-` directly before a number is part of the literal, so `-128` is the range `-128..-127`, which fits `-128..128`. `128` does not.
 
 ```
 fn main() ! console, alloc {
-  low: i8 = -128
+  low: -128..128 = -128
   print("{low}")
 }
 ```
@@ -74,34 +75,36 @@ This prints `-128`.
 
 ## A number that does not fit
 
-The conversion from a literal runs when the program is built, so a number the type cannot hold is an error, and no program is built that holds it.
+A literal is a range of its own, so a number that a stated range cannot hold is refused where it enters that range, and no program is built that holds it.
 
 ```
 fn main() ! console {
-  small: u8 = 256
+  small: 0..256 = 256
   print("done")
 }
 ```
 
-This gives "`256` does not fit `u8`, which holds 0 to 255". The words name the type's range, as [Number types](number-types.md) lists. A negative number is refused by an unsigned type the same way: "`-5` does not fit `u8`, which holds 0 to 255".
+This is refused, as `256` is not in `0..256`. A negative number is refused by a range that starts at zero the same way, as `-5` is not in `0..256`.
 
 ## Where the type comes from
 
-A literal bound to a name takes its type from how the name is used in the rest of the function. After `x = 10`, a call `byte(x)` of a function that takes a `u8` makes `x` a `u8`.
+A literal bound to a name keeps its own range, so the name goes wherever a range that holds it is expected. After `x = 10`, a call `byte(x)` of a function that takes a `0..256` is accepted, and so is a call of one that takes a `-5..6000`.
 
 ```
-fn byte(n: u8) -> u8 { n }
+fn byte(n: 0..256) -> 0..256 { n }
+
+fn word(n: 0..65536) -> 0..65536 { n }
 
 fn main() ! console, alloc {
   x = 10
-  print("{byte(x)}")
+  print("{byte(x)} {word(x)}")
 }
 ```
 
-This prints `10`. A `var` is decided the same way. The number must fit the type that its use gives it.
+This prints `10 10`. A number that the range of a use cannot hold is refused at that use.
 
 ```
-fn byte(n: u8) -> u8 { n }
+fn byte(n: 0..256) -> 0..256 { n }
 
 fn main() ! console {
   x = 300
@@ -109,36 +112,9 @@ fn main() ! console {
 }
 ```
 
-This gives "`300` does not fit `u8`, as the use at 5:8 needs, which holds 0 to 255".
+This is refused, as `300` is not in `0..256`. A binding that states its range, as in `limit: 0..1000 = 100`, has that range, as [Bindings](bindings.md) says.
 
-A second use that needs another type is an ordinary type error at that use.
-
-```
-fn byte(n: u8) -> u8 { n }
-
-fn word(n: i32) -> i32 { n }
-
-fn main() ! console {
-  x = 10
-  byte(x)
-  word(x)
-}
-```
-
-This gives "`x` is `u8`, as the use at 7:8 needs, where a `i32` is needed". A binding that states its type settles it, as in `limit: i32 = 100`, as [Bindings](bindings.md) says.
-
-When nothing in the function decides the type, a whole number is an `i64` and a float is an `f64`.
-
-```
-fn main() ! console, alloc {
-  x = 5_000_000_000
-  print("{x}")
-}
-```
-
-This prints `5000000000`, which an `i32` could not hold.
-
-A whole number given to a parameter whose type is a type parameter is decided the same way. When nothing else decides the type parameter, the number is an `i64` and so is the type parameter.
+A whole number given for a type parameter is the range that holds it alone, and so is the type parameter.
 
 ```
 fn first[A, B](a: A, b: B) -> A { a }
@@ -148,88 +124,27 @@ fn main() ! console, alloc {
 }
 ```
 
-This prints `1`, with `A` and `B` both `i64`. When the function needs a trait of the type parameter, `i64` must have it, and if it does not the error names the trait and `i64`, as for any other `i64`.
-
-When the call's result names the type parameter, the place the result is put in decides it first. A literal given for it is the type that place needs, and a literal that type cannot hold is refused at the literal.
-
-```
-fn id[A](a: A) -> A { a }
-
-fn pair[A, B](a: A, b: B) -> (A, B) { (a, b) }
-
-fn main() ! console, alloc {
-  y: u8 = id(7)
-  (r, s): (u8, i32) = pair(3, 4)
-  print("{y} {r} {s}")
-}
-```
-
-This prints `7 3 4`. A place is a binding that states its type, an argument, an operand whose other side has the type, on either side of the operator, a field, or a returned value. It decides through calls given as arguments of calls, to any depth, as in `c: u8 = id(id(5))`. `y: u8 = id(300)` gives "`300` does not fit `u8`, which holds 0 to 255".
+This prints `1`, with `A` the range `1..2` and `B` the range `2..3`.
 
 ## A literal beside another value
 
-A literal that is an operand takes the type of the other operand, when it can become it. With `x: u8`, the `300` in `x == 300` is a `u8`, and so the line is refused.
+A literal beside another number is a range of its own, and the operator gives the exact range of the two, as [Integer arithmetic](arithmetic.md) says. Any two ranges are compared, so a literal that the other side cannot hold is a comparison that gives `false`.
 
 ```
 fn main() ! console, alloc {
-  x: u8 = 7
-  print("{x == 5} {x < 'a'}")
+  x: 0..256 = 7
+  print("{x == 5} {x < 'a'} {x == 300}")
 }
 ```
 
-This prints `false true`. With `300` in place of `5`, it gives "`300` does not fit `u8`, which holds 0 to 255".
-
-When both operands are literals, they are decided as a literal bound to a name is.
-
-```
-fn main() ! console, alloc {
-  print("{1 + 2} {3 < 4}")
-}
-```
-
-This prints `3 true`, and both numbers are `i64`, as nothing decides otherwise.
-
-When the other operand is a value the literal cannot become, the literal takes the one type that fits: a type it can become, for which the operator has an implementation with the other operand's type. When more than one type fits, it is a compile error, and a binding that states its type settles it.
-
-```
-fn scaled(w: Weights) -> Weights { w * 2 }
-```
-
-When `Weights` is a struct of the program that has one `Mul` with an `i32` and no other, the `2` is an `i32`. When it has one with an `i32` and one with an `i64`, the line is refused, and a binding that states the type settles it.
-
-```
-fn scaled(w: Weights) -> Weights {
-  two: i32 = 2
-  w * two
-}
-```
-
-## A literal at the end of a block
-
-An `if` or a `match` that gives a value has blocks that give one type. A block that ends in a whole number literal takes the type of the other blocks, whichever block comes first.
-
-```
-fn main() ! console, alloc {
-  e: u8 = 110
-  decoded = if e == 'n' { '\n' } else { e }
-  digit = match decoded {
-    10 { 1 }
-    _ { e }
-  }
-  print("{decoded} {digit}")
-}
-```
-
-This prints `10 1`, with `decoded` and `digit` both `u8`. A literal that the type cannot hold is refused at the literal, as `300` is in `if e == 'n' { 1 } else { 300 }`: "`300` does not fit `u8`, which holds 0 to 255".
-
-When every block ends in a literal, the type comes from the place the value is used, as a literal's does: a binding that states its type, an argument, an operand whose other side has a type, on either side of the operator, a field, a returned value, or a use of the name it is bound to. It is an `i64` when nothing decides. Blocks that end in values of two different types are an error, as [If](if.md) says, and a literal does not settle which.
+This prints `false true false`. A whole number may become a float where a float is expected, as the table says.
 
 ## A character
 
-A whole number may be written as a character between single quotes, and it is the character's code: `'a'` is `97`. It is a whole number like any other, so it takes its type from its use, and `b - '0'` is arithmetic. The escapes are `\'`, `\\`, `\n`, and `\t`.
+A whole number may be written as a character between single quotes, and it is the character's code: `'a'` is `97`, the range `97..98`. It is a whole number like any other, and `b - '0'` is arithmetic. The escapes are `\'`, `\\`, `\n`, and `\t`.
 
 ```
-fn is_digit(b: u8) -> bool { b >= '0' and b <= '9' }
+fn is_digit(b: Byte) -> bool { b >= '0' and b <= '9' }
 
 fn main() ! console, alloc {
   print("{is_digit('7')} {is_digit('x')}")
@@ -239,17 +154,17 @@ fn main() ! console, alloc {
 
 This prints `true false` and then `97 39 92 10 9`. A character holds one character, so `'ab'` is refused: "a character has no closing `'`, and holds one character only".
 
-A character outside ASCII takes more than one byte in a `str`, so as a `u8` it is a compile error, and as a wider type it is its code point.
+A character outside ASCII takes more than one byte in a `str`, so as a `Byte` it is refused, and in a wider range it is its code point.
 
 ```
-x: u8 = 'é'
+x: Byte = 'é'
 ```
 
-This gives "`'é'` is not ASCII, so it takes more than one byte and is not a `u8`".
+This is refused, as `'é'` is not ASCII, so it takes more than one byte and is not a `Byte`.
 
 ```
 fn main() ! console, alloc {
-  x: u32 = 'é'
+  x: 0..1114112 = 'é'
   print("{x}")
 }
 ```
@@ -291,7 +206,7 @@ This gives "`true` is a case of `bool`, so nothing else can be named `true`". A 
 
 ## A float and an array
 
-A float has a digit on both sides of its point and may have an exponent, as `2.5` and `1e-5`. It follows the rules of a whole number above: its type comes from its use, and it is an `f64` when nothing decides.
+A float has a digit on both sides of its point and may have an exponent, as `2.5` and `1e-5`. Its type comes from its use, and it is an `f64` when nothing decides.
 
 ```
 fn half(x: f32) -> f32 { x * 0.5 }
@@ -303,14 +218,14 @@ An array written in brackets is backed by `FromArray`, and its elements are lite
 
 ## The forms
 
-| Written | Is | Type when nothing decides |
+| Written | Is | Its type |
 | --- | --- | --- |
-| `255`, `1_000` | A whole number in decimal | `i64` |
-| `0xff` | A whole number in hexadecimal | `i64` |
-| `0b1010` | A whole number in binary | `i64` |
-| `-5` | A negative whole number | `i64` |
-| `'a'` | The code of a character | `i64` |
-| `2.5`, `1e-5` | A float | `f64` |
+| `255`, `1_000` | A whole number in decimal | The range that holds it alone, `255..256` |
+| `0xff` | A whole number in hexadecimal | `255..256` |
+| `0b1010` | A whole number in binary | `10..11` |
+| `-5` | A negative whole number | `-5..-4` |
+| `'a'` | The code of a character | `97..98` |
+| `2.5`, `1e-5` | A float | `f64` when nothing decides |
 | `"hi"` | A text | `str` |
 | `true`, `false` | The cases of `bool` | `bool` |
 | `[1, 2, 3]` | An array | An array of three elements |
