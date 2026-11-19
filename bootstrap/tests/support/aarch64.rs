@@ -49,9 +49,9 @@ fn u64_at(bytes: &[u8], at: usize) -> u64 {
 struct Machine {
     regions: Vec<(u64, Vec<u8>)>,
     x: [u64; 31],
-    /// The low 64 bits of each register of floats, which hold a float of 32
-    /// or of 64 bits, with zeros above a float of 32.
-    f: [u64; 32],
+    /// Each register of floats and vectors: a float of 32 or of 64 bits is in the
+    /// low bits, with zeros above it, and a vector fills all 128.
+    f: [u128; 32],
     sp: u64,
     pc: u64,
     /// The flags: negative, zero, carry, overflow.
@@ -210,17 +210,31 @@ impl Machine {
             // ldrsw xt, [xn, xm, lsl #2]
             let value = self.read(self.get_sp(rn) + 4 * self.get(rm), 4);
             self.set(rd, value as u32 as i32 as i64 as u64);
+        } else if self.vector_step(w) {
         } else if w & 0x7f20_0000 == 0x1e20_0000 {
             self.float_step(w);
+        } else if w & 0xffc0_0000 == 0x3dc0_0000 || w & 0xffc0_0000 == 0x3d80_0000 {
+            // ldr or str of a register of 16 bytes, with an offset that is a
+            // multiple of 16.
+            let address = self.get_sp(rn) + (((w >> 10) & 0xfff) as u64) * 16;
+            if w >> 22 & 1 == 1 {
+                let low = self.read(address, 8);
+                let high = self.read(address + 8, 8);
+                self.f[rd as usize] = u128::from(low) | (u128::from(high) << 64);
+            } else {
+                let value = self.f[rd as usize];
+                self.write(address, 8, value as u64);
+                self.write(address + 8, 8, (value >> 64) as u64);
+            }
         } else if w & 0x3f00_0000 == 0x3d00_0000 {
             // ldr or str of a float, with an offset that is a multiple of its size.
             let size = 1u64 << (w >> 30);
             let address = self.get_sp(rn) + (((w >> 10) & 0xfff) as u64) * size;
             if w >> 22 & 3 == 1 {
-                self.f[rd as usize] = self.read(address, size);
+                self.f[rd as usize] = u128::from(self.read(address, size));
             } else {
                 assert!(w >> 22 & 3 == 0, "unknown instruction {w:#010x}");
-                let value = self.f[rd as usize];
+                let value = self.f[rd as usize] as u64;
                 self.write(address, size, value);
             }
         } else if w & 0x3fe0_ec00 == 0x3c20_6800 {
@@ -229,7 +243,7 @@ impl Machine {
             let size = 1u64 << (w >> 30);
             let by = if w >> 12 & 1 == 1 { size.trailing_zeros() } else { 0 };
             let address = self.get_sp(rn) + (self.get(rm) << by);
-            let value = self.f[rd as usize];
+            let value = self.f[rd as usize] as u64;
             self.write(address, size, value);
         } else if w == 0xd400_0001 {
             return self.system_call();
@@ -328,14 +342,20 @@ impl Machine {
         } else if w & 0x1fe0_0800 == 0x1a80_0000 {
             let (a, b) = (self.get(rn) & mask, self.get(rm) & mask);
             let taken = self.holds(w >> 12 & 15);
+            // csel, csinc, and csinv, which `csetm` is.
             let result = if taken {
                 a
+            } else if w >> 30 & 1 == 1 && w >> 10 & 1 == 0 {
+                !b & mask
             } else if w >> 10 & 1 == 1 {
                 b.wrapping_add(1) & mask
             } else {
                 b
             };
-            assert!(w >> 30 & 1 == 0 && w >> 29 & 1 == 0, "unknown instruction {w:#010x}");
+            assert!(
+                w >> 29 & 1 == 0 && (w >> 30 & 1 == 0 || w >> 10 & 1 == 0),
+                "unknown instruction {w:#010x}"
+            );
             self.set(rd, result);
         } else if w & 0x7fe0_f000 == 0x1ac0_2000 {
             let (a, count) = (self.get(rn) & mask, self.get(rm) & (bits as u64 - 1));
@@ -346,6 +366,12 @@ impl Machine {
                 _ => panic!("unknown instruction {w:#010x}"),
             };
             self.set(rd, result & mask);
+        } else if w & 0xffff_fc00 == 0xdac0_0000 {
+            // rbit xd, xn
+            self.set(rd, self.get(rn).reverse_bits());
+        } else if w & 0xffff_fc00 == 0xdac0_1000 {
+            // clz xd, xn
+            self.set(rd, u64::from(self.get(rn).leading_zeros()));
         } else if w & 0xffe0_fc00 == 0x9b00_7c00 {
             self.set(rd, self.get(rn).wrapping_mul(self.get(rm)));
         } else if w & 0xffe0_fc00 == 0x9bc0_7c00 {
@@ -393,10 +419,10 @@ impl Machine {
     fn float_step(&mut self, w: u32) {
         let (rd, rn, rm) = ((w & 31) as usize, ((w >> 5) & 31) as usize, ((w >> 16) & 31) as usize);
         let double = w >> 22 & 3 == 1;
-        let (a, b) = (self.f[rn], self.f[rm]);
+        let (a, b) = (self.f[rn] as u64, self.f[rm] as u64);
         let f32s = |n: u64| f32::from_bits(n as u32);
         if w & 0xff20_0c00 == 0x1e20_0800 {
-            self.f[rd] = if double {
+            let value = if double {
                 let (x, y) = (f64::from_bits(a), f64::from_bits(b));
                 match w >> 12 & 15 {
                     0 => x * y,
@@ -419,18 +445,19 @@ impl Machine {
                     .to_bits(),
                 )
             };
+            self.f[rd] = u128::from(value);
         } else if w & 0xff3f_fc00 == 0x1e21_4000 {
             // fneg
-            self.f[rd] = a ^ if double { 1 << 63 } else { 1 << 31 };
+            self.f[rd] = u128::from(a ^ if double { 1 << 63 } else { 1 << 31 });
         } else if w & 0xffff_fc00 == 0x1e60_4000 {
             // fmov dd, dn
-            self.f[rd] = a;
+            self.f[rd] = u128::from(a);
         } else if w & 0xffff_fc00 == 0x1e22_c000 {
             // fcvt dd, sn
-            self.f[rd] = f64::from(f32s(a)).to_bits();
+            self.f[rd] = u128::from(f64::from(f32s(a)).to_bits());
         } else if w & 0xffff_fc00 == 0x1e62_4000 {
             // fcvt sd, dn
-            self.f[rd] = u64::from((f64::from_bits(a) as f32).to_bits());
+            self.f[rd] = u128::from((f64::from_bits(a) as f32).to_bits());
         } else if w & 0xff20_fc1f == 0x1e20_2000 {
             // fcmp fn, fm
             let order = if double {
@@ -446,7 +473,7 @@ impl Machine {
             };
         } else if w & 0xff20_0c00 == 0x1e20_0c00 {
             // fcsel fd, fn, fm, cond
-            self.f[rd] = if self.holds(w >> 12 & 15) { a } else { b };
+            self.f[rd] = u128::from(if self.holds(w >> 12 & 15) { a } else { b });
         } else if w & 0x7f20_fc00 == 0x1e20_0000 {
             let sf = w >> 31 == 1;
             let opcode = (w >> 16) & 7;
@@ -456,12 +483,12 @@ impl Machine {
                     assert!(sf, "unknown instruction {w:#010x}");
                     let n = self.get(rn as u32);
                     let signed = opcode == 2;
-                    self.f[rd] = match (double, signed) {
+                    self.f[rd] = u128::from(match (double, signed) {
                         (true, true) => (n as i64 as f64).to_bits(),
                         (true, false) => (n as f64).to_bits(),
                         (false, true) => u64::from((n as i64 as f32).to_bits()),
                         (false, false) => u64::from((n as f32).to_bits()),
-                    };
+                    });
                 }
                 (3, 0) | (3, 1) => {
                     assert!(sf, "unknown instruction {w:#010x}");
@@ -475,12 +502,215 @@ impl Machine {
                 }
                 (0, 7) => {
                     let n = self.get(rn as u32);
-                    self.f[rd] = if sf { n } else { n & 0xffff_ffff };
+                    self.f[rd] = u128::from(if sf { n } else { n & 0xffff_ffff });
                 }
                 _ => panic!("unknown instruction {w:#010x}"),
             }
         } else {
             panic!("unknown instruction {w:#010x}");
+        }
+    }
+
+    /// Runs one instruction of vectors, and says whether the word was one. Each is
+    /// done lane by lane, with the host's own integers and floats, which round to
+    /// the nearest, ties to even, as the chip does. A number that is not one is
+    /// the host's, so a test takes any such number for any other.
+    fn vector_step(&mut self, w: u32) -> bool {
+        let (rd, rn, rm) = ((w & 31) as usize, ((w >> 5) & 31) as usize, ((w >> 16) & 31) as usize);
+        let size = w >> 22 & 3;
+        let (a, b) = (self.f[rn], self.f[rm]);
+        // The number of bits of a lane of the size, and how many lanes there are.
+        let bits = 8u32 << size;
+        let lanes = 128 / bits;
+        let lane = |v: u128, i: u32, bits: u32| -> u64 {
+            let mask = if bits == 64 { u64::MAX as u128 } else { (1u128 << bits) - 1 };
+            ((v >> (i * bits)) & mask) as u64
+        };
+        let make = |bits: u32, each: &dyn Fn(u32) -> u64| -> u128 {
+            (0..128 / bits).fold(0u128, |v, i| {
+                let mask = if bits == 64 { u64::MAX as u128 } else { (1u128 << bits) - 1 };
+                v | ((u128::from(each(i)) & mask) << (i * bits))
+            })
+        };
+        let signed = |n: u64, bits: u32| -> i64 { ((n << (64 - bits)) as i64) >> (64 - bits) };
+        let ones = |bits: u32| -> u64 { if bits == 64 { u64::MAX } else { (1u64 << bits) - 1 } };
+        if w & 0x9f20_0400 == 0x0e20_0400 {
+            // Three registers of the same arrangement.
+            assert!(w >> 30 & 1 == 1, "unknown instruction {w:#010x}");
+            let (u, opcode) = (w >> 29 & 1 == 1, w >> 11 & 31);
+            let double = w >> 22 & 1 == 1;
+            let float = |each: &dyn Fn(f64, f64) -> f64, each32: &dyn Fn(f32, f32) -> f32| -> u128 {
+                if double {
+                    make(64, &|i| each(f64::from_bits(lane(a, i, 64)), f64::from_bits(lane(b, i, 64))).to_bits())
+                } else {
+                    make(32, &|i| {
+                        u64::from(each32(f32::from_bits(lane(a, i, 32) as u32), f32::from_bits(lane(b, i, 32) as u32)).to_bits())
+                    })
+                }
+            };
+            let compare = |holds: &dyn Fn(f64, f64) -> bool, holds32: &dyn Fn(f32, f32) -> bool| -> u128 {
+                if double {
+                    make(64, &|i| if holds(f64::from_bits(lane(a, i, 64)), f64::from_bits(lane(b, i, 64))) { u64::MAX } else { 0 })
+                } else {
+                    make(32, &|i| {
+                        if holds32(f32::from_bits(lane(a, i, 32) as u32), f32::from_bits(lane(b, i, 32) as u32)) { u64::MAX } else { 0 }
+                    })
+                }
+            };
+            self.f[rd] = match (u, opcode) {
+                (false, 0x10) => make(bits, &|i| lane(a, i, bits).wrapping_add(lane(b, i, bits))),
+                (true, 0x10) => make(bits, &|i| lane(a, i, bits).wrapping_sub(lane(b, i, bits))),
+                (false, 0x13) => {
+                    assert!(size < 3, "unknown instruction {w:#010x}");
+                    make(bits, &|i| lane(a, i, bits).wrapping_mul(lane(b, i, bits)))
+                }
+                (false, 0x03) => match size {
+                    0 => a & b,
+                    2 => a | b,
+                    _ => panic!("unknown instruction {w:#010x}"),
+                },
+                (true, 0x03) => match size {
+                    0 => a ^ b,
+                    // bsl: the destination holds the mask.
+                    1 => (self.f[rd] & a) | (!self.f[rd] & b),
+                    _ => panic!("unknown instruction {w:#010x}"),
+                },
+                (true, 0x11) => make(bits, &|i| if lane(a, i, bits) == lane(b, i, bits) { ones(bits) } else { 0 }),
+                (false, 0x06) => make(bits, &|i| {
+                    if signed(lane(a, i, bits), bits) > signed(lane(b, i, bits), bits) { ones(bits) } else { 0 }
+                }),
+                (false, 0x07) => make(bits, &|i| {
+                    if signed(lane(a, i, bits), bits) >= signed(lane(b, i, bits), bits) { ones(bits) } else { 0 }
+                }),
+                (true, 0x06) => make(bits, &|i| if lane(a, i, bits) > lane(b, i, bits) { ones(bits) } else { 0 }),
+                (true, 0x07) => make(bits, &|i| if lane(a, i, bits) >= lane(b, i, bits) { ones(bits) } else { 0 }),
+                (false, 0x1a) if w >> 23 & 1 == 0 => float(&|x, y| x + y, &|x, y| x + y),
+                (false, 0x1a) => float(&|x, y| x - y, &|x, y| x - y),
+                (true, 0x1b) if w >> 23 & 1 == 0 => float(&|x, y| x * y, &|x, y| x * y),
+                (true, 0x1a) if w >> 23 & 1 == 0 => {
+                    // faddp: the pairs of the first, then the pairs of the second.
+                    let l = if double { 64 } else { 32 };
+                    let n = 128 / l;
+                    let both = |i: u32| -> u64 {
+                        let (v, j) = if i < n / 2 { (a, i) } else { (b, i - n / 2) };
+                        let (x, y) = (lane(v, 2 * j, l), lane(v, 2 * j + 1, l));
+                        if double {
+                            (f64::from_bits(x) + f64::from_bits(y)).to_bits()
+                        } else {
+                            u64::from((f32::from_bits(x as u32) + f32::from_bits(y as u32)).to_bits())
+                        }
+                    };
+                    make(l, &both)
+                }
+                (false, 0x1c) if w >> 23 & 1 == 0 => compare(&|x, y| x == y, &|x, y| x == y),
+                (true, 0x1c) if w >> 23 & 1 == 0 => compare(&|x, y| x >= y, &|x, y| x >= y),
+                (true, 0x1c) => compare(&|x, y| x > y, &|x, y| x > y),
+                _ => panic!("unknown instruction {w:#010x}"),
+            };
+            true
+        } else if w & 0x9f3e_0c00 == 0x0e20_0800 {
+            // Two registers: not, and a comparison with zero.
+            assert!(w >> 30 & 1 == 1, "unknown instruction {w:#010x}");
+            let (u, opcode) = (w >> 29 & 1 == 1, w >> 12 & 31);
+            self.f[rd] = match (u, opcode) {
+                (true, 0x05) => !a,
+                (false, 0x0a) => make(bits, &|i| if signed(lane(a, i, bits), bits) < 0 { ones(bits) } else { 0 }),
+                _ => panic!("unknown instruction {w:#010x}"),
+            };
+            true
+        } else if w & 0x9f3e_0c00 == 0x0e30_0800 {
+            // addv: the sum of every lane, in the first lane of the register.
+            assert!(w >> 29 & 7 == 2 && w >> 12 & 31 == 0x1b && size < 3, "unknown instruction {w:#010x}");
+            let sum = (0..lanes).fold(0u64, |t, i| t.wrapping_add(lane(a, i, bits)));
+            self.f[rd] = u128::from(sum & ones(bits));
+            true
+        } else if w & 0x9fe0_8400 == 0x0e00_0400 {
+            // dup, umov, and ins, from a register or a lane.
+            assert!(w >> 30 & 1 == 1 || w >> 11 & 15 == 7, "unknown instruction {w:#010x}");
+            let imm5 = w >> 16 & 31;
+            let log = imm5.trailing_zeros();
+            let lane_bits = 8u32 << log;
+            let at = imm5 >> (log + 1);
+            let imm4 = w >> 11 & 15;
+            let element = w >> 29 & 1 == 1;
+            match (element, imm4) {
+                (false, 0x0) => {
+                    // dup vd.T, vn.T[at]
+                    let n = lane(a, at, lane_bits);
+                    self.f[rd] = make(lane_bits, &|_| n);
+                }
+                (false, 0x1) => {
+                    // dup vd.T, xn
+                    let n = self.get(rn as u32);
+                    self.f[rd] = make(lane_bits, &|_| n);
+                }
+                (false, 0x7) => {
+                    // umov wd, vn.T[at] or xd
+                    let n = lane(a, at, lane_bits);
+                    self.set(rd as u32, n);
+                }
+                (false, 0x3) => {
+                    // ins vd.T[at], xn
+                    let n = u128::from(self.get(rn as u32) & ones(lane_bits));
+                    let mask = (if lane_bits == 64 { u64::MAX as u128 } else { (1u128 << lane_bits) - 1 }) << (at * lane_bits);
+                    self.f[rd] = (self.f[rd] & !mask) | (n << (at * lane_bits));
+                }
+                (true, _) => {
+                    // ins vd.T[at], vn.T[imm4 >> log]
+                    let from = imm4 >> log;
+                    let n = u128::from(lane(a, from, lane_bits));
+                    let mask = (if lane_bits == 64 { u64::MAX as u128 } else { (1u128 << lane_bits) - 1 }) << (at * lane_bits);
+                    self.f[rd] = (self.f[rd] & !mask) | (n << (at * lane_bits));
+                }
+                _ => panic!("unknown instruction {w:#010x}"),
+            }
+            true
+        } else if w & 0xdfe0_8400 == 0x5e00_0400 && w >> 11 & 15 == 0 {
+            // dup sd or dd, vn.T[at]: a lane as a float.
+            let imm5 = w >> 16 & 31;
+            let log = imm5.trailing_zeros();
+            let n = lane(a, imm5 >> (log + 1), 8 << log);
+            self.f[rd] = u128::from(n);
+            true
+        } else if w & 0x9ff8_0400 == 0x0f00_0400 && w >> 19 & 15 == 0 {
+            // movi vd.2d, #imm: each bit of the immediate is a byte.
+            assert!(w >> 30 & 1 == 1 && w >> 29 & 1 == 1 && w >> 12 & 15 == 0xe, "unknown instruction {w:#010x}");
+            let imm8 = (w >> 16 & 7) << 5 | (w >> 5 & 31);
+            let half = (0..8).fold(0u64, |t, i| if imm8 >> i & 1 == 1 { t | 0xffu64 << (8 * i) } else { t });
+            self.f[rd] = u128::from(half) | (u128::from(half) << 64);
+            true
+        } else if w & 0x9f80_0400 == 0x0f00_0400 {
+            // shrn vd.Tb, vn.Ta, #shift
+            assert!(w >> 29 & 7 == 0 && w >> 11 & 31 == 0x10, "unknown instruction {w:#010x}");
+            let immhb = w >> 16 & 127;
+            let (from, shift) = match w >> 19 & 15 {
+                1 => (16, 16 - immhb),
+                2 | 3 => (32, 32 - immhb),
+                _ => (64, 64 - immhb),
+            };
+            let to = from / 2;
+            // The lanes narrowed fill the low half of the register, and the high half
+            // is zeros.
+            self.f[rd] = (0..64 / to).fold(0u128, |v, i| {
+                v | (u128::from(lane(a, i, from) >> shift & ones(to)) << (i * to))
+            });
+            true
+        } else if w & 0xdf3e_0c00 == 0x5e30_0800 {
+            // The scalar pairs: addp dd, vn.2d, and faddp sd or dd.
+            let (u, opcode) = (w >> 29 & 1 == 1, w >> 12 & 31);
+            self.f[rd] = match (u, opcode) {
+                (false, 0x1b) => u128::from(lane(a, 0, 64).wrapping_add(lane(a, 1, 64))),
+                (true, 0x0d) if w >> 22 & 1 == 1 => u128::from(
+                    (f64::from_bits(lane(a, 0, 64)) + f64::from_bits(lane(a, 1, 64))).to_bits(),
+                ),
+                (true, 0x0d) => u128::from(
+                    (f32::from_bits(lane(a, 0, 32) as u32) + f32::from_bits(lane(a, 1, 32) as u32)).to_bits(),
+                ),
+                _ => panic!("unknown instruction {w:#010x}"),
+            };
+            true
+        } else {
+            false
         }
     }
 
