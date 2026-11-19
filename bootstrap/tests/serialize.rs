@@ -18,6 +18,10 @@ use crate::programs::pos_after;
 
 pub const ONCE: &[Test] = &[
     (
+        "a_rawjson_written_to_a_writer_of_another_format_is_a_text",
+        a_rawjson_written_to_a_writer_of_another_format_is_a_text,
+    ),
+    (
         "a_struct_writes_its_name_and_each_field_in_order",
         a_struct_writes_its_name_and_each_field_in_order,
     ),
@@ -87,6 +91,7 @@ const FUNCTIONS: &[(&str, &str)] = &[
     ("case", "of: str, name: str, holds: bool"),
     ("map", "size: Nat"),
     ("end_map", ""),
+    ("raw", "of: str, bytes: Slice[u8]"),
 ];
 
 /// An `impl` of `Writer` for `name`, which gives each function's body, from
@@ -116,6 +121,11 @@ fn writer(name: &str, body: impl Fn(&str, &[&str]) -> String) -> String {
 /// and shows its arguments, and the program that prints what it holds.
 pub fn log() -> String {
     let body = |function: &str, names: &[&str]| {
+        if function == "raw" {
+            // The log is of a format that is not the one that `of` names, so
+            // the bytes are a text.
+            return "match utf8(bytes) {\n      .ok(t) { Log(lines: \"{w.lines}text {t}\\n\") }\n      .err(e) { w }\n    }".to_string();
+        }
         let args: String = names.iter().map(|n| format!(" {{{n}}}")).collect();
         format!("Log(lines: \"{{w.lines}}{function}{args}\\n\")")
     };
@@ -154,6 +164,21 @@ fn main() ! console, alloc {{
     assert_eq!(
         prints(&source),
         "structure Point 2\nfield x\nsigned 3\nfield y\nsigned 4\nend_structure\n\n"
+    );
+}
+
+/// `raw` names the format that its bytes are in, and a writer of another format
+/// writes them as a text, as `text` does.
+fn a_rawjson_written_to_a_writer_of_another_format_is_a_text() {
+    let source = format!(
+        "use std.serialize (Serialize, Writer, write)\nuse std.json (RawJson)\n\n{}struct Call {{\n  args: RawJson\n}}\n\nfn main() ! console, alloc {{\n  l = write(Call(args: RawJson(text: \"[1.50, 1e400]\")), Log(lines: \"\"))\n  print(l.lines)\n}}\n",
+        log()
+    );
+    let found = errors(&source);
+    assert!(found.is_empty(), "{found:?}\n{source}");
+    assert_eq!(
+        prints(&source),
+        "structure Call 1\nfield args\ntext [1.50, 1e400]\nend_structure\n\n"
     );
 }
 

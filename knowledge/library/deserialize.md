@@ -61,7 +61,7 @@ trait Reader[R] {
   fn unknown(r: take R, name: str) -> (R, Result[(), ReadError]) ! alloc
   fn case(r: take R, of: str) -> (R, Result[str, ReadError]) ! alloc
   fn end_case(r: take R) -> (R, Result[(), ReadError]) ! alloc
-  fn raw(r: take R) -> (R, Result[Slice[u8], ReadError]) ! alloc
+  fn raw(r: take R, of: str) -> (R, Result[Slice[u8], ReadError]) ! alloc
   fn fail(r: take R, problem: Problem) -> (R, ReadError) ! alloc
 }
 ```
@@ -70,7 +70,7 @@ trait Reader[R] {
 - `sequence` opens a sequence, and `more` says before each element whether there is another. The sequence is closed when `more` gives `false`.
 - `structure` opens a struct. `field` then gives the name of the field the input holds next, written as the type writes its fields, and the type reads the value of the field of that name. It gives `.none` when the struct has ended. For a name the type has no field of, the type calls `unknown`, and the reader passes over the value or refuses it, as the format says.
 - `case` gives the name of the case the input holds. What that case holds is read next, and `end_case` closes it, for a case that holds nothing too.
-- `raw` gives the bytes of the next value as the format holds them, as a piece of the input that shares its memory, and moves past the value. It gives bytes and not a text, so that a format that is not text has it too. A type that is a part of the input that is read later reads itself with it, as [`RawJson`](json.md#a-part-of-the-text-that-is-read-later) does.
+- `raw` gives the bytes of the next value, in the format `of` names, as a piece of the input that shares its memory, and moves past the value. A reader of another format reads a text and gives its bytes. It gives bytes and not a text, so that a format that is not text has it too. A type that is a part of the input that is read later reads itself with it, as [`RawJson`](json.md#a-part-of-the-text-that-is-read-later) does, with `"json"`, so that what a format writes with [`raw`](serialize.md#the-shapes) is read back as the same bytes.
 - `fail` makes the error for what the type itself finds wrong, as a field that is missing, and the reader puts the path and the place in it.
 
 A reader gives names and is given none, so a type holds no table of its fields: it compares the name it is given with each of its own.

@@ -42,7 +42,7 @@ Every function of `Serialize` and of `Writer` has the effect `alloc` and no othe
 
 ## The shapes
 
-A value describes itself with eleven shapes and no others. A format is a type that has `Writer`, which has a function for each.
+A value describes itself with twelve shapes and no others. A format is a type that has `Writer`, which has a function for each.
 
 | Shape | Is written by | For |
 | --- | --- | --- |
@@ -57,6 +57,7 @@ A value describes itself with eleven shapes and no others. A format is a type th
 | A struct | `structure(w, name, fields)`, then `field(w, name)` and the value for each field, `end_structure(w)` | A struct |
 | A case of an enum | `case(w, of, name, holds)`, and then what it holds when it holds something | An enum |
 | A map | `map(w, size)`, then a key and its value for each entry, `end_map(w)` | `Map[K, V]` |
+| Bytes of a format | `raw(w, of, bytes)` | A value that holds the text of another value in a format, as `RawJson` |
 
 ```
 trait Writer[W] {
@@ -77,10 +78,11 @@ trait Writer[W] {
   fn case(w: take W, of: str, name: str, holds: bool) -> W ! alloc
   fn map(w: take W, size: Nat) -> W ! alloc
   fn end_map(w: take W) -> W ! alloc
+  fn raw(w: take W, of: str, bytes: Slice[u8]) -> W ! alloc
 }
 ```
 
-`Writer` has a `float(w, value: f64) -> W ! alloc` for the shape of a float, which is written once `f64` is built. How a shape looks in the output is the format's to say: whether a case of an enum is a text or an object in JSON is said by `std.json`, and `Serialize` says only that it is a case.
+`Writer` has a `float(w, value: f64) -> W ! alloc` for the shape of a float, which is written once `f64` is built. `of` names the format that `bytes` are in, as `"json"` does for the text of a [`RawJson`](json.md#a-part-of-the-text-that-is-read-later). A writer of that format writes the bytes where they go, as one value, with nothing copied but the bytes into its output. Any other writer writes them as a text, as `text` does, so bytes are never put into a format they are not in. How a shape looks in the output is the format's to say: whether a case of an enum is a text or an object in JSON is said by `std.json`, and `Serialize` says only that it is a case.
 
 ## Given automatically
 

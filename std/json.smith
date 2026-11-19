@@ -1,5 +1,5 @@
 use std.serialize (Serialize, Writer, write)
-use std.deserialize (Deserialize, Reader, ReadError, Problem, read, raw, fail)
+use std.deserialize (Deserialize, Reader, ReadError, Problem, read, fail)
 
 pub enum Cases {
   key
@@ -62,8 +62,9 @@ fn hex_digit(d: u8) -> u8 {
 }
 
 // The text as a string of JSON: `"`, `\`, and the bytes below a space are
-// written as escapes, and every other byte as it is.
-fn quote(to: take Out, s: str) -> Out ! alloc {
+// written as escapes, and every other byte as it is, or when `latin` says the
+// bytes are no text, each byte from 128 as an escape too.
+fn quote(to: take Out, s: List[u8], latin: bool) -> Out ! alloc {
   var w = put(to, '"')
   loop i in 0..s.size {
     b = s[i]
@@ -81,7 +82,7 @@ fn quote(to: take Out, s: str) -> Out ! alloc {
       w = put(put(w, '\\'), 'b')
     } else if b == 12 {
       w = put(put(w, '\\'), 'f')
-    } else if b < 32 {
+    } else if b < 32 or (latin and b >= 128) {
       w = put(put(put(put(put(put(w, '\\'), 'u'), '0'), '0'), hex_digit(shift_right(b, 4))), hex_digit(bit_and(b, 15)))
     } else {
       w = put(w, b)
@@ -171,7 +172,7 @@ impl Writer[Out] {
   }
   fn signed(w: take Out, value: i64) -> Out ! alloc { scalar(w, fmt(value)) }
   fn unsigned(w: take Out, value: u64) -> Out ! alloc { scalar(w, fmt(value)) }
-  fn text(w: take Out, value: str) -> Out ! alloc { finish(quote(start(w), value)) }
+  fn text(w: take Out, value: str) -> Out ! alloc { finish(quote(start(w), value, false)) }
   fn nothing(w: take Out) -> Out ! alloc { scalar(w, "null") }
   fn absent(w: take Out) -> Out ! alloc { scalar(w, "null") }
   fn present(w: take Out) -> Out ! alloc { if w.tagged { start(w) } else { w } }
@@ -193,7 +194,7 @@ impl Writer[Out] {
     var v = w
     if v.comma { v = put(v, ',') }
     match v.settings.names {
-      .written { v = quote(v, name) }
+      .written { v = quote(v, name, false) }
       .camel { v = put(camel_case(put(v, '"'), name), '"') }
     }
     v.comma = false
@@ -204,16 +205,16 @@ impl Writer[Out] {
     match w.settings.cases {
       .key {
         if holds {
-          var v = put(quote(put(start(w), '{'), name), ':')
+          var v = put(quote(put(start(w), '{'), name, false), ':')
           v.opens = push(v.opens, Open(depth: v.depth, below: v.top))
           v.top = v.opens.size
           v
         } else {
-          finish(quote(start(w), name))
+          finish(quote(start(w), name, false))
         }
       }
       .tag(t) {
-        var v = quote(put(quote(put(start(w), '{'), t), ':'), name)
+        var v = quote(put(quote(put(start(w), '{'), t, false), ':'), name, false)
         if holds {
           v.tagged = true
           v.comma = true
@@ -226,6 +227,21 @@ impl Writer[Out] {
   }
   fn map(w: take Out, size: Nat) -> Out ! alloc { open(w, '[') }
   fn end_map(w: take Out) -> Out ! alloc { close(w, ']') }
+  fn raw(w: take Out, of: str, bytes: Slice[u8]) -> Out ! alloc {
+    var v = start(w)
+    if of == "json" {
+      loop i in 0..bytes.size { v.bytes = push(v.bytes, bytes[i]) }
+      finish(v)
+    } else {
+      // Bytes of another format are a text, and when they are not one, each
+      // byte from 128 is an escape.
+      latin = match utf8(bytes) {
+        .ok(t) { false }
+        .err(e) { true }
+      }
+      finish(quote(v, bytes, latin))
+    }
+  }
 }
 
 // Finds a tag that is also a member, which `Out` does not look for, so that
@@ -325,6 +341,7 @@ impl Writer[Check] {
   fn end_tuple(w: take Check) -> Check ! alloc { shallower(w) }
   fn map(w: take Check, size: Nat) -> Check ! alloc { deeper(w) }
   fn end_map(w: take Check) -> Check ! alloc { shallower(w) }
+  fn raw(w: take Check, of: str, bytes: Slice[u8]) -> Check ! alloc { begin(w) }
   fn structure(w: take Check, name: str, fields: Nat) -> Check ! alloc {
     var v = w
     if v.held {
@@ -1649,17 +1666,35 @@ impl Reader[In] {
       failed_unit(moved(w, w.at, at), malformed(at))
     }
   }
-  fn raw(r: take In) -> (In, Result[Slice[u8], ReadError]) ! alloc {
+  fn raw(r: take In, of: str) -> (In, Result[Slice[u8], ReadError]) ! alloc {
     match value_start(r) {
       .err(e) { failed_bytes(r, e) }
       .ok(a) {
-        match scan(r.bytes, a) {
-          .err(e) { failed_bytes(moved(r, r.at, a), e) }
-          .ok(e) {
-            if a <= e and e <= r.bytes.size {
-              (moved(r, e, a), Result.ok(r.bytes[a..e]))
-            } else {
-              failed_bytes(moved(r, r.at, a), malformed(a))
+        if of == "json" {
+          match scan(r.bytes, a) {
+            .err(e) { failed_bytes(moved(r, r.at, a), e) }
+            .ok(e) {
+              if a <= e and e <= r.bytes.size {
+                (moved(r, e, a), Result.ok(r.bytes[a..e]))
+              } else {
+                failed_bytes(moved(r, r.at, a), malformed(a))
+              }
+            }
+          }
+        } else if byte(r.bytes, a) != '"' {
+          // Bytes of another format are a text.
+          failed_bytes(moved(r, r.at, a), wrong(r.bytes, a, "a text"))
+        } else {
+          match quoted(r.bytes, a) {
+            .err(e) { failed_bytes(moved(r, r.at, a), e) }
+            .ok(q) {
+              lo = saturating_add(a, 1)
+              hi = saturating_sub(q.end, 1)
+              if not q.escaped and lo <= hi and hi <= r.bytes.size {
+                (moved(r, q.end, a), Result.ok(r.bytes[lo..hi]))
+              } else {
+                (moved(r, q.end, a), Result.ok(freeze(unescape(r.bytes, a, q.end))))
+              }
             }
           }
         }
@@ -1736,11 +1771,15 @@ pub struct RawJson {
   pub text: str
 }
 
-without Serialize for RawJson
+impl Serialize[RawJson] {
+  fn write[W: Writer](value: RawJson, to: take W) -> W ! alloc {
+    Writer.raw(to, "json", value.text.bytes)
+  }
+}
 
 impl Deserialize[RawJson] {
   fn read[R: Reader](from: take R) -> (R, Result[RawJson, ReadError]) ! alloc {
-    (r, got) = raw(from)
+    (r, got) = Reader.raw(from, "json")
     match got {
       .err(e) { (r, Result.err(e)) }
       .ok(bytes) {

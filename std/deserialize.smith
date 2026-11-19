@@ -31,7 +31,7 @@ pub trait Reader[R] {
   fn unknown(r: take R, name: str) -> (R, Result[(), ReadError]) ! alloc
   fn case(r: take R, of: str) -> (R, Result[str, ReadError]) ! alloc
   fn end_case(r: take R) -> (R, Result[(), ReadError]) ! alloc
-  fn raw(r: take R) -> (R, Result[Slice[u8], ReadError]) ! alloc
+  fn raw(r: take R, of: str) -> (R, Result[Slice[u8], ReadError]) ! alloc
   fn fail(r: take R, problem: Problem) -> (R, ReadError) ! alloc
 }
 

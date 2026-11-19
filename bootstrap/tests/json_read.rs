@@ -61,8 +61,8 @@ pub const ONCE: &[Test] = &[
         reading_asks_for_memory_for_the_texts_and_lists_of_the_value_and_for_nothing_else,
     ),
     (
-        "a_rawjson_cannot_be_written",
-        a_rawjson_cannot_be_written,
+        "a_rawjson_that_is_read_and_written_is_the_bytes_it_was_less_the_space_round_it",
+        a_rawjson_that_is_read_and_written_is_the_bytes_it_was_less_the_space_round_it,
     ),
 ];
 
@@ -1676,11 +1676,37 @@ fn reading_asks_for_memory_for_the_texts_and_lists_of_the_value_and_for_nothing_
     assert!(moved > 0 && moved <= 8 * 1_000, "{moved} bytes moved for 1000 escapes");
 }
 
-fn a_rawjson_cannot_be_written() {
-    let source = "use std.json (to_json, RawJson)\n\nstruct Call {\n  args: RawJson\n}\n\nfn main() ! console, alloc {\n  print(to_json(Call(args: RawJson(text: \"1\"))))\n}\n";
-    let errors = match smith::check(source.as_bytes()) {
-        Ok(_) => panic!("a RawJson was written"),
-        Err(errors) => errors,
-    };
-    assert!(errors.iter().any(|e| e.message.contains("Serialize")), "{errors:?}");
+fn a_rawjson_that_is_read_and_written_is_the_bytes_it_was_less_the_space_round_it() {
+    generate::check(6008, 8, |g: &mut Gen| {
+        let mut texts = Vec::new();
+        for _ in 0..6 {
+            let value = tree(g, 3);
+            let pad = *g.pick(&["", " ", "\n", "\r\n\t "]);
+            let escape = g.one_in(2);
+            let mut text = pad.as_bytes().to_vec();
+            tree_text(&value, pad, escape, &mut text);
+            text.extend_from_slice(pad.as_bytes());
+            texts.push(text);
+        }
+        texts
+    }, |texts| {
+        let mut source = format!(
+            "use std.json (from_json, to_json, RawJson)\nuse std.deserialize (ReadError, Problem)\n\n{TEXT}fn main() ! console, alloc {{\n"
+        );
+        for (i, text) in texts.iter().enumerate() {
+            source.push_str(&format!(
+                "  r{i}: Result[RawJson, ReadError] = from_json({})\n  match r{i} {{\n    .ok(w) {{ print(to_json(w)) }}\n    .err(e) {{ print(say(e)) }}\n  }}\n",
+                text_source(text)
+            ));
+        }
+        source.push_str("}\n");
+        let printed = lines(&prints(&source));
+        // A text can hold a line break between its tokens, which is a line of
+        // its own in what is printed, so what is printed is compared whole.
+        let expected: String = texts
+            .iter()
+            .map(|t| format!("{}\n", String::from_utf8(t.trim_ascii().to_vec()).unwrap()))
+            .collect();
+        assert_eq!(printed.join("\n") + "\n", expected, "{source}");
+    });
 }
