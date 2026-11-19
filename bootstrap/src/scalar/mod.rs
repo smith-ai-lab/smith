@@ -632,9 +632,12 @@ impl PartialEq for Instruction {
 impl Eq for Instruction {}
 
 /// A place in the source: the file and the function it is written in, each as the
-/// number `place::intern` gives its name, and a line and a column of the file
-/// that count from 1. A line of 0 says there is no place, as the code of the
-/// runtime has none.
+/// number `names::intern` gives its name, and a line and a column of the file
+/// that count from 1. A line of 0 says no line of the source wrote the code:
+/// the code of the runtime and of the entry of the program has none, and holds
+/// the name of the piece it is, in angle brackets, as its function. A place that
+/// is all zeros says nothing of where the code comes from, as for the constants a
+/// pass makes.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Place {
     pub file: u32,
@@ -652,8 +655,23 @@ impl Place {
         col: 0,
     };
 
+    /// Whether a line of the source wrote the code.
+    pub fn is_source(self) -> bool {
+        self.line > 0
+    }
+
+    /// Whether it says nothing of where the code comes from.
     pub fn is_none(self) -> bool {
-        self.line == 0
+        self.line == 0 && self.function == 0
+    }
+
+    /// The place of the code of the piece of the runtime, or the function, with
+    /// the name, which no line of the source wrote.
+    pub fn of(name: &str) -> Place {
+        Place {
+            function: names::intern(name),
+            ..Place::NONE
+        }
     }
 }
 
@@ -665,8 +683,12 @@ pub mod names {
     static NAMES: Mutex<Vec<&'static str>> = Mutex::new(Vec::new());
 
     /// The number of the name. The names are few, a file and a function each.
+    /// The name that is nothing has the number 0, which is the number of no name.
     pub fn intern(name: &str) -> u32 {
         let mut names = NAMES.lock().expect("the names are not left held");
+        if names.is_empty() {
+            names.push("");
+        }
         if let Some(at) = names.iter().position(|n| *n == name) {
             return at as u32;
         }
@@ -676,7 +698,10 @@ pub mod names {
 
     /// The name with the number.
     pub fn name(number: u32) -> &'static str {
-        NAMES.lock().expect("the names are not left held")[number as usize]
+        match number {
+            0 => "",
+            n => NAMES.lock().expect("the names are not left held")[n as usize],
+        }
     }
 }
 
@@ -775,9 +800,16 @@ impl PartialEq for Function {
 impl Eq for Function {}
 
 impl Function {
-    /// The function, called `name` in the map of an executable.
+    /// The function, called `name` in the map of an executable. The code of it that
+    /// has no place is the code of the piece the name says.
     pub fn named(mut self, name: impl Into<String>) -> Function {
         self.name = name.into();
+        let piece = Place::of(&self.name);
+        for i in self.blocks.iter_mut().flat_map(|b| &mut b.instructions) {
+            if i.at.is_none() {
+                i.at = piece;
+            }
+        }
         self
     }
 }

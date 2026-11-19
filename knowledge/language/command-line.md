@@ -132,7 +132,7 @@ smith build --map hello.smith
 
 This writes `hello` and, beside it, `hello.map`. The executable is the same with the flag and without it, to the byte, so what is measured is the program that ships.
 
-Each line of the map is words with one space between, and the last word is a name. A `fn` line gives a function's address, the size of its code in bytes, the size of its frame in bytes, and its name. An `at` line gives the address and the size of a run of instructions, the place in the source they were built from, and the function that place is written in.
+Each line of the map is words with one space between, and the last word is a name. A `fn` line gives a function's address, the size of its code in bytes, the size of its frame in bytes, and its name. An `at` line gives the address and the size of a run of instructions, the place in the source they were built from, and the function that place is written in. A run that no line of the source wrote, as a function's own entry or a piece of the runtime built in place, has a `-` where the place is, and the name of the piece or of the function.
 
 ```
 fn 0x401000 52 0 <start>
@@ -145,7 +145,7 @@ fn 0x401094 210 48 std.console.print
 
 - **The lines are in the order of the addresses,** and the `fn` lines cover all the code of the executable with no gap and no overlap. The `at` lines after a `fn` line cover that function the same way.
 - **A name is the module and the name as written.** A function made for a type has the type after it, as in `std.list.push[Nat]`. Code that no function of a program was written for has a name in angle brackets, such as `<start>`, and no `at` lines.
-- **A call built in place keeps its own name.** Where the compiler builds the code of a call in the place of the call, the `at` lines for it name the function it was written in, which is then not the function of the `fn` line above. So a cost can be counted for the function that holds the code or for the function that wrote it.
+- **A call built in place keeps its own name.** Where the compiler builds the code of a call in the place of the call, the `at` lines for it name the function it was written in, which is then not the function of the `fn` line above, and the arguments are passed at the place of the call. So a cost can be counted for the function that holds the code or for the function that wrote it. A run never holds code of another place.
 - **An address is the one the executable asks to be loaded at.** For `--target wasm` it is the place of the byte in `hello.wasm`.
 
 `smith run` and `smith check` take no `--map`, as neither keeps an executable.

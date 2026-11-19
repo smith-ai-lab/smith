@@ -244,7 +244,7 @@ fn with_state(
                                     function: take + 1,
                                     args: vec![at, left],
                                 },
-                                at: Place::NONE,
+                                at: Place::of("<stack_take>"),
                             });
                             *stack = Some(made);
                         }
@@ -293,7 +293,7 @@ fn with_state(
                     function: take + 1,
                     args: vec![at, left],
                 },
-                at: Place::NONE,
+                at: Place::of("<stack_take>"),
             });
             now.temporaries = Some(made);
         }

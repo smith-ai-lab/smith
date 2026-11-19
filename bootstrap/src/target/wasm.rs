@@ -175,11 +175,19 @@ pub fn emit(program: &Program) -> (Vec<u8>, Vec<Part>) {
         .chain(pieces.map(Named::Piece));
     let parts = (named.zip(bodies))
         .map(|(named, body)| Part {
-            named,
+            named: named.clone(),
             address: body.at as u64,
             size: body.size as u64,
             frame: 0,
-            at: super::runs(&body.places, body.at, body.at + body.size),
+            at: super::runs(
+                &body.places,
+                body.at,
+                body.at + body.size,
+                match &named {
+                    Named::Function(k) => Place::of(&program.functions[*k].name),
+                    Named::Piece(_) => Place::NONE,
+                },
+            ),
         })
         .collect();
     (bytes, parts)
