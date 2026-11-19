@@ -21,6 +21,10 @@ use crate::serialize::{self, Defs, INTS, Parts, Ty, with_import};
 
 pub const ONCE: &[Test] = &[
     (
+        "a_rawjson_is_never_read_from_bytes_a_reader_gives_that_are_not_one_json_value",
+        a_rawjson_is_never_read_from_bytes_a_reader_gives_that_are_not_one_json_value,
+    ),
+    (
         "a_rawjson_read_from_a_reader_of_another_format_is_the_bytes_of_its_text",
         a_rawjson_read_from_a_reader_of_another_format_is_the_bytes_of_its_text,
     ),
@@ -505,6 +509,40 @@ fn a_rawjson_read_from_a_reader_of_another_format_is_the_bytes_of_its_text() {
     let found = errors(&source);
     assert!(found.is_empty(), "{found:?}\n{source}");
     assert_eq!(prints(&source), "[1.50, 1e400]\n");
+}
+
+/// A reader of a program gives the bytes of its text as the bytes of the next
+/// value, whatever the format it is asked for, and what is not one whole JSON
+/// value is an error and no `RawJson`. What is one is held with the space
+/// round it left out.
+fn a_rawjson_is_never_read_from_bytes_a_reader_gives_that_are_not_one_json_value() {
+    const NOT: &[&str] = &["] not json", "[", "1 2", "", "tru", "[1,]"];
+    const WHOLE: &[&str] = &["[1.50, 1e400]", " [true] ", "7", " null"];
+    generate::check(
+        3,
+        12,
+        |g: &mut Gen| (g.one_in(2), g.below(NOT.len().max(WHOLE.len()))),
+        |&(whole, at)| {
+            let list = if whole { WHOLE } else { NOT };
+            let text = list[at % list.len()];
+            let source = with_import(
+                &[("std.json", &["RawJson", "raw_text"])],
+                &format!(
+                    "{}fn main() ! console, alloc {{\n  xs: List[Shape] = [Shape.text(\"{text}\")]\n  (r, v): (Rd, Result[RawJson, ReadError]) = read({})\n  match v {{\n    .ok(x) {{ print(\"ok {{raw_text(x)}}\") }}\n    .err(e) {{ print(\"err {{show(e)}}\") }}\n  }}\n}}\n",
+                    reader(),
+                    fresh("xs", false, false)
+                ),
+            );
+            let found = errors(&source);
+            assert!(found.is_empty(), "{found:?}\n{source}");
+            let said = prints(&source);
+            if whole {
+                assert_eq!(said, format!("ok {}\n", text.trim()), "{source}");
+            } else {
+                assert!(said.starts_with("err "), "{said} for\n{source}");
+            }
+        },
+    );
 }
 
 // What the generator makes of a value: the shapes the reader is given, the

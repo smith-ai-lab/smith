@@ -1805,27 +1805,36 @@ pub struct RawJson {
 // The text of a `RawJson`, which is one whole JSON value.
 pub fn raw_text(raw: RawJson) -> str { raw.text }
 
+// The text of one whole JSON value, with the space round it left out, or where
+// the bytes are not one.
+fn whole_value(bytes: Slice[Byte]) -> Result[str, Bad] ! alloc {
+  a = skip_space(bytes, 0)
+  match scan(bytes, a) {
+    .err(e) { Result.err(e) }
+    .ok(e) {
+      z = skip_space(bytes, e)
+      if z < bytes.size {
+        Result.err(malformed(z))
+      } else if a <= e and e <= bytes.size {
+        match utf8(bytes[a..e]) {
+          .ok(t) { Result.ok(t) }
+          .err(u) { Result.err(malformed(a)) }
+        }
+      } else {
+        Result.err(malformed(a))
+      }
+    }
+  }
+}
+
 // A `RawJson` of the text, which is checked to be one whole JSON value, with
 // the space round it left out, as it is when it is read. A text that is not
 // gives the error that reading it gives.
 pub fn raw_json(text: str) -> Result[RawJson, ReadError] ! alloc {
   bytes = text.bytes
-  a = skip_space(bytes, 0)
-  match scan(bytes, a) {
+  match whole_value(bytes) {
+    .ok(t) { Result.ok(RawJson(text: t)) }
     .err(e) { Result.err(read_error(bytes, e)) }
-    .ok(e) {
-      z = skip_space(bytes, e)
-      if z < bytes.size {
-        Result.err(read_error(bytes, malformed(z)))
-      } else if a <= e and e <= bytes.size {
-        match utf8(bytes[a..e]) {
-          .ok(t) { Result.ok(RawJson(text: t)) }
-          .err(u) { Result.err(read_error(bytes, malformed(a))) }
-        }
-      } else {
-        Result.err(read_error(bytes, malformed(a)))
-      }
-    }
   }
 }
 
@@ -1841,10 +1850,11 @@ impl Deserialize[RawJson] {
     match got {
       .err(e) { (r, Result.err(e)) }
       .ok(bytes) {
-        match utf8(bytes) {
+        // A reader of any format gives these bytes, so they are checked here.
+        match whole_value(bytes) {
           .ok(t) { (r, Result.ok(RawJson(text: t))) }
-          .err(u) {
-            (w, e) = fail(r, .malformed)
+          .err(b) {
+            (w, e) = fail(r, b.problem)
             (w, Result.err(e))
           }
         }
