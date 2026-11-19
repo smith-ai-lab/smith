@@ -43,6 +43,7 @@ mod traits;
 
 use crate::diag::{Error, Pos};
 use crate::hash::{Map, Set};
+use crate::parser::outline::{Kind as PieceKind, Piece, outline};
 use crate::parser::{
     Arg, ArithOp, Arm, Call, Enum, Expr, File, Form, Function, Generic, Impl, Lambda, Loop, Match,
     Over, Part, Pattern, Qualified, Range, Stmt, Struct, Trait, Type, Use,
@@ -148,6 +149,13 @@ const TYPES_NOT_BUILT: &[&str] = &[
 /// The names of sizes, which `std.bits` holds, and which the compiler knows
 /// as the whole number types of that many bits.
 const SIZES: &[&str] = &["u8", "u16", "u32", "u64", "i8", "i16", "i32", "i64"];
+
+/// The items of the standard library that the compiler finds by name, as
+/// `library_item` does, and so are read with their module.
+const LEANED_ON: &[(&str, &str)] = &[
+    ("std.deserialize", "ReadError"),
+    ("std.deserialize", "Problem"),
+];
 
 /// The names of the types `PRELUDE` defines.
 const PRELUDE_TYPES: &[&str] = &[
@@ -1521,8 +1529,20 @@ pub(crate) fn check_with_source(
 }
 
 /// `check`, with the prelude given.
-fn check_with(mut file: File, library: &Library, prelude: &Prelude) -> Result<Checked, Vec<Error>> {
+fn check_with(file: File, library: &Library, prelude: &Prelude) -> Result<Checked, Vec<Error>> {
+    check_reading(file, library, prelude, None)
+}
+
+/// `check_with`, in which `whole` names a module of the standard library that
+/// is read whole, and everything in the library is reached.
+fn check_reading(
+    mut file: File,
+    library: &Library,
+    prelude: &Prelude,
+    whole: Option<&str>,
+) -> Result<Checked, Vec<Error>> {
     let mut resolver = Resolver::new(library);
+    resolver.whole = whole.is_some();
     let defined: HashSet<String> = defined_names(&file).into_iter().map(String::from).collect();
     resolver.resolve(
         Reader::Entry,
@@ -1532,6 +1552,10 @@ fn check_with(mut file: File, library: &Library, prelude: &Prelude) -> Result<Ch
         &file.qualified,
         &scope::used_names(&file),
     );
+    if let Some(module) = whole {
+        resolver.module(module, Pos::START);
+    }
+    let whole = whole.is_some();
     let Resolver {
         read,
         labels,
@@ -1548,8 +1572,15 @@ fn check_with(mut file: File, library: &Library, prelude: &Prelude) -> Result<Ch
     for module in &read {
         placement(&module.file, &mut errors);
     }
-    let (file, items) = splice(file, read, &mut errors);
-    let checked = check_file(file, items, errors, warnings, prelude);
+    // The names the file writes, which name what it takes from the modules.
+    let mut written: Vec<String> = std::mem::take(&mut file.idents)
+        .into_iter()
+        .map(|(name, _)| name)
+        .collect();
+    written.extend((file.qualified.iter()).map(|q| format!("{}@{}", q.name.0, q.module)));
+    let (file, items, mut lazy) = splice(file, read, &mut errors);
+    lazy.written = written;
+    let checked = check_file(file, items, lazy, errors, warnings, prelude, whole);
     if unimported.is_empty() {
         return checked
             .map(|mut checked| {
@@ -1569,11 +1600,33 @@ fn check_with(mut file: File, library: &Library, prelude: &Prelude) -> Result<Ch
     Err(localize(errors, &labels))
 }
 
+/// The errors in every module of the standard library, each read whole and
+/// checked whole: every function, type, trait, and `impl` in it, whether or not
+/// a program reaches it, as no program is held to reach what it does not.
+pub fn check_standard_library() -> Vec<Error> {
+    check_library(&Library::standard())
+}
+
+/// The errors in every module of the library, each read whole and checked
+/// whole.
+pub fn check_library(library: &Library) -> Vec<Error> {
+    let mut found = Vec::new();
+    for (name, _) in &library.modules {
+        let tokens = crate::lexer::lex(b"fn main() {}\n").expect("the file lexes");
+        let file = crate::parser::parse(&tokens).expect("the file parses");
+        if let Err(errors) = check_reading(file, library, &PRELUDE, Some(&format!("std.{name}"))) {
+            found.extend(errors);
+        }
+    }
+    found
+}
+
 /// The errors, or else the warnings, found in reading a module and the
 /// modules it imports: what its syntax and its `use` lines say, and where its
 /// `impl`s are. Nothing is built, so what no `main` reaches is not checked.
 pub fn check_module(name: &str, library: &Library) -> Result<Vec<Error>, Vec<Error>> {
     let mut resolver = Resolver::new(library);
+    resolver.whole = true;
     resolver.module(name, Pos::START);
     let Resolver {
         read,
@@ -1596,15 +1649,42 @@ pub fn check_module(name: &str, library: &Library) -> Result<Vec<Error>, Vec<Err
 fn check_file(
     file: File,
     items: Items,
+    mut lazy: Lazy,
     mut errors: Vec<Error>,
     import_warnings: Vec<Error>,
     prelude: &Prelude,
+    whole: bool,
 ) -> Result<Checked, Vec<Error>> {
     let mut loaded: Vec<usize> = Vec::new();
     let mut file = split_needs(with_prelude(file, prelude, &loaded));
-    // The `impl`s of the prelude that what the program reaches calls for, which
-    // reach more, until no more are called for.
+    let trait_names: Vec<String> = file.traits.iter().map(|t| t.name.clone()).collect();
+    let base_impls: Vec<Arc<Impl>> = std::mem::take(&mut file.impls);
+    let (base_functions, base_structs, base_enums) =
+        (file.functions.len(), file.structs.len(), file.enums.len());
+    // What the file itself names of the modules is read first, and then what
+    // that names.
+    if !lazy.modules.is_empty() {
+        let impls = base_impls.clone();
+        let written = std::mem::take(&mut lazy.written);
+        lazy.load(
+            &[],
+            &written,
+            |out| names_in_items(&file, &impls, out),
+            &trait_names,
+            &mut errors,
+        );
+    }
+    // The `impl`s of the prelude and the items of the modules that what the
+    // program reaches calls for, which reach more, until no more are called
+    // for.
     loop {
+        file.functions.truncate(base_functions);
+        file.structs.truncate(base_structs);
+        file.enums.truncate(base_enums);
+        file.impls = (loaded.iter().map(|&i| prelude.impl_at(i)))
+            .chain(base_impls.iter().cloned())
+            .collect();
+        lazy.append(&mut file);
         let names = Names::of(&file);
         let Some(&start_at) = names
             .functions
@@ -1613,16 +1693,15 @@ fn check_file(
         else {
             break;
         };
-        let wanted = prelude.wanted(&file, &reach(&file, &names, start_at, true).0, &loaded);
-        if wanted.is_empty() {
+        let found = reach(&file, &names, &roots_of(&file, start_at, whole), true);
+        let wanted = prelude.wanted(&file, &found.items, &loaded);
+        let from_modules = lazy.wanted(&file, &names, &found);
+        if wanted.is_empty() && from_modules.is_empty() {
             break;
         }
-        let before = loaded.len();
         loaded.extend(wanted);
         loaded.sort_unstable();
-        file.impls.drain(..before);
-        file.impls
-            .splice(0..0, loaded.iter().map(|&i| prelude.impl_at(i)));
+        lazy.load(&from_modules, &[], |_| {}, &trait_names, &mut errors);
     }
 
     // The first definition of a name holds it, and a later one is a
@@ -1744,7 +1823,12 @@ fn check_file(
         traits: trait_names,
         trait_fns,
     };
-    let (reached, unbuilt) = reach(&file, &names, start_at, false);
+    let roots = roots_of(&file, start_at, whole);
+    let Reached {
+        items: reached,
+        unbuilt,
+        ..
+    } = reach(&file, &names, &roots, false);
     let reached_types: Vec<Def> = (reached.iter())
         .filter_map(|r| match r {
             Item::Struct(s) => Some(Def::Struct(*s)),
@@ -1910,6 +1994,9 @@ fn check_file(
         }
     }
     checker.recursion(start_at, &mut Set::default(), &mut Set::default());
+    if whole {
+        return Err(checker.errors);
+    }
     if !checker.errors.is_empty() {
         // What the function that starts the program says is wrong follows from
         // what `main` says, which is at a place the reader can see.
@@ -1962,6 +2049,43 @@ fn check_file(
     })
 }
 
+/// Where reaching starts: at the function the program starts at, and, in a
+/// check of the library, at everything in it.
+fn roots_of(file: &File, start_at: usize, whole: bool) -> Vec<Item> {
+    let mut roots = vec![Item::Fn(start_at)];
+    if whole {
+        let in_std = |pos: Pos| of_std(pos);
+        roots.extend(
+            (file.functions.iter().enumerate())
+                .filter(|(_, f)| in_std(f.pos))
+                .map(|(i, _)| Item::Fn(i)),
+        );
+        roots.extend(
+            (file.structs.iter().enumerate())
+                .filter(|(_, s)| in_std(s.pos))
+                .map(|(i, _)| Item::Struct(i)),
+        );
+        roots.extend(
+            (file.enums.iter().enumerate())
+                .filter(|(_, e)| in_std(e.pos))
+                .map(|(i, _)| Item::Enum(i)),
+        );
+        roots.extend(
+            (file.traits.iter().enumerate())
+                .filter(|(_, t)| in_std(t.pos))
+                .map(|(i, _)| Item::Trait(i)),
+        );
+        roots.extend(
+            (file.impls.iter().enumerate())
+                .filter(|(_, im)| in_std(im.pos))
+                .map(|(i, _)| Item::Impl(i)),
+        );
+    }
+    let mut seen: Set<Item> = Set::default();
+    roots.retain(|r| seen.insert(*r));
+    roots
+}
+
 /// What a name stands for in a file: the item that first defines it.
 struct Names<'a> {
     functions: Map<&'a str, usize>,
@@ -2011,14 +2135,14 @@ impl<'a> Names<'a> {
 /// An `impl` of a trait that is reached, for a type that is not, is in the
 /// items but is not walked, and is in the set the call gives beside them: its
 /// head is checked, and nothing it holds is, until its type is reached.
-fn reach(file: &File, names: &Names, start_at: usize, contracts: bool) -> (Vec<Item>, Set<usize>) {
+fn reach(file: &File, names: &Names, roots: &[Item], contracts: bool) -> Reached {
     let fmt = prelude_item(file, Kind::Trait, "Fmt");
-    let mut reached: Vec<Item> = vec![Item::Fn(start_at)];
-    let mut queue: Vec<Item> = vec![Item::Fn(start_at)];
+    let mut reached: Vec<Item> = roots.to_vec();
+    let mut queue: Vec<Item> = roots.to_vec();
     let mut unbuilt: Set<usize> = Set::default();
     // The structs and enums each `impl` is for.
     let mut for_types: Vec<Vec<Item>> = Vec::with_capacity(file.impls.len());
-    let mut seen: Set<Item> = Set::from_iter([Item::Fn(start_at)]);
+    let mut seen: Set<Item> = roots.iter().copied().collect();
     // The `impl`s that name a type in their arguments, and those of a trait,
     // each in order, so that an item finds its own without a walk of all.
     let mut for_type: Map<&str, Vec<usize>> = Map::default();
@@ -2219,7 +2343,18 @@ fn reach(file: &File, names: &Names, start_at: usize, contracts: bool) -> (Vec<I
         }
         i += 1;
     }
-    (reached, unbuilt)
+    Reached {
+        items: reached,
+        unbuilt,
+    }
+}
+
+/// What the program reaches.
+struct Reached {
+    /// The items, in the order each is first reached.
+    items: Vec<Item>,
+    /// The `impl`s whose heads are checked and nothing more.
+    unbuilt: Set<usize>,
 }
 
 /// The modules of a library, each with its name and its source, and the files
@@ -2317,7 +2452,11 @@ enum Kind {
 /// lists it not at all, so what the file calls an item says nothing of what
 /// the item is.
 #[derive(Clone, Default)]
-struct Items(Vec<(String, HashMap<String, String>)>);
+struct Items(Vec<ItemNames>);
+
+/// How a module of the standard library writes its names in the file: the
+/// module, the names given with `as`, and the names written as they are.
+type ItemNames = (String, Vec<(String, String)>, HashSet<String>);
 
 /// The place, among the file's traits, structs, or enums, of the item that the
 /// library defines with the name `name` in the module `module`, written as
@@ -2326,19 +2465,21 @@ struct Items(Vec<(String, HashMap<String, String>)>);
 /// what the compiler leans on is in the calls of it, and a name that `std/`
 /// no longer defines stops the compiler at once, saying which.
 fn library_item(file: &File, items: &Items, module: &str, kind: Kind, name: &str) -> Option<usize> {
-    let (written, home): (&str, fn(Pos) -> bool) = if module == PRELUDE_MODULE {
-        (name, of_prelude)
+    let (written, home): (String, fn(Pos) -> bool) = if module == PRELUDE_MODULE {
+        (name.to_string(), of_prelude)
     } else {
-        let (_, names) = items.0.iter().find(|(m, _)| m == module)?;
-        let Some(written) = names.get(name) else {
+        let (_, aliased, kept) = items.0.iter().find(|(m, ..)| m == module)?;
+        if name.starts_with("__") {
             not_defined(module, kind, name)
-        };
-        (written, of_std)
+        }
+        (own_final(module, aliased, kept, name), of_std)
     };
     let at = match kind {
-        Kind::Trait => (file.traits.iter()).position(|t| t.name == written && home(t.pos)),
-        Kind::Struct => (file.structs.iter()).position(|s| s.name == written && home(s.pos)),
-        Kind::Enum => (file.enums.iter()).position(|e| e.name == written && home(e.pos)),
+        Kind::Trait => (file.traits.iter()).position(|t| t.name == written.as_str() && home(t.pos)),
+        Kind::Struct => {
+            (file.structs.iter()).position(|s| s.name == written.as_str() && home(s.pos))
+        }
+        Kind::Enum => (file.enums.iter()).position(|e| e.name == written.as_str() && home(e.pos)),
     };
     Some(at.unwrap_or_else(|| not_defined(module, kind, name)))
 }
@@ -2467,8 +2608,66 @@ fn localize(errors: Vec<Error>, labels: &[(usize, String)]) -> Vec<Error> {
         .collect()
 }
 
+/// The items of a module of the standard library, which are read when the
+/// program reaches them: where each is in the source, and which are read.
+struct Pieces {
+    list: Vec<Piece>,
+    /// The places in `list` of the items that are neither a `use` nor an
+    /// `impl`, in the order of their names.
+    named: Vec<u32>,
+    /// The places of the `impl`s, in the order of their traits' names.
+    impls: Vec<u32>,
+    /// Which are read.
+    loaded: Vec<bool>,
+}
+
+impl Pieces {
+    fn new(source: &str, list: Vec<Piece>) -> Pieces {
+        let name = |i: &u32| &source[list[*i as usize].name.0..list[*i as usize].name.1];
+        let mut named: Vec<u32> = Vec::with_capacity(list.len());
+        let mut impls: Vec<u32> = Vec::new();
+        for (i, p) in list.iter().enumerate() {
+            match p.kind {
+                PieceKind::Use => {}
+                PieceKind::Impl => impls.push(i as u32),
+                _ => named.push(i as u32),
+            }
+        }
+        named.sort_by(|a, b| name(a).cmp(name(b)));
+        impls.sort_by(|a, b| name(a).cmp(name(b)));
+        let loaded = vec![false; list.len()];
+        Pieces {
+            list,
+            named,
+            impls,
+            loaded,
+        }
+    }
+
+    /// The items with the name, among `of`, which is `named` or `impls`.
+    fn find<'p>(&'p self, source: &str, of: &'p [u32], name: &str) -> &'p [u32] {
+        let at = |i: &u32| {
+            let p = &self.list[*i as usize];
+            &source[p.name.0..p.name.1]
+        };
+        let from = of.partition_point(|i| at(i) < name);
+        let to = from + of[from..].partition_point(|i| at(i) == name);
+        &of[from..to]
+    }
+}
+
 /// A module that a `use` names, read.
-struct Module {
+struct Module<'a> {
+    /// The source, which the places of `pieces` are in.
+    source: std::borrow::Cow<'a, str>,
+    /// The items that are read when they are reached, when the module is
+    /// divided into them.
+    pieces: Option<Pieces>,
+    /// The names the module defines that are read with it, which are all of
+    /// them unless it is divided.
+    defined: HashSet<String>,
+    /// The names the compiler builds, which the module's source only wraps.
+    held: HashSet<String>,
     /// The name as a `use` writes it, such as `std.list` or `db.transaction`.
     name: String,
     /// What an error in it says the module is: the name of a module of the
@@ -2496,6 +2695,27 @@ struct Module {
     entry_aliased: Vec<(String, String)>,
     /// The number the module's places are at, as `STEP` says.
     number: usize,
+}
+
+impl Module<'_> {
+    /// Whether the module defines the name.
+    fn defines(&self, name: &str) -> bool {
+        self.defined.contains(name)
+            || self
+                .pieces
+                .as_ref()
+                .is_some_and(|p| !p.find(&self.source, &p.named, name).is_empty())
+    }
+
+    /// Whether the module exports the name.
+    fn exports(&self, name: &str) -> bool {
+        self.exports.iter().any(|e| e == name)
+            || self.pieces.as_ref().is_some_and(|p| {
+                p.find(&self.source, &p.named, name)
+                    .iter()
+                    .any(|&i| p.list[i as usize].public)
+            })
+    }
 }
 
 /// A name a module lists from another.
@@ -2549,7 +2769,9 @@ fn defined_names(file: &File) -> HashSet<&str> {
 /// them.
 struct Resolver<'l, 'a> {
     library: &'l Library<'a>,
-    read: Vec<Module>,
+    /// Whether every module is read whole, as a check of the library does.
+    whole: bool,
+    read: Vec<Module<'a>>,
     /// Every module a read was tried for, by number, with its label.
     labels: Vec<(usize, String)>,
     /// The place among `read` of each module read, by name. `None` is one
@@ -2582,6 +2804,7 @@ impl<'l, 'a> Resolver<'l, 'a> {
     fn new(library: &'l Library<'a>) -> Self {
         Resolver {
             library,
+            whole: false,
             read: Vec::new(),
             labels: Vec::new(),
             by_name: HashMap::new(),
@@ -2595,7 +2818,9 @@ impl<'l, 'a> Resolver<'l, 'a> {
         }
     }
 
-    /// Reads the module with the name, or says what is wrong in it.
+    /// Reads the module with the name, or says what is wrong in it. A module
+    /// of the standard library is divided into its items, and an item is read
+    /// when the program reaches it.
     fn read(&mut self, name: &str) -> Option<usize> {
         let source = self.library.source(name)?;
         let standard = name.starts_with("std.");
@@ -2610,6 +2835,14 @@ impl<'l, 'a> Resolver<'l, 'a> {
             )
         };
         self.labels.push((number, label.clone()));
+        let divided = if standard && !self.whole {
+            outline(&source)
+        } else {
+            None
+        };
+        if let Some(list) = divided {
+            return self.read_divided(name, source, list, label, number);
+        }
         let tokens = match crate::lexer::lex(source.as_bytes()) {
             Ok(tokens) => shifted(&tokens, number * STEP),
             Err(errors) => {
@@ -2628,6 +2861,11 @@ impl<'l, 'a> Resolver<'l, 'a> {
             }
         };
         self.errors.append(&mut file.unbuilt);
+        let defined: HashSet<String> = defined_names(&file).into_iter().map(String::from).collect();
+        let held = held_by_the_compiler(&file)
+            .into_iter()
+            .map(String::from)
+            .collect();
         let effects: Vec<String> = LIBRARY_EFFECTS_EXPORTED
             .iter()
             .filter(|(m, _)| format!("std.{m}") == name)
@@ -2640,8 +2878,11 @@ impl<'l, 'a> Resolver<'l, 'a> {
                 .flat_map(|t| t.functions.iter().map(|f| f.name.clone())),
         );
         exports.extend(effects.iter().cloned());
-        let slot = self.read.len();
-        self.read.push(Module {
+        let module = Module {
+            source,
+            pieces: None,
+            defined,
+            held,
             name: name.to_string(),
             label,
             tokens,
@@ -2653,27 +2894,154 @@ impl<'l, 'a> Resolver<'l, 'a> {
             entry_imported: Vec::new(),
             entry_aliased: Vec::new(),
             number,
-        });
-        self.by_name.insert(name.to_string(), Some(slot));
-        // The module's own `use` lines are read while it is open, so that a
-        // module that reaches itself again is told.
-        self.open.push(name.to_string());
-        let uses = self.read[slot].file.uses.clone();
-        let defined: HashSet<String> = defined_names(&self.read[slot].file)
-            .into_iter()
-            .map(String::from)
+        };
+        self.open_module(module)
+    }
+
+    /// Reads a module of the standard library that is divided into items: its
+    /// `use` lines, its traits, and what the compiler leans on, and the places
+    /// of the rest.
+    fn read_divided(
+        &mut self,
+        name: &str,
+        source: std::borrow::Cow<'a, str>,
+        list: Vec<Piece>,
+        label: String,
+        number: usize,
+    ) -> Option<usize> {
+        let mut file = File::default();
+        let mut held: HashSet<String> = HashSet::new();
+        for p in &list {
+            let text = &source[p.text.0..p.text.1];
+            let word = &source[p.name.0..p.name.1];
+            let read_now = match p.kind {
+                PieceKind::Use | PieceKind::Trait => true,
+                PieceKind::Struct | PieceKind::Enum => LEANED_ON.contains(&(name, word)),
+                PieceKind::Fn | PieceKind::Impl => false,
+            };
+            // A function whose whole body calls what the compiler builds is
+            // read to tell whether it is one.
+            let wrapper = p.kind == PieceKind::Fn && text.contains("__");
+            if p.kind != PieceKind::Use
+                && p.kind != PieceKind::Impl
+                && PRELUDE_TYPES.contains(&word)
+                && matches!(p.kind, PieceKind::Struct | PieceKind::Enum)
+            {
+                held.insert(word.to_string());
+            }
+            if !read_now && !wrapper {
+                continue;
+            }
+            let tokens = match crate::lexer::lex(text.as_bytes()) {
+                Ok(tokens) => shifted(&tokens, number * STEP + p.line),
+                Err(errors) => {
+                    self.errors
+                        .extend(errors.into_iter().map(|e| e.in_module(&label)));
+                    self.by_name.insert(name.to_string(), None);
+                    return None;
+                }
+            };
+            let mut found = match crate::parser::parse_library(&tokens) {
+                Ok(found) => found,
+                Err(errors) => {
+                    self.errors.extend(errors);
+                    self.by_name.insert(name.to_string(), None);
+                    return None;
+                }
+            };
+            if wrapper {
+                held.extend(
+                    found
+                        .functions
+                        .iter()
+                        .filter(|f| is_wrapper(f))
+                        .map(|f| f.name.clone()),
+                );
+            }
+            if read_now {
+                file.uses.append(&mut found.uses);
+                file.traits.append(&mut found.traits);
+                file.structs.append(&mut found.structs);
+                file.enums.append(&mut found.enums);
+                file.exports.append(&mut found.exports);
+                self.errors.append(&mut found.unbuilt);
+            }
+        }
+        held.extend(held_by_the_compiler(&file).into_iter().map(String::from));
+        let defined: HashSet<String> = defined_names(&file).into_iter().map(String::from).collect();
+        let effects: Vec<String> = LIBRARY_EFFECTS_EXPORTED
+            .iter()
+            .filter(|(m, _)| format!("std.{m}") == name)
+            .map(|(_, effect)| effect.to_string())
             .collect();
-        let written = self.read[slot].file.written.clone();
-        let qualified = self.read[slot].file.qualified.clone();
-        let used = scope::used_names(&self.read[slot].file);
-        self.resolve(
-            Reader::Module(slot),
-            &uses,
-            &defined,
-            &written,
-            &qualified,
-            &used,
+        let mut exports = file.exports.clone();
+        exports.extend(
+            (file.traits.iter())
+                .filter(|t| file.exports.contains(&t.name))
+                .flat_map(|t| t.functions.iter().map(|f| f.name.clone())),
         );
+        exports.extend(effects.iter().cloned());
+        let pieces = Pieces::new(&source, list);
+        let module = Module {
+            source,
+            pieces: Some(pieces),
+            defined,
+            held,
+            name: name.to_string(),
+            label,
+            tokens: Vec::new(),
+            file,
+            exports,
+            effects,
+            imports: Vec::new(),
+            aliases: Vec::new(),
+            entry_imported: Vec::new(),
+            entry_aliased: Vec::new(),
+            number,
+        };
+        self.open_module(module)
+    }
+
+    /// Adds the module read, and reads the modules its own `use` lines name,
+    /// while it is open, so that a module that reaches itself again is told.
+    fn open_module(&mut self, module: Module<'a>) -> Option<usize> {
+        let name = module.name.clone();
+        let divided = module.pieces.is_some();
+        let slot = self.read.len();
+        self.read.push(module);
+        self.by_name.insert(name.clone(), Some(slot));
+        self.open.push(name);
+        let uses = self.read[slot].file.uses.clone();
+        if divided {
+            // Nothing in a module of the standard library is wrong, and
+            // what it writes is not looked for.
+            let written: HashSet<String> = uses
+                .iter()
+                .flat_map(|u| &u.names)
+                .map(|n| n.alias.as_ref().map_or(n.name.clone(), |(a, _)| a.clone()))
+                .collect();
+            self.resolve(
+                Reader::Module(slot),
+                &uses,
+                &HashSet::new(),
+                &written,
+                &[],
+                &[],
+            );
+        } else {
+            let defined = self.read[slot].defined.clone();
+            let written = self.read[slot].file.written.clone();
+            let qualified = self.read[slot].file.qualified.clone();
+            let used = scope::used_names(&self.read[slot].file);
+            self.resolve(
+                Reader::Module(slot),
+                &uses,
+                &defined,
+                &written,
+                &qualified,
+                &used,
+            );
+        }
         self.open.pop();
         Some(slot)
     }
@@ -2812,7 +3180,6 @@ impl<'l, 'a> Resolver<'l, 'a> {
             let mut listed: Vec<&str> = Vec::new();
             for item in &u.names {
                 let (name, pos) = (item.name.as_str(), item.pos);
-                let exports = &self.read[slot].exports;
                 let written_as = item.alias.as_ref().map_or(name, |(a, _)| a.as_str());
                 let at_name = item.alias.as_ref().map_or(pos, |(_, at)| *at);
                 let error = if listed.contains(&name) {
@@ -2840,7 +3207,7 @@ impl<'l, 'a> Resolver<'l, 'a> {
                         )
                         .with_fix(format!("delete `{name}` from the `use`")),
                     )
-                } else if !exports.iter().any(|e| e == name) && !of_bits(&module, name) {
+                } else if !self.read[slot].exports(name) && !of_bits(&module, name) {
                     Some(self.missing(&module, slot, name, pos))
                 } else if item.alias.is_some() && (self.fixed(slot, name) || of_bits(&module, name))
                 {
@@ -2911,7 +3278,7 @@ impl<'l, 'a> Resolver<'l, 'a> {
                 continue;
             };
             let (name, pos) = (q.name.0.as_str(), q.name.1);
-            if !self.read[*slot].exports.iter().any(|e| e == name) {
+            if !self.read[*slot].exports(name) {
                 let error = self.missing(module, *slot, name, pos);
                 self.errors.push(error);
                 self.refused.push(q.written.1);
@@ -3033,7 +3400,7 @@ impl<'l, 'a> Resolver<'l, 'a> {
         module.name.starts_with("std.")
             && (module.effects.iter().any(|e| e == name)
                 || (module.file.traits.iter()).any(|t| t.functions.iter().any(|f| f.name == name))
-                || held_by_the_compiler(&module.file).contains(name))
+                || module.held.contains(name))
     }
 
     /// Whether a name of a module is a function of one of its traits.
@@ -3045,7 +3412,7 @@ impl<'l, 'a> Resolver<'l, 'a> {
     /// private, or one it does not have.
     fn missing(&self, module: &str, slot: usize, name: &str, pos: Pos) -> Error {
         let read = &self.read[slot];
-        if defined_names(&read.file).contains(name) {
+        if read.defines(name) {
             return Error::new(pos, format!("`{name}` is private to `{module}`"))
                 .with_fix(format!("write `pub` before `{name}` in `{}`", read.label));
         }
@@ -3068,27 +3435,30 @@ impl<'l, 'a> Resolver<'l, 'a> {
     }
 }
 
+/// Whether a function's whole body is one call of a function the compiler
+/// builds, with the function's own parameters in order.
+fn is_wrapper(f: &Arc<Function>) -> bool {
+    matches!(&f.body[..], [Stmt::Expr(Expr::Call(c))]
+    if c.qualifier.is_none()
+        && c.callee.starts_with("__")
+        && c.args.len() == f.params.len()
+        && c.args.iter().zip(&f.params).all(|(a, p)| {
+            a.name.is_none()
+                && !a.after
+                && matches!(&a.value, Expr::Name { name, .. } if *name == p.name)
+        }))
+}
+
 /// Whether the compiler holds the item of a module already, and builds it
 /// itself: a function whose body is one call of a function the compiler
 /// builds with its parameters, in order, and a type or a trait the prelude defines. The module's source
 /// names these, and the compiler supplies them as it did before the bodies
 /// of a module were compiled.
 fn held_by_the_compiler(module: &File) -> HashSet<&str> {
-    let wrapper = |f: &&Arc<Function>| {
-        matches!(&f.body[..], [Stmt::Expr(Expr::Call(c))]
-        if c.qualifier.is_none()
-            && c.callee.starts_with("__")
-            && c.args.len() == f.params.len()
-            && c.args.iter().zip(&f.params).all(|(a, p)| {
-                a.name.is_none()
-                    && !a.after
-                    && matches!(&a.value, Expr::Name { name, .. } if *name == p.name)
-            }))
-    };
     (module
         .functions
         .iter()
-        .filter(wrapper)
+        .filter(|f| is_wrapper(f))
         .map(|f| f.name.as_str()))
     .chain(
         (module.structs.iter().map(|s| s.name.as_str()))
@@ -3108,7 +3478,7 @@ fn held_by_the_compiler(module: &File) -> HashSet<&str> {
 /// did, nor where it follows a `.`. A parameter is written anew with its uses.
 fn renamed_tokens(
     tokens: &[crate::lexer::Token],
-    rename: &HashMap<String, String>,
+    rename: &dyn Fn(&str) -> Option<String>,
     through: &HashMap<String, HashMap<String, String>>,
 ) -> Vec<crate::lexer::Token> {
     use crate::lexer::{Piece, Tok, Token};
@@ -3164,12 +3534,12 @@ fn renamed_tokens(
                     ) if !after_dot => through.get(name).and_then(|names| names.get(member)),
                     _ => None,
                 };
-                match rename.get(name) {
+                match rename(name) {
                     _ if member.is_some() => {
                         skip = 2;
                         Tok::Ident(member.cloned().unwrap_or_default())
                     }
-                    Some(to) if !after_dot && !labelled => Tok::Ident(to.clone()),
+                    Some(to) if !after_dot && !labelled => Tok::Ident(to),
                     _ => t.tok.clone(),
                 }
             }
@@ -3194,8 +3564,13 @@ fn renamed_tokens(
 /// written with the module after it, so that it is not the name of anything in
 /// the file or in another module, and the file cannot write it. A module that
 /// lists names of another writes them as that module does. Items are checked
-/// and compiled only when the program reaches them, as the file's are.
-fn splice(mut file: File, modules: Vec<Module>, errors: &mut Vec<Error>) -> (File, Items) {
+/// and compiled only when the program reaches them, as the file's are, and an
+/// item of a module of the standard library is not read until then.
+fn splice<'a>(
+    mut file: File,
+    mut modules: Vec<Module<'a>>,
+    errors: &mut Vec<Error>,
+) -> (File, Items, Lazy<'a>) {
     // The names each module writes as they are, since the file lists them, or
     // since the compiler builds them.
     let kept: Vec<HashSet<String>> = modules
@@ -3210,41 +3585,28 @@ fn splice(mut file: File, modules: Vec<Module>, errors: &mut Vec<Error>) -> (Fil
                         .filter(|t| module.exports.contains(&t.name))
                         .flat_map(|t| t.functions.iter().map(|f| f.name.clone())),
                 );
-                kept.extend(
-                    held_by_the_compiler(&module.file)
-                        .into_iter()
-                        .map(String::from),
-                );
+                kept.extend(module.held.iter().cloned());
             }
             kept
         })
         .collect();
-    // What each name a module defines is written as in the file: as it is,
-    // as the file that is built names it with `as`, or with the module after
-    // it.
-    let finals: Vec<HashMap<String, String>> = modules
-        .iter()
-        .zip(&kept)
-        .map(|(module, mine)| {
-            let standard = module.name.starts_with("std.");
-            defined_names(&module.file)
-                .into_iter()
-                .filter(|n| !(standard && n.starts_with("__")))
-                .map(|n| {
-                    let to = match module.entry_aliased.iter().find(|(from, _)| from == n) {
-                        Some((_, alias)) => alias.clone(),
-                        None if mine.contains(n) => n.to_string(),
-                        None => format!("{n}@{}", module.name),
-                    };
-                    (n.to_string(), to)
-                })
-                .collect()
-        })
-        .collect();
-    let written = |from: usize, name: &str| match finals[from].get(name) {
-        Some(to) => to.clone(),
-        None => name.to_string(),
+    // What a name a module defines is written as in the file: as it is, as
+    // the file that is built names it with `as`, or with the module after it.
+    let final_of = |from: usize, name: &str| -> Option<String> {
+        let module = &modules[from];
+        let standard = module.name.starts_with("std.");
+        if !module.defines(name) || (standard && name.starts_with("__")) {
+            return None;
+        }
+        Some(own_final(
+            &module.name,
+            &module.entry_aliased,
+            &kept[from],
+            name,
+        ))
     };
+    let written =
+        |from: usize, name: &str| final_of(from, name).unwrap_or_else(|| name.to_string());
     // The traits each file can name, which a call of one of their functions
     // written without the trait is told from by: those the file defines and
     // those it lists.
@@ -3252,19 +3614,18 @@ fn splice(mut file: File, modules: Vec<Module>, errors: &mut Vec<Error>) -> (Fil
     let entry_traits: Vec<String> = (file.traits.iter())
         .map(|t| t.name.clone())
         .chain(modules.iter().enumerate().flat_map(|(i, m)| {
-            let finals = &finals[i];
             (m.file.traits.iter())
                 .filter(|t| {
                     m.entry_imported.contains(&t.name)
                         || m.entry_aliased.iter().any(|(n, _)| *n == t.name)
                 })
-                .filter_map(|t| finals.get(&t.name).cloned())
+                .filter_map(|t| final_of(i, &t.name))
                 .collect::<Vec<_>>()
         }))
         .collect();
     scopes.push((0, entry_traits));
     for (i, module) in modules.iter().enumerate() {
-        let own = (module.file.traits.iter()).filter_map(|t| finals[i].get(&t.name).cloned());
+        let own = (module.file.traits.iter()).filter_map(|t| final_of(i, &t.name));
         let listed = module.imports.iter().filter_map(|i| {
             let t = modules[i.from]
                 .file
@@ -3275,62 +3636,693 @@ fn splice(mut file: File, modules: Vec<Module>, errors: &mut Vec<Error>) -> (Fil
         });
         scopes.push((module.number, own.chain(listed).collect()));
     }
-    for (i, module) in modules.iter().enumerate() {
-        let standard = module.name.starts_with("std.");
-        let mut rename: HashMap<String, String> = finals[i]
-            .iter()
-            .filter(|(from, to)| from != to)
-            .map(|(from, to)| (from.clone(), to.clone()))
-            .collect();
-        for import in &module.imports {
-            rename.insert(import.written.clone(), written(import.from, &import.name));
-        }
-        // A module imported itself is written before a name of its own, as
-        // `transaction.begin`, which is the name written alone.
-        let through: HashMap<String, HashMap<String, String>> = module
-            .aliases
-            .iter()
-            .map(|(alias, from)| {
-                let names = finals[*from]
-                    .keys()
-                    .map(|name| (name.clone(), written(*from, name)))
+    // What each module writes of other modules' names, which is the same
+    // for what is read now and for what is read later.
+    struct Plan {
+        imports: Vec<(String, String)>,
+        through: HashMap<String, HashMap<String, String>>,
+        rename: Option<HashMap<String, String>>,
+    }
+    let plans: Vec<Plan> = (0..modules.len())
+        .map(|i| {
+            // The modules it imports itself are written before a name of
+            // their own, as `transaction.begin`, which is the name written
+            // alone.
+            let imports: Vec<(String, String)> = modules[i]
+                .imports
+                .iter()
+                .map(|import| (import.written.clone(), written(import.from, &import.name)))
+                .collect();
+            let through: HashMap<String, HashMap<String, String>> = modules[i]
+                .aliases
+                .iter()
+                .map(|(alias, from)| {
+                    let names = all_names(&modules[*from])
+                        .into_iter()
+                        .filter(|name| final_of(*from, name).is_some())
+                        .map(|name| (name.clone(), written(*from, &name)))
+                        .collect();
+                    (alias.clone(), names)
+                })
+                .collect();
+            let rename = modules[i].pieces.is_none().then(|| {
+                let mut rename: HashMap<String, String> = modules[i]
+                    .defined
+                    .iter()
+                    .filter_map(|n| final_of(i, n).map(|to| (n.clone(), to)))
+                    .filter(|(from, to)| from != to)
                     .collect();
-                (alias.clone(), names)
-            })
-            .collect();
-        let tokens = renamed_tokens(&module.tokens, &rename, &through);
-        let found = match crate::parser::parse_library(&tokens) {
-            Ok(found) => found,
-            Err(found) => {
-                errors.extend(found);
-                continue;
+                for (name, to) in &imports {
+                    rename.insert(name.clone(), to.clone());
+                }
+                rename
+            });
+            Plan {
+                imports,
+                through,
+                rename,
             }
+        })
+        .collect();
+    let mut rest: Vec<LazyModule<'a>> = Vec::new();
+    for (i, plan) in plans.into_iter().enumerate() {
+        let standard = modules[i].name.starts_with("std.");
+        let Plan {
+            imports,
+            through,
+            rename,
+        } = plan;
+        if let Some(rename) = rename {
+            let tokens = std::mem::take(&mut modules[i].tokens);
+            let tokens = renamed_tokens(&tokens, &|n| rename.get(n).cloned(), &through);
+            let found = match crate::parser::parse_library(&tokens) {
+                Ok(found) => found,
+                Err(found) => {
+                    errors.extend(found);
+                    continue;
+                }
+            };
+            let held = if standard {
+                modules[i].held.clone()
+            } else {
+                HashSet::new()
+            };
+            add_items(&mut file, found, &held);
+            continue;
+        }
+        let module = &mut modules[i];
+        let mut lazy = LazyModule {
+            name: module.name.clone(),
+            number: module.number,
+            source: std::mem::take(&mut module.source),
+            pieces: module.pieces.take().unwrap_or_else(|| unreachable!()),
+            defined: std::mem::take(&mut module.defined).into_iter().collect(),
+            held: std::mem::take(&mut module.held).into_iter().collect(),
+            kept: kept[i].iter().cloned().collect(),
+            aliased: module.entry_aliased.clone(),
+            imports,
+            through,
+            parsed: Vec::new(),
         };
-        let held = if standard {
-            held_by_the_compiler(&module.file)
-        } else {
-            HashSet::new()
-        };
-        let keep = |n: &str| !held.contains(n);
-        file.functions
-            .extend(found.functions.into_iter().filter(|f| keep(&f.name)));
-        file.structs
-            .extend(found.structs.into_iter().filter(|s| keep(&s.name)));
-        file.enums
-            .extend(found.enums.into_iter().filter(|e| keep(&e.name)));
-        file.traits
-            .extend(found.traits.into_iter().filter(|t| keep(&t.name)));
-        file.impls.extend(found.impls);
-        file.withouts.extend(found.withouts);
+        lazy.parsed = (0..lazy.pieces.list.len()).map(|_| None).collect();
+        // The traits, and what the compiler leans on, are read at once.
+        for at in 0..lazy.pieces.list.len() {
+            let piece = lazy.pieces.list[at];
+            let text = &lazy.source[piece.name.0..piece.name.1];
+            let now = match piece.kind {
+                PieceKind::Trait => true,
+                PieceKind::Struct | PieceKind::Enum => {
+                    LEANED_ON.contains(&(lazy.name.as_str(), text))
+                }
+                _ => false,
+            };
+            if now
+                && !lazy.held.contains(text)
+                && let Some(found) = lazy.read(at, errors)
+            {
+                add_items(&mut file, found, &HashSet::new());
+            }
+        }
+        rest.push(lazy);
     }
     file.scopes = scopes;
     let items = Items(
-        (modules.iter().zip(finals))
-            .filter(|(module, _)| module.name.starts_with("std."))
-            .map(|(module, names)| (module.name.clone(), names))
+        (modules.iter().enumerate())
+            .filter(|(_, module)| module.name.starts_with("std."))
+            .map(|(i, module)| {
+                (
+                    module.name.clone(),
+                    module.entry_aliased.clone(),
+                    kept[i].clone(),
+                )
+            })
             .collect(),
     );
-    (file, items)
+    (file, items, {
+        let mut filter = Filter {
+            bits: vec![0; 1024],
+        };
+        for module in &rest {
+            module.mark(&mut filter);
+        }
+        Lazy {
+            modules: rest,
+            done: Set::default(),
+            filter,
+            written: Vec::new(),
+        }
+    })
+}
+
+/// What a name a module defines is written as in the file: as the file that
+/// is built names it with `as`, as it is when the file lists it or the
+/// compiler builds it, or with the module after it.
+fn own_final<S: std::hash::BuildHasher>(
+    module: &str,
+    aliased: &[(String, String)],
+    kept: &HashSet<String, S>,
+    name: &str,
+) -> String {
+    match aliased.iter().find(|(from, _)| from == name) {
+        Some((_, alias)) => alias.clone(),
+        None if kept.contains(name) => name.to_string(),
+        None => format!("{name}@{module}"),
+    }
+}
+
+/// Every name a module defines.
+fn all_names(module: &Module) -> Vec<String> {
+    let mut names: Vec<String> = module.defined.iter().cloned().collect();
+    if let Some(p) = &module.pieces {
+        names.extend(p.named.iter().map(|&i| {
+            let piece = &p.list[i as usize];
+            module.source[piece.name.0..piece.name.1].to_string()
+        }));
+    }
+    names
+}
+
+/// The items of `found` among the file's, but for the names the compiler
+/// builds, which are in `held`.
+fn add_items(file: &mut File, found: File, held: &HashSet<String>) {
+    let keep = |n: &str| !held.contains(n);
+    file.functions
+        .extend(found.functions.into_iter().filter(|f| keep(&f.name)));
+    file.structs
+        .extend(found.structs.into_iter().filter(|s| keep(&s.name)));
+    file.enums
+        .extend(found.enums.into_iter().filter(|e| keep(&e.name)));
+    file.traits
+        .extend(found.traits.into_iter().filter(|t| keep(&t.name)));
+    file.impls.extend(found.impls);
+    file.withouts.extend(found.withouts);
+}
+
+/// The modules of the standard library whose items are read as the program
+/// reaches them.
+struct Lazy<'a> {
+    modules: Vec<LazyModule<'a>>,
+    /// The names looked up, whose items are all read.
+    done: Set<String>,
+    /// What the names of the items not read may look like.
+    filter: Filter,
+    /// The names the file that is built writes.
+    written: Vec<String>,
+}
+
+/// A set of the lengths and first letters that names have, so that a name
+/// that is not one of a module's is told from one that may be without looking
+/// it up.
+struct Filter {
+    bits: Vec<u64>,
+}
+
+impl Filter {
+    fn at(len: usize, first: u8) -> (usize, u64) {
+        let k = (len.min(255) << 8) | first as usize;
+        (k / 64, 1 << (k % 64))
+    }
+
+    fn add(&mut self, name: &str, extra: usize) {
+        let (word, bit) = Filter::at(
+            name.len() + extra,
+            name.as_bytes().first().copied().unwrap_or(0),
+        );
+        self.bits[word] |= bit;
+    }
+
+    fn maybe(&self, name: &str) -> bool {
+        let (word, bit) = Filter::at(name.len(), name.as_bytes().first().copied().unwrap_or(0));
+        self.bits[word] & bit != 0
+    }
+}
+
+/// A module of the standard library whose items are read when they are
+/// reached.
+struct LazyModule<'a> {
+    name: String,
+    number: usize,
+    source: std::borrow::Cow<'a, str>,
+    pieces: Pieces,
+    /// The names of what is read with the module.
+    defined: Set<String>,
+    /// The names the compiler builds, which are never read.
+    held: Set<String>,
+    /// The names the module writes as they are.
+    kept: Set<String>,
+    /// The names the file that is built gives the module's names with `as`.
+    aliased: Vec<(String, String)>,
+    /// What the module lists from other modules, as it writes each and as the
+    /// file writes it.
+    imports: Vec<(String, String)>,
+    through: HashMap<String, HashMap<String, String>>,
+    /// The items read since, by their place among the module's.
+    parsed: Vec<Option<File>>,
+}
+
+impl LazyModule<'_> {
+    /// Marks what the names of the items not read may look like: as the file
+    /// writes them, with the module after them or as they are.
+    fn mark(&self, filter: &mut Filter) {
+        for p in &self.pieces.list {
+            if matches!(p.kind, PieceKind::Fn | PieceKind::Struct | PieceKind::Enum) {
+                let name = &self.source[p.name.0..p.name.1];
+                filter.add(name, 1 + self.name.len());
+            }
+        }
+        for name in &self.kept {
+            filter.add(name, 0);
+        }
+        for (_, alias) in &self.aliased {
+            filter.add(alias, 0);
+        }
+    }
+
+    fn defines(&self, name: &str) -> bool {
+        self.defined.contains(name)
+            || !self
+                .pieces
+                .find(&self.source, &self.pieces.named, name)
+                .is_empty()
+    }
+
+    /// What the module's name is written as in the file, when it is not as the
+    /// module writes it.
+    fn rename(&self, name: &str) -> Option<String> {
+        if let Some((_, to)) = self.imports.iter().find(|(from, _)| from == name) {
+            return Some(to.clone());
+        }
+        if !self.defines(name) || name.starts_with("__") {
+            return None;
+        }
+        let to = own_final(&self.name, &self.aliased, &self.kept, name);
+        (to != name).then_some(to)
+    }
+
+    /// Reads the item at the place among the module's, with its names written
+    /// as the file writes them.
+    fn read(&mut self, at: usize, errors: &mut Vec<Error>) -> Option<File> {
+        self.pieces.loaded[at] = true;
+        let piece = self.pieces.list[at];
+        let text = &self.source[piece.text.0..piece.text.1];
+        let tokens = crate::lexer::lex(text.as_bytes()).ok()?;
+        let tokens = shifted(&tokens, self.number * STEP + piece.line);
+        let tokens = renamed_tokens(&tokens, &|n| self.rename(n), &self.through);
+        match crate::parser::parse_library(&tokens) {
+            Ok(found) => Some(found),
+            Err(found) => {
+                errors.extend(found);
+                None
+            }
+        }
+    }
+
+    /// The names, as the module writes them, that the name as the file writes
+    /// it may be, among those the module defines, and among those it lists
+    /// from other modules when `listed` says so.
+    fn originals<'n>(&'n self, written: &'n str, listed: bool) -> Vec<&'n str> {
+        let mut found: Vec<&str> = Vec::new();
+        if let Some((name, module)) = written.split_once('@') {
+            if module == self.name {
+                found.push(name);
+            }
+        } else if self.kept.contains(written) {
+            found.push(written);
+        }
+        found.extend(
+            (self.aliased.iter())
+                .filter(|(_, alias)| alias == written)
+                .map(|(from, _)| from.as_str()),
+        );
+        if listed {
+            found.extend(
+                (self.imports.iter())
+                    .filter(|(_, to)| to == written)
+                    .map(|(from, _)| from.as_str()),
+            );
+        }
+        found
+    }
+
+    /// The places of the items that are not read, which are not traits or
+    /// `impl`s, that the file may write as `written`.
+    fn provided(&self, written: &str) -> Vec<usize> {
+        let mut out = Vec::new();
+        match written.split_once('@') {
+            Some((name, module)) => {
+                if module == self.name {
+                    self.provides(name, written, &mut out);
+                }
+            }
+            None => {
+                if self.kept.contains(written) {
+                    self.provides(written, written, &mut out);
+                }
+            }
+        }
+        for (from, alias) in &self.aliased {
+            if alias == written {
+                self.provides(from, written, &mut out);
+            }
+        }
+        out
+    }
+
+    /// The places of the items not read that the module writes as `name` and
+    /// the file writes as `written`.
+    fn provides(&self, name: &str, written: &str, out: &mut Vec<usize>) {
+        if self.held.contains(name) {
+            return;
+        }
+        for &i in self.pieces.find(&self.source, &self.pieces.named, name) {
+            let i = i as usize;
+            let kind = self.pieces.list[i].kind;
+            if !self.pieces.loaded[i]
+                && matches!(kind, PieceKind::Fn | PieceKind::Struct | PieceKind::Enum)
+                && self.rename(name).as_deref().unwrap_or(name) == written
+            {
+                out.push(i);
+            }
+        }
+    }
+
+    /// Whether a struct or an enum that is not read is written as this.
+    fn is_type(&self, written: &str) -> bool {
+        self.originals(written, false).into_iter().any(|name| {
+            (self
+                .pieces
+                .find(&self.source, &self.pieces.named, name)
+                .iter())
+            .any(|&i| {
+                matches!(
+                    self.pieces.list[i as usize].kind,
+                    PieceKind::Struct | PieceKind::Enum
+                )
+            })
+        })
+    }
+
+    /// The places of the `impl`s of the trait, written as `written`, that
+    /// are not read and are for types that are all `reached`, except those
+    /// the trait writes `out` for. `own` is the names the module writes of
+    /// what is reached of its own, and `is_type` says whether a name that is
+    /// not the module's own is a struct or an enum.
+    fn impls_of(
+        &self,
+        written: &str,
+        outs: &[bool],
+        reached: &Set<&str>,
+        own: &Set<&str>,
+        loaded_type: &dyn Fn(&str) -> bool,
+        lazy_type: &dyn Fn(&str) -> bool,
+    ) -> Vec<usize> {
+        let mut names: Vec<&str> = self.originals(written, true);
+        // A trait the module does not define or list is written as it is.
+        if !self.defines(written) && !self.imports.iter().any(|(from, _)| from == written) {
+            names.push(written);
+        }
+        let mut out = Vec::new();
+        for name in names {
+            for &i in self.pieces.find(&self.source, &self.pieces.impls, name) {
+                let i = i as usize;
+                if self.pieces.loaded[i] {
+                    continue;
+                }
+                let text = &self.source[self.pieces.list[i].text.0..self.pieces.list[i].text.1];
+                let first = text.lines().next().unwrap_or("");
+                let all = impl_arguments_all(first, name, |j, arg| {
+                    outs.get(j).copied().unwrap_or(false)
+                        || arg
+                            .split(|c: char| !(c.is_alphanumeric() || c == '_'))
+                            .filter(|w| !w.is_empty())
+                            .all(|word| {
+                                self.type_is_reached(word, reached, own, loaded_type, lazy_type)
+                            })
+                });
+                if all {
+                    out.push(i);
+                }
+            }
+        }
+        out
+    }
+
+    /// Whether a word in the head of an `impl` of the module is no struct or
+    /// enum, or one that is reached.
+    fn type_is_reached(
+        &self,
+        word: &str,
+        reached: &Set<&str>,
+        own: &Set<&str>,
+        loaded_type: &dyn Fn(&str) -> bool,
+        lazy_type: &dyn Fn(&str) -> bool,
+    ) -> bool {
+        if let Some((_, to)) = self.imports.iter().find(|(from, _)| from == word) {
+            return !(loaded_type(to) || lazy_type(to)) || reached.contains(to.as_str());
+        }
+        if self.defined.contains(word) {
+            let to = own_final(&self.name, &self.aliased, &self.kept, word);
+            return !loaded_type(&to) || reached.contains(to.as_str());
+        }
+        let piece = self.pieces.find(&self.source, &self.pieces.named, word);
+        if !piece.is_empty() {
+            let is = piece.iter().any(|&i| {
+                matches!(
+                    self.pieces.list[i as usize].kind,
+                    PieceKind::Struct | PieceKind::Enum
+                )
+            });
+            if !is {
+                return true;
+            }
+            return own.contains(word)
+                || (self.kept.contains(word) && reached.contains(word))
+                || self
+                    .aliased
+                    .iter()
+                    .any(|(from, alias)| from == word && reached.contains(alias.as_str()));
+        }
+        !loaded_type(word) || reached.contains(word)
+    }
+}
+
+/// Every name the items of a file look up, as `reach` does, but for those of
+/// the prelude, which name nothing of a module, and those of the file that is
+/// built, whose names the parser has.
+fn names_in_items(file: &File, impls: &[Arc<Impl>], out: &mut dyn FnMut(&str)) {
+    for f in file.functions.iter().filter(|f| of_library(f.pos)) {
+        names_in_function(f, out);
+    }
+    for s in file.structs.iter().filter(|s| of_library(s.pos)) {
+        for field in &s.fields {
+            type_names(&field.ty).into_iter().for_each(|(n, _)| out(n));
+        }
+        bounds_named(&s.generics).into_iter().for_each(&mut *out);
+        let defaults = s.fields.iter().filter_map(|f| f.default.as_ref());
+        names_in_expressions(defaults.collect(), out);
+    }
+    for e in file.enums.iter().filter(|e| of_library(e.pos)) {
+        for t in e.cases.iter().filter_map(|c| c.ty.as_ref()) {
+            type_names(t).into_iter().for_each(|(n, _)| out(n));
+        }
+        bounds_named(&e.generics).into_iter().for_each(&mut *out);
+    }
+    for t in file.traits.iter().filter(|t| of_library(t.pos)) {
+        for f in &t.functions {
+            names_in_function(f, out);
+        }
+        bounds_named(&t.generics).into_iter().for_each(&mut *out);
+    }
+    for im in impls.iter().filter(|im| of_library(im.pos)) {
+        out(&im.name);
+        for t in &im.args {
+            type_names(t).into_iter().for_each(|(n, _)| out(n));
+        }
+        bounds_named(&im.generics).into_iter().for_each(&mut *out);
+        needs_named(&im.requires).into_iter().for_each(&mut *out);
+        for f in &im.functions {
+            names_in_function(f, out);
+        }
+    }
+}
+
+/// Every name a function looks up, as `reach` does.
+fn names_in_function(f: &Function, out: &mut dyn FnMut(&str)) {
+    types_named(f).into_iter().for_each(&mut *out);
+    let defaults = f.params.iter().filter_map(|p| p.default.as_ref());
+    let contracts = f.requires.iter().chain(&f.ensures);
+    names_in_expressions(
+        values(&f.body).chain(defaults).chain(contracts).collect(),
+        out,
+    );
+    needs_named(&f.needs).into_iter().for_each(&mut *out);
+}
+
+/// Every name expressions look up, as `reach` does.
+fn names_in_expressions(values: Vec<&Expr>, out: &mut dyn FnMut(&str)) {
+    for e in exprs(values.iter().copied()) {
+        match e {
+            Expr::Field { of, .. } => {
+                if let Expr::Name { name, .. } = &**of {
+                    out(name);
+                }
+            }
+            Expr::Name { name, .. } => out(name),
+            Expr::Call(call) => match &call.qualifier {
+                Some((q, _)) => out(q),
+                None => out(&call.callee),
+            },
+            Expr::Loop(l) if l.over.is_some() => out("Iterate"),
+            _ => {}
+        }
+    }
+}
+
+/// Whether `ok` holds of each argument of the trait in the first line of an
+/// `impl`, as written, with its place among them.
+fn impl_arguments_all(line: &str, name: &str, mut ok: impl FnMut(usize, &str) -> bool) -> bool {
+    let Some(at) = line.find(name) else {
+        return true;
+    };
+    let rest = &line[at + name.len()..];
+    let Some(rest) = rest.strip_prefix('[') else {
+        return true;
+    };
+    let mut depth = 0;
+    let mut from = 0;
+    let mut place = 0;
+    for (i, c) in rest.char_indices() {
+        match c {
+            '[' | '(' => depth += 1,
+            ']' | ')' if depth == 0 => return ok(place, &rest[from..i]),
+            ']' | ')' => depth -= 1,
+            ',' if depth == 0 => {
+                if !ok(place, &rest[from..i]) {
+                    return false;
+                }
+                place += 1;
+                from = i + 1;
+            }
+            _ => {}
+        }
+    }
+    true
+}
+
+impl<'a> Lazy<'a> {
+    /// The places, among the items of the modules, of those that the program
+    /// reaches and that are not read: those written by a name looked up, and
+    /// the `impl`s of the traits reached for the types reached.
+    fn wanted(&mut self, file: &File, names: &Names, reached: &Reached) -> Vec<(usize, usize)> {
+        if self.modules.is_empty() {
+            return Vec::new();
+        }
+        let mut traits: Set<&str> = Set::default();
+        let mut types: Set<&str> = Set::default();
+        for item in &reached.items {
+            match *item {
+                Item::Trait(k) => {
+                    traits.insert(&file.traits[k].name);
+                }
+                Item::Struct(s) => {
+                    types.insert(&file.structs[s].name);
+                }
+                Item::Enum(e) => {
+                    types.insert(&file.enums[e].name);
+                }
+                Item::Fn(_) | Item::Impl(_) => {}
+            }
+        }
+        let loaded_type = |n: &str| names.structs.contains_key(n) || names.enums.contains_key(n);
+        let mut out: Vec<(usize, usize)> = Vec::new();
+        for (m, module) in self.modules.iter().enumerate() {
+            let own: Set<&str> = types
+                .iter()
+                .filter_map(|t| match t.split_once('@') {
+                    Some((name, home)) if home == module.name => Some(name),
+                    _ => None,
+                })
+                .collect();
+            for &name in &traits {
+                let outs: Vec<bool> = (names.traits.get(name))
+                    .map(|&k| {
+                        file.traits[k]
+                            .generics
+                            .iter()
+                            .map(|g| g.out.is_some())
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                out.extend(
+                    module
+                        .impls_of(name, &outs, &types, &own, &loaded_type, &|n| {
+                            self.modules.iter().any(|m| m.is_type(n))
+                        })
+                        .into_iter()
+                        .map(|i| (m, i)),
+                );
+            }
+        }
+        out.sort_unstable();
+        out.dedup();
+        out
+    }
+
+    /// Finds the items, not read, that a name calls for, once for each name.
+    #[inline]
+    fn note(&mut self, name: &str, work: &mut Vec<(usize, usize)>) {
+        if !self.filter.maybe(name) || self.done.contains(name) {
+            return;
+        }
+        for (m, module) in self.modules.iter().enumerate() {
+            work.extend(module.provided(name).into_iter().map(|i| (m, i)));
+        }
+        self.done.insert(name.to_string());
+    }
+
+    /// Reads the items, which are not read yet, that the file names or that
+    /// are `wanted`, and the items that the names in what is read call for,
+    /// until there are no more. `file` is named by `names`, which is given
+    /// every name it looks up.
+    fn load(
+        &mut self,
+        wanted: &[(usize, usize)],
+        written: &[String],
+        names: impl FnOnce(&mut dyn FnMut(&str)),
+        traits: &[String],
+        errors: &mut Vec<Error>,
+    ) {
+        let mut work: Vec<(usize, usize)> = wanted.to_vec();
+        for name in written {
+            self.note(name, &mut work);
+        }
+        names(&mut |name| self.note(name, &mut work));
+        while let Some((m, i)) = work.pop() {
+            if self.modules[m].pieces.loaded[i] {
+                continue;
+            }
+            let module = &mut self.modules[m];
+            let Some(mut found) = module.read(i, errors) else {
+                continue;
+            };
+            traits::split_functions_needs(&mut found.functions, traits);
+            names_in_items(&found, &found.impls, &mut |name| self.note(name, &mut work));
+            self.modules[m].parsed[i] = Some(found);
+        }
+    }
+
+    /// Puts the items read among the file's, in the order of the modules and
+    /// of their source.
+    fn append(&self, file: &mut File) {
+        for module in &self.modules {
+            for found in module.parsed.iter().flatten() {
+                file.functions.extend(found.functions.iter().cloned());
+                file.structs.extend(found.structs.iter().cloned());
+                file.enums.extend(found.enums.iter().cloned());
+                file.impls.extend(found.impls.iter().cloned());
+            }
+        }
+    }
 }
 
 /// An error for each `impl` that is neither in the module of its trait nor in

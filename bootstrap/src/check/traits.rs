@@ -45,12 +45,19 @@ pub(super) const PRELUDE_TRAITS: &[&str] = &[
 /// was read, and is left as it is.
 pub(super) fn split_needs(mut file: File) -> File {
     let traits: Vec<String> = file.traits.iter().map(|t| t.name.clone()).collect();
+    split_functions_needs(&mut file.functions, &traits);
+    file
+}
+
+/// `split_needs` for functions that are read after the file is, given the
+/// names of the file's traits.
+pub(super) fn split_functions_needs(functions: &mut [std::sync::Arc<Function>], traits: &[String]) {
     let names_trait = |e: &Expr| {
         matches!(e, Expr::Index { of, .. }
             if matches!(&**of, Expr::Name { name, .. }
                 if traits.contains(name) || TRAITS_NOT_BUILT.contains(&name.as_str())))
     };
-    for f in &mut file.functions {
+    for f in functions {
         let Some(f) = std::sync::Arc::get_mut(f) else {
             continue;
         };
@@ -60,7 +67,6 @@ pub(super) fn split_needs(mut file: File) -> File {
         f.needs = needs;
         f.requires = requires;
     }
-    file
 }
 
 /// The type a type written as an expression is, where `Name[Name, ...]` is
