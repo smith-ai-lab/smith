@@ -62,7 +62,7 @@ fn word(source: str, start: Nat, end: Nat) -> Option[str] {
 
 `arith` proves that a range lies inside a text. That an end falls between characters is a fact about the bytes, which a [`check`](check.md) supplies by looking at the byte at each end, however long the piece is.
 
-- Nothing else makes a `str` from bytes, and no bytes are replaced to make them valid. So `utf8` is the only way, and a list with an invalid byte gives the `.err` above, never a text with the byte changed.
+- Nothing else makes a `str` from bytes that are not known to be valid, and no bytes are replaced to make them valid. So `utf8` is the only way in for such bytes, and a list with an invalid byte gives the `.err` above, never a text with the byte changed. A text built from texts is made with [`Text`](../library/text.md#building-a-text), which takes only what is valid and so checks nothing again.
 - A range of a text's bytes, as bytes, is taken from its bytes and not from the text.
 - Text is not counted or indexed in characters. A character may be several bytes, so `"é".size` is 2, and a program that needs the characters reads the bytes.
 
