@@ -1178,7 +1178,8 @@ impl<'a> Lowering<'a> {
                 {
                     let f = defs.view(instance.template).f;
                     let named = numbers_and_operators::number_function(f).expect("checked");
-                    let places = params_of(&defs.params(instance.template), &call.args);
+                    let places =
+                        params_of(&defs.params(instance.template), &call.args).expect("checked");
                     self.number_call(out, expr, call, named, &places, env)
                 }
                 Callee::Run(instance, gives)
@@ -1195,7 +1196,11 @@ impl<'a> Lowering<'a> {
                     // written, and then passed in the order of the
                     // parameters.
                     let mut args: Vec<Vec<form::Value>> = vec![Vec::new(); params.len()];
-                    for (arg, at) in call.args.iter().zip(params_of(&params, &call.args)) {
+                    for (arg, at) in call
+                        .args
+                        .iter()
+                        .zip(params_of(&params, &call.args).expect("checked"))
+                    {
                         let param = params[at].1.subst(&instance.args);
                         args[at] = self.passed(out, &arg.value, &param, env);
                     }
@@ -1503,7 +1508,11 @@ impl<'a> Lowering<'a> {
         // Arguments are worked out in the order they are written, and then
         // the defaults the call leaves out, as for any call.
         let mut args: Vec<Option<Bound<'a>>> = vec![None; params.len()];
-        for (arg, at) in call.args.iter().zip(params_of(&params, &call.args)) {
+        for (arg, at) in call
+            .args
+            .iter()
+            .zip(params_of(&params, &call.args).expect("checked"))
+        {
             args[at] = Some(self.argument(out, &arg.value, &params[at], env));
         }
         for (at, default) in defs.left_out(call) {
