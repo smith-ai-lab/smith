@@ -1,6 +1,6 @@
 use std.bits (bit_and, shift_left, shift_right)
 use std.int (checked_add, checked_mul, checked_narrow, saturating_add)
-use std.list (push)
+use std.list (freeze, push)
 use std.text (append_ascii, finish, text)
 use std.utf8 (utf8)
 
@@ -71,14 +71,6 @@ fn same(bytes: Slice[Byte], word: str) -> bool {
   if bytes.size != word.size { return false }
   loop i in 0..bytes.size {
     if bytes[i] != word[i] { return false }
-  }
-  true
-}
-
-fn same_lower(bytes: Slice[Byte], word: str) -> bool {
-  if bytes.size != word.size { return false }
-  loop i in 0..bytes.size {
-    if lower(bytes[i]) != word[i] { return false }
   }
   true
 }
@@ -158,7 +150,6 @@ fn text_of(bytes: Slice[Byte]) -> Result[str, str] {
 fn header(line: Slice[Byte]) -> Result[(str, str), str] ! alloc
   requires line.size > 0
 {
-  if is_blank(line[0]) { return .err("a header line that continues the one before") }
   colon = token_end(line, 0)
   if colon == 0 { return .err("a header with no name") }
   if colon >= line.size { return .err("a header line with no colon") }
@@ -228,7 +219,7 @@ fn crlf_at(view: Slice[Byte], from: Nat) -> r: Nat
   view.size
 }
 
-fn scan(bytes: Slice[Byte], limit: Nat) -> Read[Lines] ! alloc {
+fn scan(bytes: Slice[Byte], limit: Nat, fold: bool) -> Read[Lines] ! alloc {
   view = if bytes.size > limit { bytes[0..limit] } else { bytes }
   match fault(view) {
     .some(why) { return .refused(why) }
@@ -250,6 +241,11 @@ fn scan(bytes: Slice[Byte], limit: Nat) -> Read[Lines] ! alloc {
     } else if line.size == 0 {
       return .complete((Lines(first: first, headers: headers), e + 2))
     } else {
+      if is_blank(line[0]) {
+        if headers.size == 0 { return .refused("whitespace between the start line and the first header") }
+        if fold { return .refused(folding()) }
+        return .refused("a header line that continues the one before")
+      }
       match header(line) {
         .ok(h) { headers = push(headers, h) }
         .err(why) { return .refused(why) }
@@ -260,11 +256,47 @@ fn scan(bytes: Slice[Byte], limit: Nat) -> Read[Lines] ! alloc {
   if bytes.size >= limit { .refused("a head longer than the limit") } else { .incomplete }
 }
 
-pub fn body_of(headers: List[(str, str)]) -> Result[Body, str] {
+// The codings of `transfer-encoding`, read one byte at a time: how many
+// there are, how many are `chunked`, and whether the last is. The first six
+// fields say where the byte just read is in a coding.
+struct Run {
+  elements: Nat
+  chunks: Nat
+  last: bool
+  seen: Nat
+  matched: Nat
+  ended: bool
+  other: bool
+}
+
+fn chunked_byte(at: Nat) -> Byte {
+  if at == 0 { 99 } else if at == 1 { 104 } else if at == 2 { 117 } else if at == 3 { 110 } else if at == 4 { 107 } else if at == 5 { 101 } else { 100 }
+}
+
+fn close(r: Run) -> Run {
+  chunk = r.seen == 7 and r.matched == 7 and not r.other
+  if r.seen == 0 {
+    return Run(elements: r.elements, chunks: r.chunks, last: r.last, seen: 0, matched: 0, ended: false, other: false)
+  }
+  chunks = if chunk { saturating_add(r.chunks, 1) } else { r.chunks }
+  Run(elements: saturating_add(r.elements, 1), chunks: chunks, last: chunk, seen: 0, matched: 0, ended: false, other: false)
+}
+
+fn step(r: Run, b: Byte) -> Run {
+  if b == 44 { return close(r) }
+  if is_blank(b) {
+    return Run(elements: r.elements, chunks: r.chunks, last: r.last, seen: r.seen, matched: r.matched, ended: r.ended or r.seen > 0, other: r.other)
+  }
+  spelled = r.matched == r.seen and r.seen < 7 and lower(b) == chunked_byte(r.seen)
+  matched = if spelled { saturating_add(r.matched, 1) } else { r.matched }
+  Run(elements: r.elements, chunks: r.chunks, last: r.last, seen: saturating_add(r.seen, 1), matched: matched, ended: r.ended, other: r.other or r.ended)
+}
+
+fn framing(headers: List[(str, str)], request: bool) -> Result[Body, str] {
   var lengths: Nat = 0
   var length: Nat = 0
   var coded = false
-  var chunked = false
+  var r = Run(elements: 0, chunks: 0, last: false, seen: 0, matched: 0, ended: false, other: false)
   loop h in headers {
     match h {
       (name, value) {
@@ -276,26 +308,73 @@ pub fn body_of(headers: List[(str, str)]) -> Result[Body, str] {
           }
         } else if name == "transfer-encoding" {
           coded = true
-          chunked = ends_chunked(value.bytes)
+          loop b in value.bytes { r = step(r, b) }
+          r = close(r)
         }
       }
     }
   }
   if lengths > 1 { return .err("more than one content-length") }
   if coded and lengths > 0 { return .err("a content-length together with a transfer-encoding") }
-  if coded and not chunked { return .err("a transfer coding that is not chunked is last") }
-  if chunked { .ok(.chunked) } else if lengths == 1 { .ok(.length(length)) } else { .ok(.none) }
+  if coded and r.elements == 0 { return .err("an empty transfer-encoding") }
+  if coded and not r.last {
+    if request { return .err("a transfer coding that is not chunked is last") }
+    return .ok(.none)
+  }
+  if coded and r.chunks > 1 { return .err("the chunked coding applied more than once") }
+  if coded { .ok(.chunked) } else if lengths == 1 { .ok(.length(length)) } else { .ok(.none) }
 }
 
-fn ends_chunked(value: Slice[Byte]) -> bool {
-  if value.size < 7 { return false }
-  at = value.size - 7
-  if not same_lower(value[at..value.size], "chunked") { return false }
-  at == 0 or value[at - 1] == 44 or is_blank(value[at - 1])
+pub fn body_of(headers: List[(str, str)]) -> Result[Body, str] {
+  framing(headers, true)
+}
+
+fn is_host_byte(b: Byte) -> bool {
+  (b >= 48 and b <= 57) or (b >= 65 and b <= 90) or (b >= 97 and b <= 122) or b == 45 or b == 46 or b == 95 or b == 126 or b == 33 or b == 36 or (b >= 38 and b <= 44) or b == 59 or b == 61 or b == 58 or b == 91 or b == 93 or b == 37
+}
+
+fn is_host(value: Slice[Byte]) -> bool {
+  loop i in 0..value.size {
+    b = value[i]
+    if not is_host_byte(b) { return false }
+    if b == 37 {
+      if value.size - i < 3 { return false }
+      match digit(value[i + 1]) {
+        .some(d) { }
+        .none { return false }
+      }
+      match digit(value[i + 2]) {
+        .some(d) { }
+        .none { return false }
+      }
+    }
+  }
+  true
+}
+
+fn host_fault(headers: List[(str, str)]) -> Option[str] {
+  var hosts: Nat = 0
+  loop h in headers {
+    match h {
+      (name, value) {
+        if name == "host" {
+          hosts = saturating_add(hosts, 1)
+          if not is_host(value.bytes) { return .some("a host that is not valid") }
+        }
+      }
+    }
+  }
+  if hosts == 0 {
+    .some("a request with no host")
+  } else if hosts > 1 {
+    .some("a request with more than one host")
+  } else {
+    .none
+  }
 }
 
 pub fn request_head(bytes: Slice[Byte], limit: Nat = 16384) -> Read[RequestHead] ! alloc {
-  match scan(bytes, limit) {
+  match scan(bytes, limit, false) {
     .incomplete { .incomplete }
     .refused(why) { .refused(why) }
     .complete((lines, used)) {
@@ -304,7 +383,12 @@ pub fn request_head(bytes: Slice[Byte], limit: Nat = 16384) -> Read[RequestHead]
         .ok((method, target)) {
           match body_of(lines.headers) {
             .err(why) { .refused(why) }
-            .ok(body) { .complete((RequestHead(method: method, target: target, headers: lines.headers), used)) }
+            .ok(body) {
+              match host_fault(lines.headers) {
+                .some(why) { .refused(why) }
+                .none { .complete((RequestHead(method: method, target: target, headers: lines.headers), used)) }
+              }
+            }
           }
         }
       }
@@ -312,21 +396,76 @@ pub fn request_head(bytes: Slice[Byte], limit: Nat = 16384) -> Read[RequestHead]
   }
 }
 
-pub fn response_head(bytes: Slice[Byte], limit: Nat = 16384) -> Read[ResponseHead] ! alloc {
-  match scan(bytes, limit) {
-    .incomplete { .incomplete }
-    .refused(why) { .refused(why) }
-    .complete((lines, used)) {
-      match response_line(lines.first) {
-        .err(why) { .refused(why) }
-        .ok((status, reason)) {
-          match body_of(lines.headers) {
-            .err(why) { .refused(why) }
-            .ok(body) { .complete((ResponseHead(status: status, reason: reason, headers: lines.headers), used)) }
-          }
-        }
+fn folding() -> str { "obsolete line folding" }
+
+// Where the head ends: after the first empty line.
+fn head_end(view: Slice[Byte]) -> Option[Nat] {
+  loop i in 0..view.size {
+    if view[i] == 13 and view.size - i > 3 and view[i + 1] == 10 and view[i + 2] == 13 and view[i + 3] == 10 {
+      return .some(i + 4)
+    }
+  }
+  .none
+}
+
+// The head with each obsolete line fold, after the start line, made one space.
+fn unfold(head: Slice[Byte]) -> List[Byte] ! alloc {
+  var written: List[Byte] = []
+  var started = false
+  var drop: Nat = 0
+  loop i in 0..head.size {
+    b = head[i]
+    if drop == 1 {
+      drop = 2
+    } else if drop == 2 and is_blank(b) {
+    } else {
+      drop = 0
+      if started and b == 13 and head.size - i > 2 and head[i + 1] == 10 and is_blank(head[i + 2]) {
+        written = push(written, 32)
+        drop = 1
+      } else {
+        if b == 10 { started = true }
+        written = push(written, b)
       }
     }
+  }
+  written
+}
+
+fn response_of(lines: take Lines, used: Nat) -> Read[ResponseHead] {
+  match response_line(lines.first) {
+    .err(why) { .refused(why) }
+    .ok((status, reason)) {
+      match framing(lines.headers, false) {
+        .err(why) { .refused(why) }
+        .ok(body) { .complete((ResponseHead(status: status, reason: reason, headers: lines.headers), used)) }
+      }
+    }
+  }
+}
+
+fn folded_response(bytes: Slice[Byte], limit: Nat) -> Read[ResponseHead] ! alloc {
+  view = if bytes.size > limit { bytes[0..limit] } else { bytes }
+  match head_end(view) {
+    .none {
+      if bytes.size >= limit { .refused("a head longer than the limit") } else { .incomplete }
+    }
+    .some(end) {
+      if end > view.size { return .incomplete }
+      match scan(freeze(unfold(view[0..end])), limit, false) {
+        .incomplete { .incomplete }
+        .refused(why) { .refused(why) }
+        .complete((lines, used)) { response_of(lines, end) }
+      }
+    }
+  }
+}
+
+pub fn response_head(bytes: Slice[Byte], limit: Nat = 16384) -> Read[ResponseHead] ! alloc {
+  match scan(bytes, limit, true) {
+    .incomplete { .incomplete }
+    .refused(why) { if why == folding() { folded_response(bytes, limit) } else { .refused(why) } }
+    .complete((lines, used)) { response_of(lines, used) }
   }
 }
 
@@ -379,7 +518,9 @@ pub fn chunk(bytes: Slice[Byte], limit: Nat = 16384) -> Read[Slice[Byte]] {
     return .incomplete
   }
   if view[e + 1] != 10 { return .refused("a carriage return that is not followed by a line feed") }
-  if e > digits and view[digits] != 59 { return .refused("a byte that is no part of a chunk size") }
+  after = skip_blank(view, digits)
+  if after < e and view[after] != 59 { return .refused("a byte that is no part of a chunk size") }
+  if after >= e and e > digits { return .refused("a blank that no chunk extension follows") }
   match fault(view[0..e + 2]) {
     .some(why) { return .refused(why) }
     .none { }

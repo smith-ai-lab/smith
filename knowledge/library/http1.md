@@ -4,7 +4,7 @@ title: HTTP/1.1 messages
 description: std.http1, which reads and writes the messages of HTTP/1.1 as bytes: the head of a request and of a response, and a body by its length or in chunks, with nothing read that the standard says to refuse.
 status: partial
 built:
-  - "`request_head`, `response_head`, `body_of`, `chunk`, and `write_chunk` of `std.http1`, written in Smith, with `Read`, `RequestHead`, `ResponseHead`, and `Body`, every refusal the page lists, and a `limit` of 16384 that each reader takes"
+  - "`request_head`, `response_head`, `body_of`, `chunk`, and `write_chunk` of `std.http1`, written in Smith, with `Read`, `RequestHead`, `ResponseHead`, and `Body`, every refusal the page lists, the rules of RFC 9112 that bind a reader, and a `limit` of 16384 that each reader takes"
   - "not `write_request_head` or `write_response_head`, which need a `requires` over a text, and a contract is only a comparison of whole numbers"
 ---
 
@@ -61,9 +61,19 @@ fn chunk(bytes: Slice[Byte], limit: Nat = 16384) -> Read[Slice[Byte]]
 
 - `complete` holds the value and how many of the bytes it took, so the caller goes on from there. `incomplete` says the bytes so far are right and there are not enough of them. `refused` says the bytes are no message, with why, and more bytes will not make them one.
 - A head is read only when it is whole. The name of a header is given in small letters, and its value with the space at its ends taken off.
-- `body_of` says how the body that follows a head is framed, from its headers. `chunk` reads one chunk and gives its bytes, as a piece of what it was given. A chunk of no bytes is the last, and the trailers after it are passed over. `body_of` gives `.err` for a `content-length` that is not one number, for both framings together, and for a `transfer-encoding` whose last coding is not `chunked`, and a head whose headers it refuses is refused. A name or a value that is not UTF-8 is refused too, as every one is a `str`.
-- A head is refused where RFC 9112 says a server must not accept it, as these let one request be read as two by two servers that read it differently: a line that ends with a line feed alone, a space before the colon of a header, a header line that continues the one before, a byte that is no part of a name or a value, more than one `content-length` or one that is not a number, and `content-length` together with `transfer-encoding`.
+- `body_of` says how the body that follows a head is framed, from its headers. `chunk` reads one chunk and gives its bytes, as a piece of what it was given. A chunk of no bytes is the last, and the trailers after it are passed over. The size may be followed by blanks and then by chunk extensions, which are ignored. `body_of` gives `.err` for a `content-length` that is not one number and for both framings together.
+- A head is refused where RFC 9112 says a server must not accept it, as these let one request be read as two by two servers that read it differently: a line that ends with a line feed alone, a space before the colon of a header, a byte that is no part of a name or a value, more than one `content-length` or one that is not a number, `content-length` together with `transfer-encoding`, and whitespace between the start line and the first header. A header line that continues the one before is refused in a request, and in a response each is made one space, as RFC 9112 asks of a user agent. A version that is not `HTTP/1.1` is refused. A request is refused that has no `host` header, more than one, or one whose value is not a host: letters, digits, and the marks of a name, a colon, brackets, and `%` with two hexadecimal digits after it. A name or a value that is not UTF-8 is refused, as each is a `str`.
+- `transfer-encoding` is read as the list of codings it is, over every line of it, and `body_of` says `.err` for one that is empty, or has `chunked` twice, or has another coding last. A response head whose last coding is not `chunked` is read, as its body then runs to the end of the connection, and `body_of` still says `.err` of it. A request head whose headers `body_of` refuses is refused.
 - Nothing is read without a limit. A head, or a chunk, of more bytes than `limit`, which each of the three functions takes with a default of 16384, is refused, so a peer that never ends a line cannot fill memory.
+
+## Where the standard leaves a choice
+
+The readers take the strict side of each, so that two servers cannot read one message two ways.
+
+- A line ends with a carriage return and a line feed, and a line feed alone is refused, though RFC 9112 lets a recipient take it. An empty line before the request line is refused, though a server should ignore one.
+- A second `content-length` is refused even when it equals the first, and so is a value that is a list, as `3, 3`, though the standard lets a recipient take a list of equal values as one.
+- The value of `host` is judged by its bytes and not by the whole grammar of a URI. A value of a header that is not UTF-8 is refused, though the standard allows any byte from 128 on, as each value is a `str`.
+- A response whose last transfer coding is not `chunked` is read, as its body ends where the connection does, and so is a response with neither a length nor a coding, which `body_of` says `.none` of. What the method or the status of a response says about its body, a `HEAD`, a `204`, or a `CONNECT`, is for what holds the connection, as `body_of` takes only headers.
 
 ## Writing
 
