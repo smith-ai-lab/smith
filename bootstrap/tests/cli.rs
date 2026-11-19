@@ -6,7 +6,6 @@
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
-use std::sync::atomic::{AtomicUsize, Ordering};
 
 use smith::target::Target;
 
@@ -69,14 +68,7 @@ const HELLO: &str = "fn main() ! console { print(\"hello world\") }\n";
 
 /// A new, empty folder for one test.
 pub fn folder(name: &str) -> PathBuf {
-    static COUNT: AtomicUsize = AtomicUsize::new(0);
-    let dir = std::env::temp_dir()
-        .join(format!(
-            "smith-cli-{}-{}",
-            std::process::id(),
-            COUNT.fetch_add(1, Ordering::Relaxed)
-        ))
-        .join(name);
+    let dir = crate::scratch::path("cli").join(name);
     std::fs::create_dir_all(&dir).unwrap();
     dir
 }

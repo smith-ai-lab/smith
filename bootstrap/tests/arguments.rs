@@ -490,13 +490,7 @@ fn invalid_word() -> std::ffi::OsString {
 /// Runs the executable, started with the words, from a file of its own, and
 /// gives everything it did, standard error too.
 pub fn output_of(bytes: &[u8], words: &[std::ffi::OsString]) -> std::process::Output {
-    use std::sync::atomic::{AtomicUsize, Ordering};
-    static COUNT: AtomicUsize = AtomicUsize::new(0);
-    let dir = std::env::temp_dir().join(format!(
-        "smith-run-{}-{}",
-        std::process::id(),
-        COUNT.fetch_add(1, Ordering::Relaxed) + 7000
-    ));
+    let dir = crate::scratch::path("run");
     std::fs::create_dir_all(&dir).unwrap();
     let path = dir.join("program");
     crate::executable::write(&path, bytes);

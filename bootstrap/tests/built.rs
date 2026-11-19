@@ -3,7 +3,6 @@
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::sync::atomic::{AtomicUsize, Ordering};
 
 use crate::Test;
 
@@ -24,12 +23,7 @@ fn script() -> PathBuf {
 
 /// Whether the script passes a folder holding one page with this front matter.
 fn passes(front: &str) -> bool {
-    static COUNT: AtomicUsize = AtomicUsize::new(0);
-    let dir = std::env::temp_dir().join(format!(
-        "smith-built-{}-{}",
-        std::process::id(),
-        COUNT.fetch_add(1, Ordering::Relaxed)
-    ));
+    let dir = crate::scratch::path("built");
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(dir.join("page.md"), format!("---\n{front}---\n\n# Page\n")).unwrap();
     let status = crate::clock::output_within(Command::new("sh").arg(script()).arg(&dir), false)
