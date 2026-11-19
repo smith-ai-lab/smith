@@ -16,14 +16,16 @@
 //! keeps its temporaries, and what the callee does with its own temporaries
 //! lies above everything the caller has in the stack it returns. A function
 //! goes on with the pair for temporaries it had before a call, which releases
-//! what the call used. Each block takes the pairs from the jump that enters
-//! it. The program's entry starts both stacks empty, so the system is not
+//! what the call used. So does a round of a loop that hands nothing on, as
+//! `escape::rounds` works out: its jump back gives the first block the pair
+//! for temporaries the round began with. Each block takes the pairs from the
+//! jump that enters it. The program's entry starts both stacks empty, so the system is not
 //! asked before the program first needs room. A program that asks for nothing
 //! is left as it is. Nothing is given back to the system.
 
 use super::{
-    Binary, Bits, Builder, Compare, Constant, End, Function, Instruction, Op, Program, System,
-    Type, Value, escape, runtime,
+    Binary, Bits, Builder, Compare, Constant, End, Function, Instruction, Jump, Op, Program,
+    System, Type, Value, escape, runtime,
 };
 
 /// How many bytes the system gives at a time, at least.
@@ -89,6 +91,20 @@ impl State {
 pub fn install(program: Program) -> Program {
     let given: Vec<Vec<bool>> = program.functions.iter().map(escape::given_back).collect();
     let uses = needing(&program, &given);
+    let rounds: Vec<escape::Rounds> = (program.functions.iter().enumerate())
+        .map(|(k, f)| {
+            escape::rounds(f, &|i| match &i.op {
+                Op::System {
+                    call: System::Allocate,
+                    ..
+                } => !given[k][i.results[0].0],
+                Op::Call { function, .. } => {
+                    uses[*function].results && !gives_back(f, &given[k], &i.results)
+                }
+                _ => false,
+            })
+        })
+        .collect();
     if !uses[program.main].any() {
         return program;
     }
@@ -97,7 +113,7 @@ pub fn install(program: Program) -> Program {
     let mut functions: Vec<Function> = (program.functions.into_iter().enumerate())
         .map(|(k, f)| {
             if uses[k].any() {
-                with_state(f, &given[k], &uses, k == program.main, at_take)
+                with_state(f, &given[k], &rounds[k], &uses, k == program.main, at_take)
             } else {
                 f
             }
@@ -163,6 +179,7 @@ fn fresh(f: &mut Function) -> [Value; 2] {
 fn with_state(
     mut f: Function,
     given: &[bool],
+    rounds: &escape::Rounds,
     uses: &[Uses],
     first: bool,
     take: usize,
@@ -177,6 +194,7 @@ fn with_state(
     for (block, start) in f.blocks.iter_mut().zip(&at_start) {
         block.params.splice(0..0, start.values());
     }
+    let starts = at_start.clone();
     for (k, start) in at_start.into_iter().enumerate() {
         let mut now = start;
         let instructions = std::mem::take(&mut f.blocks[k].instructions);
@@ -265,14 +283,40 @@ fn with_state(
             }
             kept.push(i);
         }
+        // The function the program starts with has a piece for the stack before
+        // a loop whose rounds release what they take, as before a call, since
+        // the stack goes back to where it was and would otherwise ask the
+        // system for a piece in each round.
+        if let (true, Some([at, left])) = (first && rounds.enter[k], now.temporaries) {
+            let made = fresh(&mut f);
+            kept.push(Instruction {
+                results: made.to_vec(),
+                op: Op::Call {
+                    function: take + 1,
+                    args: vec![at, left],
+                },
+            });
+            now.temporaries = Some(made);
+        }
         f.blocks[k].instructions = kept;
+        // A jump that ends a round that hands nothing on goes on with the
+        // stack for temporaries the round began with, which releases it.
+        let state_for = |j: usize| {
+            let mut state = now;
+            if rounds.release[k][j] {
+                let header = jump_of(&f.blocks[k].end, j).block;
+                state.temporaries = starts[header].temporaries;
+            }
+            state
+        };
+        let by_jump: Vec<State> = (0..rounds.release[k].len()).map(state_for).collect();
         match &mut f.blocks[k].end {
             End::Jump(jump) => {
-                jump.args.splice(0..0, now.values());
+                jump.args.splice(0..0, by_jump[0].values());
             }
             End::Switch { jumps, .. } => {
-                for jump in jumps {
-                    jump.args.splice(0..0, now.values());
+                for (j, jump) in jumps.iter_mut().enumerate() {
+                    jump.args.splice(0..0, by_jump[j].values());
                 }
             }
             End::Return(values) => {
@@ -284,6 +328,15 @@ fn with_state(
         f.results.splice(0..0, PAIR);
     }
     f
+}
+
+/// The jump at the place `j` of how a block ends.
+fn jump_of(end: &End, j: usize) -> &Jump {
+    match end {
+        End::Jump(jump) => jump,
+        End::Switch { jumps, .. } => &jumps[j],
+        End::Return(_) => unreachable!("a block that returns has no jump"),
+    }
 }
 
 /// Which stacks the function takes.
