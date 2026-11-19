@@ -221,5 +221,15 @@ fn arith_proves_a_sum_of_a_range_exactly_when_it_fits_the_range() {
         ));
         let errors = check(unproven.as_bytes()).expect_err("a sum that may not fit");
         assert!(errors.iter().all(|e| e.message.contains("i + 1")), "{errors:?}");
+        // No function that wraps, saturates, or checks takes a range that fills no
+        // size, so the fix names none, and it names them for a range that does.
+        let fixes = |e: &[smith::diag::Error]| e.iter().filter_map(|e| e.fix.clone()).collect::<Vec<_>>();
+        assert!(!fixes(&errors).is_empty(), "{errors:?}");
+        assert!(fixes(&errors).iter().all(|f| !f.contains("wrapping_")), "{errors:?}");
+        let sized = with_header(
+            "fn next(i: Byte) -> Byte { i + 1 }\n\nfn main() ! console, alloc {\n  print(\"{next(0)}\")\n}\n".to_string(),
+        );
+        let errors = check(sized.as_bytes()).expect_err("a sum that may not fit");
+        assert!(fixes(&errors).iter().all(|f| f.contains("wrapping_add")), "{errors:?}");
     });
 }
