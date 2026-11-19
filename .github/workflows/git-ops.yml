@@ -4,6 +4,11 @@ name: git-ops
 # through its own access. It is started by hand, with one operation named from
 # the list below and nothing else, so each use is a run with its inputs in the
 # history of Actions. It never pushes, never merges, and never touches main.
+#
+# It does not put a pull request in the merge queue. What a workflow does with
+# its own token starts no other workflow, so a pull request it enqueued waited
+# in the queue for checks that never began, and held up every one behind it. A
+# pull request is enqueued by the session that reviews it, with its own access.
 on:
   workflow_dispatch:
     inputs:
@@ -13,14 +18,13 @@ on:
         type: choice
         options:
           - delete-branch
-          - enqueue
           - dequeue
       branch:
         description: "delete-branch: the branch to delete"
         required: false
         type: string
       pull_request:
-        description: "enqueue, dequeue: the number of the pull request"
+        description: "dequeue: the number of the pull request"
         required: false
         type: string
 
@@ -31,9 +35,9 @@ jobs:
     name: ${{ inputs.operation }} ${{ inputs.branch }}${{ inputs.pull_request }}
     runs-on: ubuntu-latest
     permissions:
-      # To delete a branch, and for the queue to merge what is enqueued.
+      # To delete a branch.
       contents: write
-      # To put a pull request in the merge queue and take it out.
+      # To take a pull request out of the merge queue.
       pull-requests: write
     steps:
       - name: Run the operation
@@ -77,23 +81,6 @@ jobs:
               head=$(gh api "repos/$REPOSITORY/branches/$BRANCH" --jq .commit.sha)
               gh api -X DELETE "repos/$REPOSITORY/git/refs/heads/$BRANCH"
               echo "Deleted '$BRANCH', which was at $head. To restore it, create a branch at that commit."
-              ;;
-            enqueue)
-              number
-              sha=$(gh api "repos/$REPOSITORY/pulls/$PULL_REQUEST" --jq .head.sha)
-              state=$(gh api "repos/$REPOSITORY/pulls/$PULL_REQUEST" --jq .state)
-              [ "$state" = "open" ] || refuse "pull request $PULL_REQUEST is $state"
-              checks=$(gh api "repos/$REPOSITORY/commits/$sha/check-runs" \
-                --jq '[.check_runs[] | select(.name == "ci") | .conclusion] | if length == 0 then "missing" elif all(. == "success") then "success" else join(",") end')
-              [ "$checks" = "success" ] ||
-                refuse "the ci check of pull request $PULL_REQUEST at $sha is '$checks', not success"
-              id=$(gh api "repos/$REPOSITORY/pulls/$PULL_REQUEST" --jq .node_id)
-              gh api graphql -f id="$id" -f query='
-                mutation($id: ID!) {
-                  enqueuePullRequest(input: {pullRequestId: $id}) {
-                    mergeQueueEntry { position state }
-                  }
-                }'
               ;;
             dequeue)
               number
