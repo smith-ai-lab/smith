@@ -112,6 +112,48 @@ fn main() ! http, store, alloc {
 
 `mcp` is the function it is when it stands alone. It does not know of `at`, and `at` does not know of MCP: anything that asks for messages is put at a path the same way.
 
+## Who may call
+
+A guard decides, before a route runs, whether the request may reach it. It is written with [`with`](../language/with.md), and the routes after it in its block are the ones it guards.
+
+```
+use std.http (Caller, bearer, caller, get, identity, routes)
+
+fn check(token: str) -> Option[Caller] ! store
+
+fn health() -> str { "ok" }
+
+fn my_notes() -> List[Note] ! identity, store {
+  notes_of(caller().subject)
+}
+
+fn main() ! http, store, alloc {
+  with routes()
+  get("/health", health)
+  with bearer(check)
+  get("/notes", my_notes)
+}
+```
+
+`/health` is answered for anyone. A request to `/notes` reaches `my_notes` only when it carries `Authorization: Bearer` with a token for which `check` gives `.some`. Any other request to it is answered 401, and `my_notes` does not run.
+
+```
+effect identity {
+  fn caller() -> Caller
+}
+
+struct Caller {
+  subject: str
+  scopes: List[str]
+}
+
+fn bearer[T](check: fn(token: str) -> Option[Caller], body: fn() -> T ! identity) -> T
+```
+
+- **Who is calling is an effect.** `bearer` answers `identity` for the routes it guards, with the `Caller` that `check` gave. A function that needs to know who is calling carries `identity` and calls `caller()`.
+- **A route that is not guarded cannot ask.** `get("/notes", my_notes)` written before the `with bearer(check)` line is refused when the program is built, because `my_notes` carries `identity` and nothing there answers it. So a route that needs a caller cannot be left open by mistake.
+- **A guard is a function,** and a program writes its own in the same way: one that answers `identity` from a cookie, or one that asks for a scope and answers 403 without it.
+
 ## Where the requests come from
 
 `routes` asks for each request and gives each response through the effect `http`, and does not know where they come from. What answers `http` is the deployment and not the program. A native executable, for every system Smith builds for, listens on a socket. In a [WebAssembly module](../compiler.md#the-host-of-a-webassembly-module) the operations of `http` are imports, which a host that is called for each request supplies. A test answers `http` with a handler of its own that gives the requests it wants, so a server is tested with no network. The source is the same for all of them, and what a deployment needs told, as the port a socket listens on, is said in `project.smith` and not in the program, as [Deployments](../language/deployments.md) says.
@@ -135,4 +177,6 @@ fn listen[T](port: Nat, body: fn() -> T ! http) -> T ! net, alloc
 | `-> Html`, `-> Text`, `-> Redirect` | A page, a text, and a redirect |
 | `impl Respond[T]` | How a type of the program's own answers |
 | `-> Result[T, E]` | `.err(e)` is the status `Status` gives for `e`, with `e` as JSON |
+| `with bearer(check)` | The routes after it, reached only with a token `check` accepts, with `identity` answered for them |
+| `caller()` | Who sent the request, in a function that carries `identity` |
 | `at("/mcp") { ... }` | What asks for messages, put at a path |
