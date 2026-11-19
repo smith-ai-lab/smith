@@ -1221,6 +1221,9 @@ impl<'a> Lowering<'a> {
                     return (ty, self.load(out, address, &scalars));
                 }
                 let (of_ty, values) = self.expr(out, of, env);
+                if matches!(of_ty, Ty::Text) && name == "bytes" {
+                    return (typed.type_of(expr, env), values);
+                }
                 if matches!(of_ty, Ty::List(_) | Ty::Slice(_) | Ty::Text) {
                     return (typed.type_of(expr, env), vec![values[1]]);
                 }
