@@ -243,7 +243,7 @@ The instructions a program uses are chosen when it is built and never while it r
 - **A higher level is a choice of the build.** AVX-512 on x86-64, and SVE on arm64, are for a program whose author knows where it runs. A project that serves several levels builds an executable for each, and what installs it picks one.
 - **WebAssembly has one set of vectors,** of 128 bits, and no levels.
 
-This is planned. Today an executable for x86-64 uses SSE2 and nothing above it, as [Scalar form](#scalar-form) says, fuses no product, checks nothing when it starts, and no higher level can be chosen.
+The check is built for the three x86-64 targets, as the first code of the executable, after the system gives the program its words and before `main`. It asks `cpuid` for each of FMA, MOVBE, F16C, AVX, XSAVE, BMI1, AVX2, BMI2, and LZCNT, which together are the level, and `xgetbv` whether the system has turned on the registers of AVX. The first that is missing ends the program with status 1 after one line on the error output that says the level and the feature, and nothing of the program runs. Its cost is the same few dozen instructions for every program, once. arm64 and WebAssembly have none. This is planned for the rest: today an executable for x86-64 uses SSE2 and nothing above it, as [Scalar form](#scalar-form) says, fuses no product, and no higher level can be chosen.
 
 ### The host of a WebAssembly module
 
