@@ -1,0 +1,8 @@
+{
+  "name": "smith-worker-test",
+  "private": true,
+  "description": "What the test of a Smith program as a Cloudflare Worker needs: the one package that runs workerd.",
+  "dependencies": {
+    "miniflare": "4.20260730.0"
+  }
+}
