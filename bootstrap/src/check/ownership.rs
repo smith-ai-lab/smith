@@ -964,10 +964,22 @@ impl<'a> Walk<'a> {
             ..Frame::default()
         });
         for (i, param) in l.params.iter().enumerate() {
-            let lent = (!takes.get(i).copied().unwrap_or(false)).then(|| "this lambda".to_string());
+            let taken = takes.get(i).copied().unwrap_or(false);
+            let lent = (!taken).then(|| "this lambda".to_string());
             self.bind(st, &param.0, lent);
+            // What a parameter that is taken is given must be taken.
+            if let (true, Some(ty)) = (taken, self.types.get(&addr(param))) {
+                self.own(st, &param.0, param.1, &ty.clone());
+            }
         }
         self.block(st, &l.body, Flow::Returned);
+        // What the lambda holds ends with it.
+        self.dropped(st);
+        if let (Some(moved), Some(frame)) = (st.as_mut(), self.inside.last()) {
+            moved
+                .held
+                .retain(|h| frame.outer.iter().any(|(n, p)| *n == h.name && *p == h.pos));
+        }
         let frame = self.inside.pop().unwrap_or_default();
         if frame.gives.is_empty() {
             return;
