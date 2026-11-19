@@ -1,0 +1,21 @@
+use std.list (push)
+
+pub struct Text {
+  bytes: List[Byte]
+}
+
+pub fn text() -> Text {
+  Text(bytes: [])
+}
+
+pub fn append(t: take Text, s: str) -> Text ! alloc {
+  Text(bytes: __append(t.bytes, s))
+}
+
+pub fn append_ascii(t: take Text, b: 0..128) -> Text ! alloc {
+  Text(bytes: push(t.bytes, b))
+}
+
+pub fn finish(t: take Text) -> str {
+  __finish(t.bytes)
+}
