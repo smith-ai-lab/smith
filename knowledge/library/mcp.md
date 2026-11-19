@@ -1,7 +1,7 @@
 ---
 type: specification
 title: MCP
-description: std.mcp, with which a program is a Model Context Protocol server whose tools are plain functions, each described by its own comment and its parameters.
+description: std.mcp, with which a program is a Model Context Protocol server whose tools, resources, and prompts are plain functions, each described by its own comment and its parameters.
 status: planned
 ---
 
@@ -57,6 +57,63 @@ No tool is stored in a value. A tool may have any effects, and they are required
 
 `tool` takes a function that has [`Function`](../language/traits.md#an-impl-for-a-function), which every function with a name is given, and that is how it has the function's name, its comment, and its parameters with theirs: it reads the arguments struct from the message with [`Deserialize`](deserialize.md), calls the function, and describes the struct with [`Describe`](describe.md) for a client that lists the tools. `tool` reads no code. `tool` carries an effect that `mcp` handles, which is how a line with no value to pass along reaches the message being answered.
 
+## A resource
+
+A resource is something a client reads by its address. It is a plain function too: `resource` takes the pattern of the address and the function that gives what is there.
+
+```
+use std.mcp (mcp, resource, tool)
+
+// One note, by its number.
+fn note(id: Nat) -> Result[Note, NotFound] ! store
+
+// Every note there is.
+fn notes() -> List[Note] ! store
+
+fn main() ! messages, store, alloc {
+  with mcp(name: "notes", version: "1")
+  resource("notes://all", notes)
+  resource("notes://note/:id", note)
+  tool(add_note)
+}
+```
+
+A client that reads `notes://note/7` is given what `note(7)` gives. A part of the pattern that begins with `:` is a parameter of the function, by its name, read as the parameter's type, as a part of a path is for a [route](http.md#where-a-parameter-comes-from). A pattern with no such part is one resource, and one with any is every resource that fits it, which a client is told of as a template.
+
+The description is the comment, as for a tool. What the function gives has [`Serialize`](serialize.md) and is written as JSON, or is a `str` and is written as it is. `.err(e)` of a `Result` is answered as a resource that could not be read, and an address that fits no pattern, or whose part does not read as its parameter's type, is answered by the library and never reaches a function.
+
+## A prompt
+
+A prompt is a text a client offers its user, with blanks the user fills. It is a function that takes the blanks and gives the text.
+
+```
+use std.mcp (mcp, prompt)
+
+// Asks for a summary of one note at a length.
+fn summarise(
+  // The number of the note.
+  id: Nat,
+  // How many sentences the summary may have.
+  sentences: Nat = 3,
+) -> Result[str, NotFound] ! store {
+  n = try note(id)
+  .ok("Summarise this note in {sentences} sentences:\n{n.text}")
+}
+
+fn main() ! messages, store, alloc {
+  with mcp(name: "notes", version: "1")
+  prompt(summarise)
+}
+```
+
+A client that lists the prompts is told of `summarise`, with its comment and its two blanks, of which `sentences` may be left out. A client that asks for it with `id` as 7 is given the text, as one message from the user. The parameters are read as a tool's are, and the comment on each describes its blank.
+
+`resource` and `prompt` are lines beside `tool`, are bounded by [`Function`](../language/traits.md#an-impl-for-a-function) as it is, and read no code. A server offers what its lines say, so one with no `resource` line tells a client it has no resources.
+
+## Who may call
+
+`std.mcp` checks no one. Who may reach a server is a question about the request that carried the message, and so it belongs to what carries it: a server a client starts on the same machine is reached only by that client, and a server on the network is behind whatever [`std.http`](http.md) does to a request before it reaches [`at`](http.md#a-server-of-messages-at-a-path). Nothing of authorization is written in a tool, a resource, or a prompt.
+
 ## Where the messages come from
 
 `mcp` asks for each message and gives each answer through the effect `messages`, and does not know where they come from. What answers `messages` is the deployment and not the program:
@@ -73,6 +130,8 @@ The source is the same for all three.
 | --- | --- |
 | `with mcp(name: "calc", version: "1")` | A server whose offers are the lines that follow |
 | `tool(f)` | The function `f` offered as a tool |
-| `// ...` on a tool, a parameter, or a field | The description a client is given |
+| `resource("notes://note/:id", f)` | What `f` gives, read at each address that fits the pattern |
+| `prompt(f)` | The text `f` gives, offered with its parameters as blanks |
+| `// ...` on a tool, a resource, a prompt, a parameter, or a field | The description a client is given |
 | `-> Result[T, E]` on a tool | `.err(e)` is a result marked as an error |
 | `at("/mcp") { with mcp(...) ... }` | The server at a path of an HTTP server |
