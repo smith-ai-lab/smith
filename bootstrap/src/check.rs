@@ -50,7 +50,7 @@ use crate::parser::{
     Match, Over, Part, Pattern, Qualified, Range, Stmt, Struct, Trait, Type, Use,
 };
 use lists_and_text::{as_read, is_freeze, is_push, is_utf8};
-use names::{own_final, renamed_tokens};
+use names::{ModuleScope, own_final, renamed_tokens};
 use numbers_and_operators::{Int, Narrowing, Numbers, flexible, literal_blocks, narrowing};
 use traits::{
     Found, ImplInfo, PRELUDE_TRAITS, Requirement, TRAITS_NOT_BUILT, bounds_named, impl_info,
@@ -3667,7 +3667,9 @@ fn splice<'a>(
     struct Plan {
         imports: Vec<(String, String)>,
         through: HashMap<String, HashMap<String, String>>,
-        rename: Option<HashMap<String, String>>,
+        /// Whether the module is read whole, as one that is not of the
+        /// standard library is.
+        whole: bool,
     }
     let plans: Vec<Plan> = (0..modules.len())
         .map(|i| {
@@ -3691,22 +3693,11 @@ fn splice<'a>(
                     (alias.clone(), names)
                 })
                 .collect();
-            let rename = modules[i].pieces.is_none().then(|| {
-                let mut rename: HashMap<String, String> = modules[i]
-                    .defined
-                    .iter()
-                    .filter_map(|n| final_of(i, n).map(|to| (n.clone(), to)))
-                    .filter(|(from, to)| from != to)
-                    .collect();
-                for (name, to) in &imports {
-                    rename.insert(name.clone(), to.clone());
-                }
-                rename
-            });
+            let whole = modules[i].pieces.is_none();
             Plan {
                 imports,
                 through,
-                rename,
+                whole,
             }
         })
         .collect();
@@ -3716,11 +3707,22 @@ fn splice<'a>(
         let Plan {
             imports,
             through,
-            rename,
+            whole,
         } = plan;
-        if let Some(rename) = rename {
+        if whole {
             let tokens = std::mem::take(&mut modules[i].tokens);
-            let tokens = renamed_tokens(&tokens, &|n| rename.get(n).cloned(), &through);
+            let scope = ModuleScope {
+                name: &modules[i].name,
+                standard,
+                kept: &|n| kept[i].contains(n),
+                aliased: &modules[i].entry_aliased,
+                imports: &imports,
+            };
+            let tokens = renamed_tokens(
+                &tokens,
+                &|n| scope.rename(n, modules[i].defined.contains(n)),
+                &through,
+            );
             let found = match crate::parser::parse_library(&tokens) {
                 Ok(found) => found,
                 Err(found) => {
@@ -3919,14 +3921,20 @@ impl LazyModule<'_> {
     /// What the module's name is written as in the file, when it is not as the
     /// module writes it.
     fn rename(&self, name: &str) -> Option<String> {
-        if let Some((_, to)) = self.imports.iter().find(|(from, _)| from == name) {
-            return Some(to.clone());
+        self.scope(&|n| self.kept.contains(n))
+            .rename(name, self.defines(name))
+    }
+
+    /// What the module calls what, with `kept` saying which names it writes as
+    /// they are.
+    fn scope<'s, 'k>(&'s self, kept: &'k dyn Fn(&str) -> bool) -> ModuleScope<'s, 'k> {
+        ModuleScope {
+            name: &self.name,
+            standard: true,
+            kept,
+            aliased: &self.aliased,
+            imports: &self.imports,
         }
-        if !self.defines(name) || name.starts_with("__") {
-            return None;
-        }
-        let to = own_final(&self.name, &self.aliased, &self.kept, name);
-        (to != name).then_some(to)
     }
 
     /// Reads the item at the place among the module's, with its names written
@@ -3951,27 +3959,8 @@ impl LazyModule<'_> {
     /// it may be, among those the module defines, and among those it lists
     /// from other modules when `listed` says so.
     fn originals<'n>(&'n self, written: &'n str, listed: bool) -> Vec<&'n str> {
-        let mut found: Vec<&str> = Vec::new();
-        if let Some((name, module)) = written.split_once('@') {
-            if module == self.name {
-                found.push(name);
-            }
-        } else if self.kept.contains(written) {
-            found.push(written);
-        }
-        found.extend(
-            (self.aliased.iter())
-                .filter(|(_, alias)| alias == written)
-                .map(|(from, _)| from.as_str()),
-        );
-        if listed {
-            found.extend(
-                (self.imports.iter())
-                    .filter(|(_, to)| to == written)
-                    .map(|(from, _)| from.as_str()),
-            );
-        }
-        found
+        self.scope(&|n| self.kept.contains(n))
+            .originals(written, listed)
     }
 
     /// The places of the items that are not read, which are not traits or
