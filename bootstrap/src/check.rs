@@ -4843,16 +4843,19 @@ enum Callee {
     Narrow(Narrowing),
 }
 
-/// For each argument of a checked call, the place of its parameter.
-fn params_of(params: &[(String, Ty)], args: &[Arg]) -> Vec<usize> {
+/// For each argument of a call, the place of its parameter, or none when an
+/// argument is for no parameter: a name that is not one, or more arguments by
+/// position than there are parameters. Such a call is reported where its
+/// arguments are checked, so a call that was not reported gives some.
+fn params_of(params: &[(String, Ty)], args: &[Arg]) -> Option<Vec<usize>> {
     let mut next = 0;
     (args.iter())
         .map(|arg| match &arg.name {
-            Some((name, _)) => params.iter().position(|(p, _)| p == name).expect("checked"),
-            None if arg.after => params.len() - 1,
+            Some((name, _)) => params.iter().position(|(p, _)| p == name),
+            None if arg.after => params.len().checked_sub(1),
             None => {
                 next += 1;
-                next - 1
+                (next <= params.len()).then(|| next - 1)
             }
         })
         .collect()
@@ -5064,7 +5067,8 @@ impl<'a> Typed<'a> {
         let given = |i: usize| self.type_of(&call.args[i].value, env);
         let solve = |params: &[(String, Ty)], vars: usize| {
             let mut sol = vec![None; vars];
-            for (i, p) in params_of(params, &call.args).into_iter().enumerate() {
+            let places = params_of(params, &call.args).expect("checked");
+            for (i, p) in places.into_iter().enumerate() {
                 unify(&params[p].1, &as_read(&given(i), &params[p].1), &mut sol);
             }
             sol.into_iter()
