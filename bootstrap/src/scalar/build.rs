@@ -2,7 +2,7 @@
 
 use super::{
     Binary, Bits, Block, Compare, Constant, End, FloatBinary, FloatBits, FloatCompare, Function,
-    Instruction, Jump, Op, System, Type, Value,
+    Fused, Instruction, Jump, Op, System, Type, Value,
 };
 
 /// A function being built. Its first block is where it starts.
@@ -89,6 +89,11 @@ impl Builder {
         self.emit(Op::FloatBinary { op, a, b }, &[ty])[0]
     }
 
+    pub fn float_fused(&mut self, op: Fused, a: Value, b: Value, c: Value) -> Value {
+        let ty = self.types[a.0];
+        self.emit(Op::FloatFused { op, a, b, c }, &[ty])[0]
+    }
+
     pub fn float_negate(&mut self, value: Value) -> Value {
         let ty = self.types[value.0];
         self.emit(Op::FloatNegate(value), &[ty])[0]
@@ -123,6 +128,11 @@ impl Builder {
     pub fn vector_float_binary(&mut self, op: FloatBinary, a: Value, b: Value) -> Value {
         let ty = self.types[a.0];
         self.emit(Op::VectorFloatBinary { op, a, b }, &[ty])[0]
+    }
+
+    pub fn vector_float_fused(&mut self, op: Fused, a: Value, b: Value, c: Value) -> Value {
+        let ty = self.types[a.0];
+        self.emit(Op::VectorFloatFused { op, a, b, c }, &[ty])[0]
     }
 
     pub fn vector_compare(

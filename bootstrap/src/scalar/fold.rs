@@ -15,12 +15,13 @@ use std::collections::{HashMap, HashSet};
 
 use super::eval::{
     binary, bits_of, compare, float_binary, float_bits_of, float_compare, float_from_int,
-    float_mask, float_negate, float_resize, int_from_float, mask, narrow, widen,
+    float_fused, float_mask, float_negate, float_resize, int_from_float, mask, narrow, widen,
 };
 use super::graph::{self, jumps};
 use super::vector::{
     lane_of, lane_type, vector_binary, vector_choose, vector_compare, vector_first_set,
-    vector_float_binary, vector_float_compare, vector_splat, vector_sum, with_lane,
+    vector_float_binary, vector_float_compare, vector_float_fused, vector_splat, vector_sum,
+    with_lane,
 };
 use super::{Binary, Constant, End, Function, Instruction, Lane, Op, Program, Type, Value};
 
@@ -119,6 +120,17 @@ fn folded(f: &Function) -> Function {
                     }
                     _ => None,
                 },
+                Op::VectorFloatFused { op, a, b, c } => {
+                    match (vector_known.of(a), vector_known.of(b), vector_known.of(c)) {
+                        (Some(x), Some(y), Some(z)) => {
+                            let Lane::Float(bits) = lane_type(ty) else {
+                                unreachable!("lanes that are not floats")
+                            };
+                            Some(vector_float_fused(*op, bits, x, y, z))
+                        }
+                        _ => None,
+                    }
+                }
                 Op::VectorFloatBinary { op, a, b } => {
                     match (vector_known.of(a), vector_known.of(b)) {
                         (Some(x), Some(y)) => {
@@ -206,6 +218,12 @@ fn folded(f: &Function) -> Function {
                 // constants is replaced, by the bits the evaluator gives.
                 Op::FloatBinary { op, a, b } => match (known[a.0], known[b.0]) {
                     (Some(x), Some(y)) => Some(float_binary(*op, float_bits_of(ty), x, y)),
+                    _ => None,
+                },
+                Op::FloatFused { op, a, b, c } => match (known[a.0], known[b.0], known[c.0]) {
+                    (Some(x), Some(y), Some(z)) => {
+                        Some(float_fused(*op, float_bits_of(ty), x, y, z))
+                    }
                     _ => None,
                 },
                 Op::FloatNegate(value) => {

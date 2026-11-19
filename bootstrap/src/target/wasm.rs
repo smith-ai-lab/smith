@@ -828,6 +828,7 @@ impl Lowering<'_> {
         let results = &instruction.results;
         match &instruction.op {
             Op::FloatBinary { .. }
+            | Op::FloatFused { .. }
             | Op::FloatNegate(_)
             | Op::FloatCompare { .. }
             | Op::FloatFromInt { .. }
@@ -835,6 +836,7 @@ impl Lowering<'_> {
             | Op::FloatResize(_) => unreachable!("wasm does not build floats yet"),
             Op::VectorBinary { .. }
             | Op::VectorFloatBinary { .. }
+            | Op::VectorFloatFused { .. }
             | Op::VectorCompare { .. }
             | Op::VectorFloatCompare { .. }
             | Op::VectorChoose { .. }
