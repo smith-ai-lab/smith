@@ -3549,13 +3549,31 @@ fn renamed_tokens(
                     ..
                 })
             );
+        // The name of the result, which the clauses after it may write.
+        let result_named = parameters_ended
+            && signed.is_some()
+            && matches!(&t.tok, Tok::Ident(_))
+            && matches!(
+                out.last(),
+                Some(Token {
+                    tok: Tok::Punct("->"),
+                    ..
+                })
+            )
+            && matches!(
+                tokens.get(i + 1),
+                Some(Token {
+                    tok: Tok::Punct(":"),
+                    ..
+                })
+            );
         match &t.tok {
             Tok::Keyword("fn") => {
                 signed = Some(Vec::new());
                 parameters_ended = false;
             }
             Tok::Keyword("struct" | "enum" | "trait" | "impl") => signed = None,
-            Tok::Ident(name) if declared => {
+            Tok::Ident(name) if declared || result_named => {
                 if let Some(names) = &mut signed {
                     names.push(name.clone());
                 }
@@ -3616,7 +3634,14 @@ fn renamed_tokens(
                     ) if !after_dot => through.get(name).and_then(|names| names.get(member)),
                     _ => None,
                 };
+                // Between the `)` of the parameters and the `{` of the body, the
+                // clauses that name them are in the signature still.
                 let is_parameter = declared
+                    || result_named
+                    || (parameters_ended
+                        && signed
+                            .as_ref()
+                            .is_some_and(|names| names.iter().any(|n| n == name)))
                     || bodies
                         .iter()
                         .any(|(names, _)| names.iter().any(|n| n == name));

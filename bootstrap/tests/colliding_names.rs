@@ -26,6 +26,8 @@ struct Case {
     case: bool,
     param: bool,
     local: bool,
+    /// A parameter and a result named in `requires` and `ensures`.
+    contract: bool,
     /// Whether `main` lists the functions of the module itself, or those of a
     /// module that lists them, which is not the entry.
     through: bool,
@@ -40,6 +42,7 @@ fn case(g: &mut Gen) -> Case {
         case: g.one_in(2),
         param: g.one_in(2),
         local: g.one_in(2),
+        contract: g.one_in(2),
         through: g.one_in(2),
         lists_function: g.one_in(2),
     }
@@ -79,6 +82,12 @@ fn a_name_that_is_also_a_case_a_field_a_parameter_or_a_local_means_each_where_it
         if c.local {
             shapes.push_str(&format!("\npub fn local() -> Nat {{\n  {n} = 11\n  {n}\n}}\n"));
             roles.push(("local", 11));
+        }
+        if c.contract {
+            shapes.push_str(&format!(
+                "\npub fn res() -> Nat {{ 5 }}\n\nfn guard({n}: 0..10) -> res: 0..10\n  requires {n} > 0\n  ensures res > 0\n{{\n  {n}\n}}\n\npub fn contract() -> Nat {{ guard({n}: 3) }}\n"
+            ));
+            roles.push(("contract", 3));
         }
         let mut names: Vec<&str> = roles.iter().map(|(r, _)| *r).collect();
         if c.lists_function {
