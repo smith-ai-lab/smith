@@ -5346,7 +5346,7 @@ impl<'a> Checker<'a> {
                 } else if let (Some(&f), None) =
                     (defs.function_names.get(name.as_str()), &body.default)
                 {
-                    self.function_value(expr, f, *pos)
+                    self.function_value(body, expr, f, *pos)
                 } else if name == "true" || name == "false" {
                     defs.bool_ty()
                 } else {
@@ -5625,9 +5625,10 @@ impl<'a> Checker<'a> {
     }
 
     /// Checks the name of function `f`, at `pos`, passed as a value, and
-    /// gives its type. A function type states no effect, so the function
-    /// carries none.
-    fn function_value(&mut self, expr: &Expr, f: usize, pos: Pos) -> Ty {
+    /// gives its type. A function type states no effect, so the effects of
+    /// `f` are required of the function the name is written in, as those
+    /// of a lambda that calls it are.
+    fn function_value(&mut self, body: &mut Body<'a>, expr: &Expr, f: usize, pos: Pos) -> Ty {
         let defs = self.defs;
         let sig = &defs.signatures[f];
         let name = &defs.file.functions[f].name;
@@ -5635,14 +5636,6 @@ impl<'a> Checker<'a> {
             Error::unsupported(pos, "passing a function with type parameters as a value")
         } else if sig.params.iter().any(|(_, t)| t.holds_fn()) {
             Error::unsupported(pos, "passing a function that takes a function as a value")
-        } else if let Some(effect) = sig.effects.first() {
-            Error::new(
-                pos,
-                format!(
-                    "`{name}` carries the `{effect}` effect, and a function passed as a value \
-                     carries none"
-                ),
-            )
         } else if !defs.file.functions[f].requires.is_empty() {
             Error::new(
                 pos,
@@ -5652,6 +5645,9 @@ impl<'a> Checker<'a> {
                 ),
             )
         } else {
+            for effect in &sig.effects {
+                self.needs(body, effect, pos, &format!("`{name}`"));
+            }
             self.fn_values.insert(addr(expr), f);
             let mut items: Vec<Ty> = sig.params.iter().map(|(_, t)| t.clone()).collect();
             items.push(sig.gives.clone());

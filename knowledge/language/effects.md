@@ -6,6 +6,7 @@ status: partial
 built:
   - "`console`, `alloc`, and `diverge` in a signature, each listed once and required of every caller that needs it, and checked where a lambda is written"
   - "not an effect on a function type"
+  - "a function with effects passed by its name, whose effects are required of the function its name is written in"
 ---
 
 # Effects
@@ -117,7 +118,7 @@ fn main() ! console {
 }
 ```
 
-This prints `hi`. The effects of `hi` are required of `main`, where its name is written, and `do` states none. With `fn main() {` it is refused, as `hi` needs `console` and `main` does not declare it. The compiler does not build this yet: it refuses every function with an effect that is passed by name, so no words are quoted.
+This prints `hi`. The effects of `hi` are required of `main`, where its name is written, and `do` states none. With `fn main() {` it is refused with "`hi` needs the `console` effect, which `main` does not declare", at the name, with the fix "write `fn main() ! console`". A name inside a lambda asks the function the lambda is written in, at any depth.
 
 ## A function stored in a value
 
