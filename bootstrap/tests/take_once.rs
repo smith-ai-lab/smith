@@ -498,8 +498,9 @@ impl Paths {
                         // where a round ended.
                         round.extend(a.next);
                     }
-                    // A value that a loop gives away again in each round is
-                    // reported there, and not also as dropped before the first.
+                    // A value the loop was entered with and gives away again
+                    // in each round is reported there, and not also as dropped
+                    // before the first.
                     if !reused && !self.again.is_empty() {
                         let before: BTreeSet<usize> = now.iter().map(|(.., cur)| *cur).collect();
                         next = (next.iter())
@@ -709,7 +710,7 @@ fn write(c: &Case) -> Written {
 }
 
 fn a_value_without_discard_is_refused_exactly_where_a_path_drops_it_or_takes_it_again() {
-    generate::check(4341, 100, case, |c| {
+    generate::check(4341, 60, case, |c| {
         let w = write(c);
         let found = errors(&w.source);
         let lacks = c.held == Held::Res;

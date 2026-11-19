@@ -867,33 +867,36 @@ impl<'a> Walk<'a> {
         let before: Vec<Held> = entry.as_ref().map(|m| m.held.clone()).unwrap_or_default();
         let reused = self.reused.clone();
         self.breaks.push(Vec::new());
-        // The body is read a second time with what the first round gave
-        // away, as it is read again when the loop goes round.
-        let mut round = st.clone();
-        if let (Some(range), Some(_)) = (&l.range, &round) {
-            self.bind(&mut round, &range.name, None);
+        // The body is read again with what each round gave away or left
+        // held, as it is read again when the loop goes round. A value that a
+        // round made is dropped by the next round that assigns it, and a
+        // third round is the one that shows it.
+        let mut rounds: Vec<State> = Vec::new();
+        let mut head = st.clone();
+        for _ in 0..3 {
+            let mut round = head.clone();
+            if let (Some(range), Some(_)) = (&l.range, &round) {
+                self.bind(&mut round, &range.name, None);
+            }
+            if let (Some(over), Some(_)) = (&l.over, &round) {
+                self.bind(&mut round, &over.name, Some(element.to_string()));
+            }
+            self.block(&mut round, &l.body, Flow::Lend);
+            head = join(head, round.clone());
+            rounds.push(round);
         }
-        if let (Some(over), Some(_)) = (&l.over, &round) {
-            self.bind(&mut round, &over.name, Some(element.to_string()));
-        }
-        self.block(&mut round, &l.body, Flow::Lend);
-        let mut again = join(entry.clone(), round.clone());
-        if let (Some(range), Some(_)) = (&l.range, &again) {
-            self.bind(&mut again, &range.name, None);
-        }
-        if let (Some(over), Some(_)) = (&l.over, &again) {
-            self.bind(&mut again, &over.name, Some(element.to_string()));
-        }
-        self.block(&mut again, &l.body, Flow::Lend);
         let mut after: State = None;
         for exit in self.breaks.pop().unwrap_or_default() {
             after = join(after, Some(exit));
         }
         if l.range.is_some() || l.over.is_some() {
-            after = join(after, join(entry, join(round, again)));
+            after = join(after, entry);
+            for round in rounds {
+                after = join(after, round);
+            }
         }
-        // A value the loop gives away again in each round is reported there,
-        // and not also as dropped before the first.
+        // A value the loop was entered with and gives away again in each
+        // round is reported there, and not also as dropped before the first.
         if let Some(moved) = &mut after {
             moved.held.retain(|h| {
                 let again = self.reused.contains(&h.name) && !reused.contains(&h.name);
