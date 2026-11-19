@@ -1,0 +1,141 @@
+use std.bits (bit_and, bit_or, shift_left, shift_right)
+use std.list (push)
+use std.text (Text, append, append_ascii, finish, text)
+
+fn character(v: Byte, url: bool) -> 0..128
+  requires v < 64
+{
+  if v < 26 {
+    65 + v
+  } else if v < 52 {
+    71 + v
+  } else if v < 62 {
+    v - 4
+  } else if v == 62 {
+    if url { 45 } else { 43 }
+  } else {
+    if url { 95 } else { 47 }
+  }
+}
+
+fn put(t: take Text, v: Byte, url: bool) -> Text ! alloc
+  requires v < 64
+{
+  append_ascii(t, character(v, url))
+}
+
+fn spell(bytes: Slice[Byte], url: bool) -> str ! alloc {
+  var built = text()
+  var state: Byte = 0
+  var rest: Byte = 0
+  loop b in bytes {
+    if state == 0 {
+      built = put(built, shift_right(b, 2), url)
+      rest = bit_and(b, 3)
+      state = 1
+    } else if state == 1 {
+      built = put(built, bit_and(bit_or(shift_left(rest, 4), shift_right(b, 4)), 63), url)
+      rest = bit_and(b, 15)
+      state = 2
+    } else {
+      built = put(built, bit_and(bit_or(shift_left(rest, 2), shift_right(b, 6)), 63), url)
+      built = put(built, bit_and(b, 63), url)
+      rest = 0
+      state = 0
+    }
+  }
+  if state == 1 {
+    built = put(built, bit_and(shift_left(rest, 4), 63), url)
+    if not url { built = append(built, "==") }
+  } else if state == 2 {
+    built = put(built, bit_and(shift_left(rest, 2), 63), url)
+    if not url { built = append(built, "=") }
+  }
+  finish(built)
+}
+
+pub fn encode(bytes: Slice[Byte]) -> str ! alloc {
+  spell(bytes, false)
+}
+
+pub fn encode_url(bytes: Slice[Byte]) -> str ! alloc {
+  spell(bytes, true)
+}
+
+fn value(c: Byte, url: bool) -> Option[0..64] {
+  if c >= 65 and c <= 90 {
+    v: 0..64 = c - 65
+    .some(v)
+  } else if c >= 97 and c <= 122 {
+    v: 0..64 = c - 71
+    .some(v)
+  } else if c >= 48 and c <= 57 {
+    v: 0..64 = c + 4
+    .some(v)
+  } else if c == (if url { 45 } else { 43 }) {
+    .some(62)
+  } else if c == (if url { 95 } else { 47 }) {
+    .some(63)
+  } else {
+    .none
+  }
+}
+
+fn unspell(s: str, url: bool) -> Option[List[Byte]] ! alloc {
+  var bytes: List[Byte] = []
+  var state: Byte = 0
+  var rest: Byte = 0
+  var mode: Byte = 0
+  loop c in s {
+    if mode == 2 { return .none }
+    if c == 61 {
+      if url { return .none }
+      if state == 2 and mode == 0 and rest == 0 {
+        mode = 1
+        state = 3
+      } else if state == 3 and rest == 0 {
+        mode = 2
+        state = 0
+      } else {
+        return .none
+      }
+    } else {
+      if mode == 1 { return .none }
+      match value(c, url) {
+        .none { return .none }
+        .some(v) {
+          w: Byte = v
+          if state == 0 {
+            rest = w
+            state = 1
+          } else if state == 1 {
+            bytes = push(bytes, bit_or(shift_left(rest, 2), shift_right(w, 4)))
+            rest = bit_and(w, 15)
+            state = 2
+          } else if state == 2 {
+            bytes = push(bytes, bit_or(shift_left(rest, 4), shift_right(w, 2)))
+            rest = bit_and(w, 3)
+            state = 3
+          } else {
+            bytes = push(bytes, bit_or(shift_left(rest, 6), w))
+            rest = 0
+            state = 0
+          }
+        }
+      }
+    }
+  }
+  if (url and state != 1 and rest == 0) or (not url and state == 0) {
+    .some(bytes)
+  } else {
+    .none
+  }
+}
+
+pub fn decode(s: str) -> Option[List[Byte]] ! alloc {
+  unspell(s, false)
+}
+
+pub fn decode_url(s: str) -> Option[List[Byte]] ! alloc {
+  unspell(s, true)
+}
