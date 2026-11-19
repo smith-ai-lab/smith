@@ -1,0 +1,211 @@
+//! How a module's names are written in the file that holds every module: the
+//! names a module does not list are written with the module after them, and
+//! the tokens of a module are rewritten to say so.
+
+use std::collections::{HashMap, HashSet};
+
+/// The tokens with each name of `rename` written as the name it maps to. A
+/// name is not written anew where it is the name of a field or of an argument
+/// given by name, which another module writes as the module that defines it
+/// did, nor where it follows a `.`. A parameter is written anew with its uses.
+pub(super) fn renamed_tokens(
+    tokens: &[crate::lexer::Token],
+    rename: &dyn Fn(&str) -> Option<String>,
+    through: &HashMap<String, HashMap<String, String>>,
+) -> Vec<crate::lexer::Token> {
+    use crate::lexer::{Piece, Tok, Token};
+    // The depth of parentheses inside the parameters of a function, which is 0
+    // outside them, and whether the next `(` opens them.
+    let mut params = 0usize;
+    let mut signature = false;
+    let mut out: Vec<Token> = Vec::with_capacity(tokens.len());
+    // How many tokens after this one a name written through its module takes.
+    let mut skip = 0usize;
+    // Whether an `enum` was read and its `{` is not, and how many braces
+    // deep inside the body of an enum the tokens are, which is 0 outside it.
+    let mut enum_next = false;
+    let mut enum_depth = 0usize;
+    // The parameters of a function whose body is being read, with how many
+    // braces deep the body is, one entry for each function that holds the
+    // tokens, and the parameters of the one whose signature is being read, and
+    // whether its parameters have ended.
+    let mut bodies: Vec<(Vec<String>, usize)> = Vec::new();
+    let mut signed: Option<Vec<String>> = None;
+    let mut parameters_ended = false;
+    let mut brace = 0usize;
+    for (i, t) in tokens.iter().enumerate() {
+        if skip > 0 {
+            skip -= 1;
+            continue;
+        }
+        // A case that holds nothing is written alone on its line in the body of
+        // its enum, where it is the name the enum gives it, whatever another
+        // item of the module is called, as it is after a `.` where it is used.
+        let case_defined = enum_depth == 1
+            && matches!(
+                out.last(),
+                Some(Token {
+                    tok: Tok::Punct("{") | Tok::Newline,
+                    ..
+                })
+            );
+        match &t.tok {
+            Tok::Keyword("enum") => enum_next = true,
+            Tok::Punct("{") if enum_next => {
+                enum_next = false;
+                enum_depth = 1;
+            }
+            Tok::Punct("{") if enum_depth > 0 => enum_depth += 1,
+            Tok::Punct("}") if enum_depth > 0 => enum_depth -= 1,
+            _ => {}
+        }
+        // A parameter is its own name in its function, whatever an item of the
+        // module is called, as it is where a call names it.
+        let declared = params == 1
+            && signed.is_some()
+            && matches!(&t.tok, Tok::Ident(_))
+            && matches!(
+                tokens.get(i + 1),
+                Some(Token {
+                    tok: Tok::Punct(":"),
+                    ..
+                })
+            );
+        // The name of the result, which the clauses after it may write.
+        let result_named = parameters_ended
+            && signed.is_some()
+            && matches!(&t.tok, Tok::Ident(_))
+            && matches!(
+                out.last(),
+                Some(Token {
+                    tok: Tok::Punct("->"),
+                    ..
+                })
+            )
+            && matches!(
+                tokens.get(i + 1),
+                Some(Token {
+                    tok: Tok::Punct(":"),
+                    ..
+                })
+            );
+        match &t.tok {
+            Tok::Keyword("fn") => {
+                signed = Some(Vec::new());
+                parameters_ended = false;
+            }
+            Tok::Keyword("struct" | "enum" | "trait" | "impl") => signed = None,
+            Tok::Ident(name) if declared || result_named => {
+                if let Some(names) = &mut signed {
+                    names.push(name.clone());
+                }
+            }
+            Tok::Punct(")") if params == 1 && signed.is_some() => parameters_ended = true,
+            Tok::Punct("{") => {
+                brace += 1;
+                if parameters_ended && let Some(names) = signed.take() {
+                    bodies.push((names, brace));
+                }
+            }
+            Tok::Punct("}") => {
+                while bodies.last().is_some_and(|(_, depth)| *depth == brace) {
+                    bodies.pop();
+                }
+                brace = brace.saturating_sub(1);
+                signed = None;
+            }
+            _ => {}
+        }
+        match &t.tok {
+            Tok::Keyword("fn") => signature = true,
+            Tok::Punct("(") if params > 0 => params += 1,
+            Tok::Punct("(") if signature => {
+                signature = false;
+                params = 1;
+            }
+            Tok::Punct(")") if params > 0 => params -= 1,
+            _ => {}
+        }
+        let tok = match &t.tok {
+            Tok::Ident(name) => {
+                let after_dot = matches!(
+                    out.last(),
+                    Some(Token {
+                        tok: Tok::Punct("."),
+                        ..
+                    })
+                );
+                let labelled = matches!(
+                    tokens.get(i + 1),
+                    Some(Token {
+                        tok: Tok::Punct(":"),
+                        ..
+                    })
+                ) && params != 1;
+                // A module imported itself, written before a name of its own.
+                let member = match (tokens.get(i + 1), tokens.get(i + 2)) {
+                    (
+                        Some(Token {
+                            tok: Tok::Punct("."),
+                            ..
+                        }),
+                        Some(Token {
+                            tok: Tok::Ident(member),
+                            ..
+                        }),
+                    ) if !after_dot => through.get(name).and_then(|names| names.get(member)),
+                    _ => None,
+                };
+                // Between the `)` of the parameters and the `{` of the body, the
+                // clauses that name them are in the signature still.
+                let is_parameter = declared
+                    || result_named
+                    || (parameters_ended
+                        && signed
+                            .as_ref()
+                            .is_some_and(|names| names.iter().any(|n| n == name)))
+                    || bodies
+                        .iter()
+                        .any(|(names, _)| names.iter().any(|n| n == name));
+                match rename(name) {
+                    _ if member.is_some() => {
+                        skip = 2;
+                        Tok::Ident(member.cloned().unwrap_or_default())
+                    }
+                    Some(to) if !after_dot && !labelled && !case_defined && !is_parameter => {
+                        Tok::Ident(to)
+                    }
+                    _ => t.tok.clone(),
+                }
+            }
+            Tok::Interp(pieces) => Tok::Interp(
+                pieces
+                    .iter()
+                    .map(|p| match p {
+                        Piece::Expr(inner) => Piece::Expr(renamed_tokens(inner, rename, through)),
+                        text => text.clone(),
+                    })
+                    .collect(),
+            ),
+            other => other.clone(),
+        };
+        out.push(Token { tok, pos: t.pos });
+    }
+    out
+}
+
+/// What a name a module defines is written as in the file: as the file that
+/// is built names it with `as`, as it is when the file lists it or the
+/// compiler builds it, or with the module after it.
+pub(super) fn own_final<S: std::hash::BuildHasher>(
+    module: &str,
+    aliased: &[(String, String)],
+    kept: &HashSet<String, S>,
+    name: &str,
+) -> String {
+    match aliased.iter().find(|(from, _)| from == name) {
+        Some((_, alias)) => alias.clone(),
+        None if kept.contains(name) => name.to_string(),
+        None => format!("{name}@{module}"),
+    }
+}
