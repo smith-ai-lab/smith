@@ -848,6 +848,7 @@ impl<'a> Lowering<'a> {
             types: out.types,
             results,
             blocks: out.blocks,
+            cold: false,
         }
     }
 

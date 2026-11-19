@@ -3,7 +3,8 @@
 //!
 //! A call is replaced when the function is called from one place only, or
 //! when the function is no larger than `BOUND`, or when it calls nothing and
-//! is no larger than `LEAF_BOUND`. Nothing measured from a run is used. Functions are taken callees first, so each is already as small
+//! is no larger than `LEAF_BOUND`, and never when the function is cold.
+//! Nothing measured from a run is used. Functions are taken callees first, so each is already as small
 //! as it will be when a call of it is looked at, and a copy of it is never
 //! looked at again. The pass is one walk over the program it gives, and
 //! gives the same program every time.
@@ -145,7 +146,7 @@ fn inlined(f: &Function, done: &[Option<Function>], sites: &[usize]) -> Function
                 continue;
             };
             let callee = done[*function].as_ref().unwrap();
-            if sites[*function] != 1 && !is_small(callee) {
+            if callee.cold || (sites[*function] != 1 && !is_small(callee)) {
                 blocks[at].instructions.push(instruction.clone());
                 continue;
             }
@@ -207,6 +208,7 @@ fn inlined(f: &Function, done: &[Option<Function>], sites: &[usize]) -> Function
         types,
         results: f.results.clone(),
         blocks,
+        cold: f.cold,
     }
 }
 
