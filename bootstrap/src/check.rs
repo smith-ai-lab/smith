@@ -1550,7 +1550,7 @@ fn check_file(
         else {
             break;
         };
-        let wanted = prelude.wanted(&file, &reach(&file, &names, start_at, true), &loaded);
+        let wanted = prelude.wanted(&file, &reach(&file, &names, start_at, true).0, &loaded);
         if wanted.is_empty() {
             break;
         }
@@ -1681,7 +1681,7 @@ fn check_file(
         traits: trait_names,
         trait_fns,
     };
-    let reached = reach(&file, &names, start_at, false);
+    let (reached, unbuilt) = reach(&file, &names, start_at, false);
     let reached_types: Vec<Def> = (reached.iter())
         .filter_map(|r| match r {
             Item::Struct(s) => Some(Def::Struct(*s)),
@@ -1832,7 +1832,7 @@ fn check_file(
     for &item in &reached {
         match item {
             Item::Fn(f) => checker.body(Template::Free(f)),
-            Item::Impl(i) => {
+            Item::Impl(i) if !unbuilt.contains(&i) => {
                 if let Some(info) = &defs.impls[i] {
                     for (fi, at) in info.fns.iter().enumerate() {
                         if at.is_some() {
@@ -1841,7 +1841,7 @@ fn check_file(
                     }
                 }
             }
-            Item::Struct(_) | Item::Enum(_) | Item::Trait(_) => {}
+            Item::Impl(_) | Item::Struct(_) | Item::Enum(_) | Item::Trait(_) => {}
         }
     }
     checker.recursion(start_at, &mut Set::default(), &mut Set::default());
@@ -1886,7 +1886,11 @@ fn check_file(
         prelude_reached,
         prelude_loaded: loaded.len(),
         warnings: {
-            let mut all = warnings(&file, &reached);
+            // An `impl` that is not built is dead code, as a function nothing calls is.
+            let built: Vec<Item> = (reached.iter().copied())
+                .filter(|item| !matches!(item, Item::Impl(i) if unbuilt.contains(i)))
+                .collect();
+            let mut all = warnings(&file, &built);
             all.extend(import_warnings);
             all
         },
@@ -1938,8 +1942,16 @@ impl<'a> Names<'a> {
 /// it is first reached. A contract is not run, so what only a `requires` or an
 /// `ensures` names is reached only when `contracts` says to look in them, as
 /// choosing the prelude's `impl`s does: `by <= 30` there needs `Ord`.
-fn reach(file: &File, names: &Names, start_at: usize, contracts: bool) -> Vec<Item> {
+///
+/// An `impl` of a trait that is reached, for a type that is not, is in the
+/// items but is not walked, and is in the set the call gives beside them: its
+/// head is checked, and nothing it holds is, until its type is reached.
+fn reach(file: &File, names: &Names, start_at: usize, contracts: bool) -> (Vec<Item>, Set<usize>) {
     let mut reached: Vec<Item> = vec![Item::Fn(start_at)];
+    let mut queue: Vec<Item> = vec![Item::Fn(start_at)];
+    let mut unbuilt: Set<usize> = Set::default();
+    // The structs and enums each `impl` is for.
+    let mut for_types: Vec<Vec<Item>> = Vec::with_capacity(file.impls.len());
     let mut seen: Set<Item> = Set::from_iter([Item::Fn(start_at)]);
     // The `impl`s that name a type in their arguments, and those of a trait,
     // each in order, so that an item finds its own without a walk of all.
@@ -1958,9 +1970,30 @@ fn reach(file: &File, names: &Names, start_at: usize, contracts: bool) -> Vec<It
         for name in named {
             for_type.entry(name).or_default().push(i);
         }
+        // The types the `impl` is chosen by, which are those of the arguments
+        // the trait does not write `out` for: an `out` type is the answer of
+        // a call that chooses the `impl`, so it is reached with it.
+        let outs = names
+            .traits
+            .get(im.name.as_str())
+            .map(|&k| &file.traits[k].generics);
+        let by = im
+            .args
+            .iter()
+            .enumerate()
+            .filter(|(j, _)| !outs.is_some_and(|g| g.get(*j).is_some_and(|g| g.out.is_some())));
+        let mut types = Vec::new();
+        for (name, _) in by.flat_map(|(_, t)| type_names(t)) {
+            if let Some(&s) = names.structs.get(name) {
+                types.push(Item::Struct(s));
+            } else if let Some(&e) = names.enums.get(name) {
+                types.push(Item::Enum(e));
+            }
+        }
+        for_types.push(types);
     }
     let mut i = 0;
-    while i < reached.len() {
+    while i < queue.len() {
         let mut found: Vec<Item> = Vec::new();
         let type_name = |name: &str, found: &mut Vec<Item>| {
             if let Some(&s) = names.structs.get(name) {
@@ -2023,7 +2056,7 @@ fn reach(file: &File, names: &Names, start_at: usize, contracts: bool) -> Vec<It
                 found,
             );
         };
-        match reached[i] {
+        match queue[i] {
             Item::Fn(f) => function(&file.functions[f], &mut found),
             Item::Struct(s) => {
                 let s = &file.structs[s];
@@ -2099,13 +2132,28 @@ fn reach(file: &File, names: &Names, start_at: usize, contracts: bool) -> Vec<It
             }
         }
         for item in found {
+            let held = match item {
+                Item::Impl(k) => for_types[k].iter().all(|t| seen.contains(t)),
+                _ => true,
+            };
             if seen.insert(item) {
                 reached.push(item);
+                match item {
+                    Item::Impl(k) if !held => {
+                        unbuilt.insert(k);
+                    }
+                    _ => queue.push(item),
+                }
+            } else if let Item::Impl(k) = item
+                && held
+                && unbuilt.remove(&k)
+            {
+                queue.push(item);
             }
         }
         i += 1;
     }
-    reached
+    (reached, unbuilt)
 }
 
 /// The modules of a library, each with its name and its source, and the files
