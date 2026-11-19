@@ -821,6 +821,21 @@ impl<'a> Defs<'a> {
         if t.unbuilt() {
             return Ty::Unknown;
         }
+        if let Some((min, max)) = t.range {
+            return match Int::between(min, max) {
+                Some(int) => Ty::Int(int),
+                None => {
+                    errors.push(Error::new(
+                        t.pos,
+                        format!(
+                            "`{}` needs more than 64 bits, which no type holds",
+                            t.written()
+                        ),
+                    ));
+                    Ty::Unknown
+                }
+            };
+        }
         if name.is_empty() {
             let items: Vec<Ty> = (t.args.iter())
                 .map(|a| self.resolve(a, scope, errors))
@@ -1025,12 +1040,12 @@ impl<'a> Defs<'a> {
     /// How a whole number type is written in an error: `Int` and `Byte` where
     /// the program wrote those names first, and the name of the type
     /// otherwise.
-    fn spelling(&self, int: Int) -> &'static str {
+    fn spelling(&self, int: Int) -> String {
         let spelled = self.spelled.get();
         match int {
-            Int::I64 if spelled.int == Some(true) => "Int",
-            Int::U8 if spelled.byte == Some(true) => "Byte",
-            Int::U64 if spelled.nat == Some(true) => "Nat",
+            Int::I64 if spelled.int == Some(true) => "Int".to_string(),
+            Int::U8 if spelled.byte == Some(true) => "Byte".to_string(),
+            Int::U64 if spelled.nat == Some(true) => "Nat".to_string(),
             _ => int.name(),
         }
     }

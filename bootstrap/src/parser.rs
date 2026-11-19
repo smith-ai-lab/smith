@@ -231,6 +231,8 @@ pub struct Type {
     pub args: Vec<Type>,
     /// Whether it is a function type, written `fn(T) -> U`.
     pub function: bool,
+    /// The bounds of a range type, written `a..b`, whose name is `RANGE`.
+    pub range: Option<(i128, i128)>,
 }
 
 /// The name of a type that is not built yet, as an array type is. It is no
@@ -238,11 +240,17 @@ pub struct Type {
 /// the type of its elements, so that what names a type parameter still does.
 pub const UNBUILT: &str = "?";
 
+/// The name of a range type, written `a..b`. It is no name a program can
+/// write, and the bounds are in the type's `range`.
+pub const RANGE: &str = "..";
+
 impl Type {
     /// How the type is written in the source.
     pub fn written(&self) -> String {
         let args: Vec<String> = self.args.iter().map(Type::written).collect();
-        if self.function {
+        if let Some((min, max)) = self.range {
+            format!("{min}..{}", max + 1)
+        } else if self.function {
             let (gives, params) = args.split_last().expect("a result");
             if self
                 .args
@@ -1740,6 +1748,7 @@ impl Parser<'_> {
                 pos,
                 args: Vec::new(),
                 function: false,
+                range: None,
             });
         }
         self.function_effects();
@@ -1748,6 +1757,7 @@ impl Parser<'_> {
             pos,
             args,
             function: true,
+            range: None,
         };
         Ok((function, takes))
     }
@@ -1790,6 +1800,7 @@ impl Parser<'_> {
                     pos: self.pos(),
                     args: Vec::new(),
                     function: false,
+                    range: None,
                 }),
                 _ => {}
             }
@@ -1801,6 +1812,7 @@ impl Parser<'_> {
             pos,
             args,
             function: false,
+            range: None,
         })
     }
 
@@ -1811,6 +1823,11 @@ impl Parser<'_> {
             Tok::Ident(name) => {
                 let name = name.clone();
                 self.bump();
+                if self.tok() == &Tok::Punct("..") {
+                    self.bump();
+                    self.range_bound()?;
+                    return Ok(self.unbuilt_type(pos));
+                }
                 let mut args = Vec::new();
                 if self.tok() == &Tok::Punct("[") {
                     self.bump();
@@ -1821,8 +1838,10 @@ impl Parser<'_> {
                     pos,
                     args,
                     function: false,
+                    range: None,
                 })
             }
+            Tok::Number(_) | Tok::Punct("-") => self.range_type(pos),
             Tok::Punct("[") => self.array_type(pos),
             Tok::Keyword("fn") => Ok(self.function_type()?.0),
             Tok::Punct("(") => {
@@ -1833,6 +1852,7 @@ impl Parser<'_> {
                         pos,
                         args,
                         function: false,
+                        range: None,
                     };
                     self.bump();
                     let result = self.ty()?;
@@ -1854,9 +1874,82 @@ impl Parser<'_> {
                     pos,
                     args,
                     function: false,
+                    range: None,
                 })
             }
             tok => Err(self.expected("a type", tok)),
+        }
+    }
+
+    /// Parses a range type, `a..b`, with numbers written out as its bounds.
+    fn range_type(&mut self, pos: Pos) -> Result<Type, Error> {
+        let min = self.range_bound()?;
+        if self.tok() != &Tok::Punct("..") {
+            let tok = self.tok().clone();
+            return Err(self.expected("`..` after the first bound of a range", &tok));
+        }
+        self.bump();
+        let end = self.range_bound()?;
+        let (Some(min), Some(end)) = (min, end) else {
+            return Ok(self.unbuilt_type(pos));
+        };
+        let Some(max) = end.checked_sub(1).filter(|max| *max >= min - 1) else {
+            return Err(Error::new(
+                pos,
+                "a range ends where it begins or after it, so `a..b` has `b` at least `a`",
+            ));
+        };
+        Ok(Type {
+            name: RANGE.to_string(),
+            pos,
+            args: Vec::new(),
+            function: false,
+            range: Some((min, max)),
+        })
+    }
+
+    /// The type that stands for a range with a bound that is a name, which is
+    /// not built yet.
+    fn unbuilt_type(&mut self, pos: Pos) -> Type {
+        self.unbuilt
+            .push(Error::unsupported(pos, "a bound of a range that is a name"));
+        Type {
+            name: UNBUILT.to_string(),
+            pos,
+            args: Vec::new(),
+            function: false,
+            range: None,
+        }
+    }
+
+    /// Parses a bound of a range type: a whole number, with its `-` if it
+    /// has one directly before it, or none for a name, which is not built.
+    fn range_bound(&mut self) -> Result<Option<i128>, Error> {
+        let pos = self.pos();
+        if let Tok::Ident(_) = self.tok() {
+            self.bump();
+            return Ok(None);
+        }
+        let negative = self.tok() == &Tok::Punct("-");
+        if negative {
+            self.bump();
+        }
+        let Tok::Number(text) = self.tok().clone() else {
+            let tok = self.tok().clone();
+            return Err(self.expected("a whole number as a bound of a range", &tok));
+        };
+        self.bump();
+        match self.number_pattern(text, negative, pos)? {
+            Pattern::Number {
+                magnitude,
+                negative,
+                ..
+            } if magnitude <= i128::MAX as u128 => Ok(Some(if negative {
+                -(magnitude as i128)
+            } else {
+                magnitude as i128
+            })),
+            _ => Err(Error::new(pos, "a bound of a range is a whole number")),
         }
     }
 
