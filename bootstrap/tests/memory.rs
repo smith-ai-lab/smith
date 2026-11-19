@@ -51,7 +51,11 @@ fn runs(source: &[u8]) -> (scalar::Outcome, usize, u64) {
         .unwrap_or_else(|e| panic!("{e:?} for {}", String::from_utf8_lossy(source)));
     let (outcome, requests) = scalar::run_counting(&program, usize::MAX);
     let (_, taken) = scalar::run_taking(&program, usize::MAX);
-    let used = taken.iter().map(|n| (*n as u64).next_multiple_of(8)).sum();
+    // A request with the top bit set asks for what is left when it is that much, and so
+    // is counted as if it took it, which only makes the limit looser.
+    let used = (taken.iter())
+        .map(|n| (*n as u64 & !(1 << 63)).next_multiple_of(8))
+        .sum();
     (outcome, requests.len(), used)
 }
 

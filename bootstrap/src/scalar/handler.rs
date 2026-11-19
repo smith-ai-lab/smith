@@ -34,6 +34,9 @@ pub const PIECE: u64 = 64 * 1024;
 /// nothing.
 const TRAILER: u64 = 16;
 
+/// The bit of a request's count that asks only for what the piece has room for.
+pub const TRY: u64 = 1 << 63;
+
 const NEXT: Type = Type::Address;
 const LEFT: Type = Type::Int(Bits::B64);
 /// The values of one stack, in the order they are passed.
@@ -348,6 +351,11 @@ pub fn take() -> Function {
     let (ask, a) = f.block(&[LEFT, NEXT, NEXT, Type::Int(Bits::B8)]);
     let (done, _) = f.block(&[]);
     let (fix, _) = f.block(&[]);
+    let (trying, _) = f.block(&[]);
+    let (ask_raw, _) = f.block(&[]);
+    let (attempt, _) = f.block(&[]);
+    let (grant, _) = f.block(&[]);
+    let (refuse, _) = f.block(&[]);
     f.switch(no_room, vec![(fast, vec![]), (slow, vec![])]);
     f.at(fast);
     let after = f.binary(Binary::Add, next, size);
@@ -367,15 +375,41 @@ pub fn take() -> Function {
     let linked = f.load(LEFT, link);
     let nothing = f.compare(Compare::Equal, linked, zero);
     let after_at = f.load(NEXT, link);
+    // A request that no piece of the usual size has room for is given a piece
+    // with room for it to double, which a list that grows does, in place.
+    let fits_from = runtime::int(&mut f, PIECE - TRAILER);
+    let large = f.compare(Compare::LessU, fits_from, size);
+    let twice = f.binary(Binary::Add, size, size);
+    let room = f.choose(large, twice, size);
     let more = runtime::int(&mut f, TRAILER + PIECE - 1);
-    let up = f.binary(Binary::Add, size, more);
+    let up = f.binary(Binary::Add, room, more);
     let pieces = runtime::int(&mut f, !(PIECE - 1));
     let wanted = f.binary(Binary::And, up, pieces);
     let none = f.null();
-    f.switch(
-        huge,
-        vec![(look, vec![]), (ask, vec![count, end, none, patch])],
-    );
+    f.switch(huge, vec![(look, vec![]), (trying, vec![])]);
+    // A count with its top bit set asks for the rest of it only if the piece
+    // has room, and is given nothing when it has not, so that a list can ask
+    // for the room it lacks after it without taking a piece it will not use.
+    f.at(trying);
+    let flag = runtime::int(&mut f, TRY);
+    let one_word = runtime::int(&mut f, 1);
+    let below = f.binary(Binary::Sub, flag, one_word);
+    let tried = f.compare(Compare::LessU, below, count);
+    f.switch(tried, vec![(ask_raw, vec![]), (attempt, vec![])]);
+    f.at(ask_raw);
+    f.jump(ask, vec![count, end, none, patch]);
+    f.at(attempt);
+    let wanted_bytes = f.binary(Binary::And, count, below);
+    let wanted_up = f.binary(Binary::Add, wanted_bytes, seven);
+    let wanted_size = f.binary(Binary::And, wanted_up, mask);
+    let lacks = f.compare(Compare::LessU, left, wanted_size);
+    f.switch(lacks, vec![(grant, vec![]), (refuse, vec![])]);
+    f.at(grant);
+    let after = f.binary(Binary::Add, next, wanted_size);
+    let rest = f.binary(Binary::Sub, left, wanted_size);
+    f.ret(vec![after, rest, next]);
+    f.at(refuse);
+    f.ret(vec![next, left, none]);
     f.at(look);
     f.switch(
         nothing,

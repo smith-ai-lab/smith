@@ -14,6 +14,7 @@ use smith::{check, lower};
 
 use crate::Test;
 use crate::generate::{self, Gen};
+use crate::growth;
 use crate::programs::pos_after;
 
 pub const ONCE: &[Test] = &[
@@ -351,7 +352,7 @@ fn growth(n: usize, width: usize) -> (usize, usize) {
 
 /// For every program the generator builds, growing the lists it holds, at any
 /// depth, asks for memory once for each doubling and moves the bytes of the
-/// list at each doubling, and nothing else: a push that has room asks for
+/// list at each doubling that does not grow in place, and nothing else: a push that has room asks for
 /// nothing and moves nothing, and the memory of a list is its elements and no
 /// word before them.
 fn a_program_that_grows_lists_at_any_depth_asks_for_memory_and_moves_bytes_for_growth_alone() {
@@ -383,6 +384,7 @@ fn a_program_that_grows_lists_at_any_depth_asks_for_memory_and_moves_bytes_for_g
             bytes += moved;
         }
         let (_, taken) = scalar::run_taking(&program, usize::MAX);
+        let (in_place, taken) = (growth::copied_in_place(&taken), growth::rooms(&taken));
         assert_eq!(taken.len(), requests, "requests {taken:?} for {source}");
         for asked in &taken {
             let of = |w: usize| asked % w == 0 && (asked / w).is_power_of_two();
@@ -390,7 +392,7 @@ fn a_program_that_grows_lists_at_any_depth_asks_for_memory_and_moves_bytes_for_g
         }
         let (outcome, _, copied) = scalar::run_copying(&program, usize::MAX);
         assert_eq!(outcome.status, 0, "for {source}");
-        assert_eq!(copied.iter().sum::<usize>(), bytes, "copies {copied:?} for {source}");
+        assert_eq!(copied.iter().sum::<usize>(), bytes - in_place, "copies {copied:?} for {source}");
         assert!(bytes <= most, "{bytes} bytes moved, and at most {most} may be, for {source}");
     });
 }
