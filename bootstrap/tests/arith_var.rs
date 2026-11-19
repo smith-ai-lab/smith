@@ -339,7 +339,7 @@ fn a_var_has_the_condition_around_a_use_and_what_it_was_given_whether_a_loop_is_
                 ("", "")
             };
             with_header(format!(
-                "fn f(x: {0}, c: Byte) ! console, alloc {{\n  var n: {0} = {init}\n  var m: {0} = 0\n  {open}  {between}\n  if n < {1} {{ print(\"{{n + {2}}}\") }}\n  {close}}}\n\nfn main() ! console, alloc {{\n  f({3}, 1)\n}}\n",
+                "fn f(x: {0}, c: Byte) ! console, alloc {{\n  var n: {0} = {init}\n  var m: {0} = 0\n  {open}  {between}\n  if n < {1} {{\n    got: {0} = n + {2}\n    print(\"{{got}}\")\n  }}\n  {close}}}\n\nfn main() ! console, alloc {{\n  f({3}, 1)\n}}\n",
                 f.ty.name,
                 f.limit,
                 f.k,

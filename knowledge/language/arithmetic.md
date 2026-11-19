@@ -4,10 +4,10 @@ title: Integer arithmetic
 description: The exact range that a plain +, -, *, or / gives, the proof asked where a value enters a narrower range, narrow and clamp where nothing proves it or the value is a float, a range of up to 128 bits, and the functions that wrap.
 status: partial
 built:
-  - "a plain `+`, `-`, or `*` on `u8` to `i64`, which compiles when `arith` proves that the result fits the type of its operands, and an error that says what could not be proven"
+  - "a plain `+`, `-`, or `*` of two whole numbers, a literal included, which gives the exact range of the result with nothing proven where a type of 64 bits holds it, and where none does, as of two numbers of 64 bits, takes two sides of one type and compiles when `arith` proves that the result fits that type, and an error that says what could not be proven"
   - "`wrapping_`, `saturating_`, and `checked_` of `add`, `sub`, and `mul`"
   - "a value that enters a narrower range, at a binding, a `var`, an argument, and a result, which compiles when a condition or a `requires` shows that it fits, and an error that says what could not be proven"
-  - "not the exact range of a result, `/`, `%`, or `narrow(x)` and `clamp(x)` of every range, or of a float, or a range of 65 to 128 bits, which is refused as a wider one is"
+  - "not the exact range of a result that no type of 64 bits holds, `/`, `%`, a unary `-`, or `narrow(x)` and `clamp(x)` of every range, or of a float, or a range of 65 to 128 bits, which is refused as a wider one is"
 ---
 
 # Integer arithmetic

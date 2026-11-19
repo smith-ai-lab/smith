@@ -69,6 +69,10 @@ pub const ONCE: &[Test] = &[
         "arith_proves_a_sum_of_a_range_exactly_when_it_fits_the_range",
         arith_proves_a_sum_of_a_range_exactly_when_it_fits_the_range,
     ),
+    (
+        "a_sum_a_difference_and_a_product_give_the_exact_range_and_no_narrower_one",
+        a_sum_a_difference_and_a_product_give_the_exact_range_and_no_narrower_one,
+    ),
 ];
 
 fn stdout(source: &str) -> String {
@@ -241,8 +245,11 @@ fn a_range_of_more_than_64_bits_is_refused() {
 /// `i + 1` of a range `0..n` compiles into the same range exactly when `i` is
 /// known to be below the greatest number, as for the sizes.
 fn arith_proves_a_sum_of_a_range_exactly_when_it_fits_the_range() {
-    // `0..n` fills a size when `n` is 256, 65536, 4294967296, or 2^64, and then the
-    // functions that wrap, saturate, and check take it, so the fix names them.
+    // `0..n` that is 2^64 fills the size of 64 bits, where the exact range of a sum
+    // is not one a type holds, so the sum is proven as an operation and the fix
+    // names the functions that wrap, saturate, and check. Of any other range the sum
+    // is the exact range, which enters the result with a proof, and the fix says to
+    // check the value first.
     const SIZES: [i128; 4] = [1 << 8, 1 << 16, 1 << 32, 1 << 64];
     let case = |n: i128| {
         let proven = with_header(format!(
@@ -258,7 +265,7 @@ fn arith_proves_a_sum_of_a_range_exactly_when_it_fits_the_range() {
         assert!(errors.iter().all(|e| e.message.contains("i + 1")), "{errors:?}");
         let fixes: Vec<String> = errors.iter().filter_map(|e| e.fix.clone()).collect();
         assert!(!fixes.is_empty(), "{errors:?} for\n{unproven}");
-        let names = SIZES.contains(&n);
+        let names = n == 1 << 64;
         assert!(fixes.iter().all(|f| f.contains("wrapping_add") == names), "{fixes:?} for\n{unproven}");
     };
     // Both kinds are tried on every run: a range that fills a size and one that does
@@ -272,7 +279,7 @@ fn arith_proves_a_sum_of_a_range_exactly_when_it_fits_the_range() {
     );
     let errors = check(sized.as_bytes()).expect_err("a sum that may not fit");
     let fixes: Vec<String> = errors.iter().filter_map(|e| e.fix.clone()).collect();
-    assert!(fixes.iter().all(|f| f.contains("wrapping_add")), "{errors:?}");
+    assert!(fixes.iter().all(|f| !f.contains("wrapping_add")), "{errors:?}");
 }
 
 /// A range inside another: the other's bounds, a number of the first, and the
@@ -471,4 +478,67 @@ fn a_bound_that_is_not_a_parameter_or_is_written_where_names_are_not_built_is_re
         let errors = check(source.as_bytes()).expect_err("a bound that is not built");
         assert!(errors.iter().any(|e| e.message.contains(mentions)), "{errors:?} for\n{source}");
     }
+}
+
+/// A range of two to a few hundred numbers, near 0 or far from it, whose
+/// least number and greatest are given.
+fn small_range(g: &mut Gen) -> (i128, i128) {
+    let low = match g.below(3) {
+        0 => g.below(40) as i128 - 20,
+        1 => g.below(2000) as i128 - 1000,
+        _ => (g.below(1 << 16) as i128) << g.below(12),
+    };
+    (low, low + g.below(300) as i128)
+}
+
+/// `a + b`, `a - b`, and `a * b` of two numbers of any two ranges are the
+/// range from the least to the greatest of the results at the ends of the
+/// ranges, which a result that states it holds with nothing proven, and no
+/// range that excludes either end holds.
+fn a_sum_a_difference_and_a_product_give_the_exact_range_and_no_narrower_one() {
+    generate::check(
+        4006,
+        60,
+        |g: &mut Gen| (small_range(g), small_range(g), g.below(3)),
+        |&((a_low, a_high), (b_low, b_high), which)| {
+            let (op, f): (&str, fn(i128, i128) -> i128) = [
+                ("+", (|x, y| x + y) as fn(i128, i128) -> i128),
+                ("-", |x, y| x - y),
+                ("*", |x, y| x * y),
+            ][which];
+            let corners = [
+                f(a_low, b_low),
+                f(a_low, b_high),
+                f(a_high, b_low),
+                f(a_high, b_high),
+            ];
+            let (low, high) = (
+                *corners.iter().min().unwrap(),
+                *corners.iter().max().unwrap(),
+            );
+            let program = |result_low: i128, result_high: i128| {
+                with_header(format!(
+                    "fn f(a: {a_low}..{}, b: {b_low}..{}) -> {result_low}..{} {{ a {op} b }}\n\nfn main() ! console, alloc {{\n  print(\"{{f({a_low}, {b_low})}} {{f({a_low}, {b_high})}} {{f({a_high}, {b_low})}} {{f({a_high}, {b_high})}}\")\n}}\n",
+                    a_high + 1,
+                    b_high + 1,
+                    result_high + 1
+                ))
+            };
+            let exact = program(low, high);
+            let expected = format!(
+                "{} {} {} {}\n",
+                corners[0], corners[1], corners[2], corners[3]
+            );
+            assert_eq!(stdout(&exact), expected, "for\n{exact}");
+            // A range wider than the exact one takes it with nothing written too.
+            let wider = program(low - 3, high + 3);
+            assert_eq!(stdout(&wider), expected, "for\n{wider}");
+            // One that leaves out the least or the greatest number does not.
+            for narrower in [program(low + 1, high), program(low, high - 1)] {
+                if low < high {
+                    assert!(!compiles(&narrower), "accepted\n{narrower}");
+                }
+            }
+        },
+    );
 }
