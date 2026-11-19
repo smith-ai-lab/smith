@@ -24,6 +24,8 @@ fn hypot(a: f32, b: f32) -> f32 {
 A name may be bound to another name, or to a call.
 
 ```
+use std.console (console, print)
+
 fn shout() -> str { "hey" }
 
 fn main() ! console {
@@ -40,6 +42,8 @@ This prints `hey`.
 A binding may state its type, written as a parameter's is, with a colon after the name.
 
 ```
+use std.console (console, print)
+
 fn main() ! console {
   word: str = "typed"
   print(word)
@@ -49,6 +53,8 @@ fn main() ! console {
 This prints `typed`. Most bindings do not state their type, because the type of the value is already known, and `word = "typed"` means the same. A value of another type is refused.
 
 ```
+use std.console (console, print)
+
 fn main() ! console {
   word: str = 5
   print(word)
@@ -62,6 +68,8 @@ This gives "this is a number, where text is needed".
 A name is never defined where it can already be used, so there is no shadowing, and it keeps its value. Binding it again, or assigning to it, is refused.
 
 ```
+use std.console (console, print)
+
 fn main() ! console {
   word = "first"
   word = "second"
@@ -85,6 +93,8 @@ fn shout(word: str) -> str {
 A name can be used only after the line that defines it.
 
 ```
+use std.console (console, print)
+
 fn main() ! console {
   print(word)
   word = "late"
@@ -96,6 +106,8 @@ This gives "there is no name `word` defined before this in `main`".
 A name defined inside a block, such as the block of an [`if`](if.md), can be used only inside that block.
 
 ```
+use std.console (console, print)
+
 fn main() ! console {
   if true { inner = "here" }
   print(inner)
@@ -109,6 +121,9 @@ This gives "there is no name `inner` defined before this in `main`".
 A name stops where its block ends, so the same name may be defined again after it. Two loops that stand one after the other may both count with `i`, and the arms of a [`match`](match.md) may each bind `v`.
 
 ```
+use std.bits (u64)
+use std.int (wrapping_add)
+
 fn both(xs: List[u64], ys: List[u64]) -> u64 {
   var total: u64 = 0
   loop i in 0..xs.size { total = wrapping_add(total, xs[i]) }

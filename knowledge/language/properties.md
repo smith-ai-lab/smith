@@ -32,6 +32,8 @@ If `decode(encode(text)) == text` fails for a text of 140 characters, the test i
 Typed parameters are shorthand. Each is drawn from a split key with `random`, the one function of the [`Random`](random.md) trait.
 
 ```
+use std.bits (i32)
+
 fn test_order(a: i32, b: i32) -> Result[(), Failed] {
   expect { (a < b) == (b > a) }
 }
@@ -40,6 +42,8 @@ fn test_order(a: i32, b: i32) -> Result[(), Failed] {
 This is the same as writing the keys out.
 
 ```
+use std.bits (i32)
+
 fn test_order(key: take Key) -> Result[(), Failed] {
   (ka, kb) = split(key)
   a: i32 = random(ka)

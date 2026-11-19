@@ -10,7 +10,7 @@ status: planned
 The module `std.utf8` holds `decode` and `encode`, which turn between one character's number and its bytes, beside the `utf8` that makes a whole text from bytes, which [Text and bytes](../language/text.md) describes. A character's number is a `u32`.
 
 ```
-fn decode(bytes: List[u8], at: Nat) -> Option[(u32, Nat)]
+fn decode(bytes: List[Byte], at: Nat) -> Option[(u32, Nat)]
 fn encode(code: u32) -> Option[str] ! alloc
 ```
 

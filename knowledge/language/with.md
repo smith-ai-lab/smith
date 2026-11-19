@@ -39,6 +39,8 @@ The lines before `with` run as they are written, and the names they define may b
 A function that runs its lambda between two things of its own shows the order. `wrap` runs what it is given, then prints `after`.
 
 ```
+use std.console (console, print)
+
 fn wrap(body: fn()) ! console {
   body()
   print("after")
@@ -57,6 +59,8 @@ This prints `before`, `in`, `in again`, and `after`: the lines under `with` run 
 When nothing follows the `with`, the lambda has no lines. The `main` below prints `after`.
 
 ```
+use std.console (console)
+
 fn main() ! console {
   with wrap()
 }
@@ -65,6 +69,8 @@ fn main() ! console {
 Two `with`s nest, the second inside the lambda of the first, so the lines under the second run inside both. This prints `in`, then `after` twice.
 
 ```
+use std.console (console, print)
+
 fn main() ! console {
   with wrap()
   with wrap()
@@ -101,6 +107,8 @@ fn on_ok[T, U, E](r: take Result[T, E], body: fn(T) -> Result[U, E]) -> Result[U
 With it, a function that takes two steps reads in a line each:
 
 ```
+use std.bits (i32)
+
 fn parse_pair(a: str, b: str) -> Result[(i32, i32), ParseError] {
   with x = on_ok(parse_int(a))
   with y = on_ok(parse_int(b))
@@ -125,9 +133,9 @@ If `parse_int(a)` is an `.err`, `on_ok` gives that `.err` without calling the la
 A function that takes its function calls it once, so the block it is given may give away a value of the function around it. `run` takes its function, and the block under `with` gives `b` away.
 
 ```
-fn run[T](xs: take List[u8], body: take fn(take List[u8]) -> T) -> T { body(xs) }
+fn run[T](xs: take List[Byte], body: take fn(take List[Byte]) -> T) -> T { body(xs) }
 
-fn both(a: take List[u8], b: take List[u8]) -> (List[u8], List[u8]) {
+fn both(a: take List[Byte], b: take List[Byte]) -> (List[Byte], List[Byte]) {
   with xs = run(a)
   (xs, b)
 }

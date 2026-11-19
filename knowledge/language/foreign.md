@@ -20,7 +20,7 @@ The declaration names the library, `"libSystem"`, then the function with its C s
 `Ptr[T]`, `usize`, and `isize` exist for foreign signatures and are not used in ordinary code.
 
 ```
-fn write_bytes(buf: Ptr[u8], len: usize) -> isize ! foreign {
+fn write_bytes(buf: Ptr[Byte], len: usize) -> isize ! foreign {
   write(1, buf, len)
 }
 ```

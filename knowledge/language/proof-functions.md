@@ -35,9 +35,9 @@ A function that takes proofs and returns one proves a fact once for every place 
 A predicate used in a contract is an ordinary function that returns `bool`, so the contract can be run on real data too.
 
 ```
-fn inside(i: u8, n: u8) -> bool { i < n }
+fn inside(i: Byte, n: Byte) -> bool { i < n }
 
-fn at(i: u8, n: u8) -> u8
+fn at(i: Byte, n: Byte) -> Byte
   requires inside(i, n)
 {
   n - i

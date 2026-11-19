@@ -20,8 +20,8 @@ use std.console (console, print)
 use std.json (to_json)
 
 struct Point {
-  x: i64
-  y: i64
+  x: Int
+  y: Int
 }
 
 fn main() ! console, alloc {
@@ -129,6 +129,8 @@ This is `.err(Clash(of: "Shape", case: "circle", member: "type"))`: the struct's
 **`Names.camel`** writes a field's name with each `_` taken out and the letter after it in upper case, so `input_schema` is `inputSchema`. A `_` stays where the byte before it is `_` or the byte after it is not a lower case letter, so `x_`, `a__b`, and `a_1` are written as they are and `_x` is `X`. No two names of lower case letters, digits, and `_` are written alike. The names of cases are written as they are.
 
 ```
+use std.json (Json, to_json_as)
+
 mcp = Json(cases: .tag("type"), names: .camel)
 
 fn reply(c: Content) -> Result[str, Clash] ! alloc { to_json_as(c, mcp) }
@@ -141,7 +143,8 @@ The settings hold for the whole value that is written or read. A type that needs
 `from_json` takes a text and gives a `Result` of the type that the place of the result needs, as [Deserialize](deserialize.md) says. `from_json_as` takes the settings too.
 
 ```
-use std.deserialize (ReadError, Problem)
+use std.bits (u64)
+use std.deserialize (Problem, ReadError)
 use std.json (from_json)
 
 struct Tool {

@@ -10,14 +10,16 @@ status: built
 The module `std.ascii` holds four functions that each take one byte and say whether it is a certain kind of ASCII character. A byte is a `u8`, which is what a [`str`](../language/text.md) holds at each place.
 
 ```
-fn is_digit(b: u8) -> bool
-fn is_hex_digit(b: u8) -> bool
-fn is_letter(b: u8) -> bool
-fn is_space(b: u8) -> bool
+fn is_digit(b: Byte) -> bool
+fn is_hex_digit(b: Byte) -> bool
+fn is_letter(b: Byte) -> bool
+fn is_space(b: Byte) -> bool
 ```
 
 ```
 use std.ascii (is_digit)
+use std.bits (u64)
+use std.int (wrapping_add)
 
 fn digits(s: str) -> u64 {
   var n: u64 = 0

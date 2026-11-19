@@ -17,6 +17,8 @@ built:
 Two traits say what may happen to a value. `Copy` means it may be duplicated, and `Discard` means it may be dropped unused.
 
 ```
+use std.bits (u64)
+
 struct Point {
   x: u64
   y: u64
@@ -60,7 +62,9 @@ A value that is used at most once may be dropped unused and may not be used twic
 A [`List`](../library/list.md) has `Discard` and not `Copy`. Copying a list costs time in proportion to its length, and nothing in Smith costs that without being written.
 
 ```
-fn both(xs: take List[u8]) -> (List[u8], List[u8]) ! alloc {
+use std.list (push)
+
+fn both(xs: take List[Byte]) -> (List[Byte], List[Byte]) ! alloc {
   ys = push(copy(xs), 1)
   (xs, ys)
 }

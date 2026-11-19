@@ -10,7 +10,7 @@ status: planned
 Smith trusts nothing but a small kernel. Every fact a program relies on is a proof that the kernel has checked, and a program has no way to assert a fact without one. The aim is a language as safe as a proof assistant and as fast as C: a proof costs nothing when the program runs, as it is erased, and what it buys is a check that need not be made.
 
 ```
-fn first(xs: List[u8]) -> u8
+fn first(xs: List[Byte]) -> Byte
   requires xs.size > 0
 {
   xs[0]

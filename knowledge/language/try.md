@@ -14,6 +14,8 @@ built:
 `try e` gives the value inside `e` when `e` succeeded, and returns from the function with the failure when it did not.
 
 ```
+use std.bits (i32)
+
 fn parse_pair(a: str, b: str) -> Result[(i32, i32), ParseError] {
   x = try parse_int(a)
   y = try parse_int(b)
@@ -70,6 +72,9 @@ The two `try`s run from left to right, as the arguments of a call do, so `pair(.
 A `try` is written wherever an expression is, in an arm of a `match`, in a block of an `if`, and in a `loop`, where the failure ends the loop and the function with it:
 
 ```
+use std.bits (u64)
+use std.int (wrapping_add)
+
 fn first_bad(xs: List[Result[u64, str]]) -> Result[u64, str] {
   var total: u64 = 0
   loop i in 0..xs.size {
@@ -120,6 +125,8 @@ x = match split(e) {
 So `try` is written anywhere an expression is, and the rest of the function is no lambda: nothing runs it more than once, and a value the function owns is used after a `try` as before it. This is the `parse_pair` above, with each `try` written out:
 
 ```
+use std.bits (i32)
+
 fn parse_pair(a: str, b: str) -> Result[(i32, i32), ParseError] {
   x = match split(parse_int(a)) {
     .go(v) { v }
@@ -227,6 +234,8 @@ fn go(m: Maybe) -> Maybe {
 A failure of one type becomes a failure of another on its way out, where the first [converts](conversion.md) to the second. So a function gathers the failures of the steps it takes into one enum, which is given a `Convert` from each of them.
 
 ```
+use std.bits (u16)
+
 enum PortError {
   number: ParseError
   range: RangeError

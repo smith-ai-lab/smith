@@ -13,7 +13,7 @@ built:
 The module `std.bits` holds the names of sizes, `u8` to `u64` and `i8` to `i64`, and the `Bits` trait with its six functions, which work on a whole number as a row of bits. [Bits](../language/bits.md) says what each gives.
 
 ```
-use std.bits (u32, bit_and, shift_right)
+use std.bits (bit_and, shift_right, u32)
 
 fn second_byte(x: u32) -> u32 { bit_and(shift_right(x, 8), 0xff) }
 ```

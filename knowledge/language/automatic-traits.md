@@ -41,8 +41,8 @@ The `Ord` a type is given orders it from its parts, as a dictionary orders words
 
 ```
 struct Version {
-  major: i64
-  minor: i64
+  major: Int
+  minor: Int
 }
 ```
 
@@ -53,6 +53,8 @@ struct Version {
 `without Eq for Key` takes away the `Eq` that `Key` was given. Then `Key` cannot be compared, and neither can a type that has a `Key`.
 
 ```
+use std.console (console, print)
+
 struct Key {
   secret: str
 }

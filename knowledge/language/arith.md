@@ -18,9 +18,11 @@ built:
 `arith` is the procedure that proves, when the program is built, that a value fits the range it enters, as [Integer arithmetic](arithmetic.md) says, and that an index is in range. It decides linear arithmetic over the integers and nothing more, which is why it always answers yes or no, in a time that can be predicted.
 
 ```
+use std.console (console, print)
+
 fn main() ! console, alloc {
-  a: u8 = 20
-  b: u8 = 5
+  a: Byte = 20
+  b: Byte = 5
   print("{a * b}")
 }
 ```
@@ -34,7 +36,7 @@ This prints `100`. `arith` knows that `a` is 20 and `b` is 5, so `a * b` is at m
 **The range of a type.** A `u8` is at least 0 and at most 255, so `255 - x` never goes below 0.
 
 ```
-fn rest(x: u8) -> u8 { 255 - x }
+fn rest(x: Byte) -> Byte { 255 - x }
 ```
 
 `rest(250)` is `5`.
@@ -42,7 +44,7 @@ fn rest(x: u8) -> u8 { 255 - x }
 **The value of a literal, and of a name that is not a `var`.** A name is what it was given, so what is known of the value is known of the name.
 
 ```
-fn bump(x: u8) -> u8 {
+fn bump(x: Byte) -> Byte {
   if x < 100 {
     y = x + 100
     y + 50
@@ -57,7 +59,7 @@ fn bump(x: u8) -> u8 {
 **The condition of an `if`.** The block it guards has it as a fact, and the `else` has its opposite. The condition may be joined with `and`, `or`, and `not`.
 
 ```
-fn shift(x: u8) -> u8 {
+fn shift(x: Byte) -> Byte {
   if x < 10 and x > 3 { x + 200 } else if not (x < 100) { 0 } else { x + 100 }
 }
 ```
@@ -67,7 +69,7 @@ fn shift(x: u8) -> u8 {
 A block of a `match` is the same: what its pattern says is a fact in it.
 
 ```
-fn before(x: u8) -> u8 {
+fn before(x: Byte) -> Byte {
   match x {
     0 { 0 }
     n { n - 1 }
@@ -82,8 +84,8 @@ fn before(x: u8) -> u8 {
 **The facts of a `var`.** A `var` has the facts its type states, and, where no loop assigns it, those of the value it was last given. Inside one round of a loop that assigns it, it also has those of the value that round last gave it, stated against what it held when the round began.
 
 ```
-fn five() -> u8 {
-  var v: u8 = 5
+fn five() -> Byte {
+  var v: Byte = 5
   v + 100
 }
 ```
@@ -93,9 +95,9 @@ fn five() -> u8 {
 Inside a loop that assigns a `var`, what is known is what that round last gave it, stated against what it held when the round began, and a fact that holds when the round began holds still.
 
 ```
-fn rounds() -> u8 {
-  var v: u8 = 100
-  var t: u8 = 0
+fn rounds() -> Byte {
+  var v: Byte = 100
+  var t: Byte = 0
   loop i in 0..3 {
     v = 50
     t = v + 200
@@ -107,8 +109,8 @@ fn rounds() -> u8 {
 `rounds()` is `250`. In the round, `v` was just given `50`, so `v + 200` fits. A fact is also kept after an `if` or a `match` some of whose blocks end in `break`: only the blocks that go on reach the line after it.
 
 ```
-fn climb(x: u8) -> u8 {
-  var v: u8 = 0
+fn climb(x: Byte) -> Byte {
+  var v: Byte = 0
   loop i in 0..10 {
     if x > 200 { break }
     v = x + 50
@@ -122,11 +124,13 @@ fn climb(x: u8) -> u8 {
 **The size of a list.** A list has the `size` of the list it was given, whether it is bound to a name or to a `var`, and `size` is a value in a comparison, as in a `requires`, an `if`, and the range of a `loop`. It is what proves an index, as [Indexing](indexing.md) says.
 
 ```
-fn plus(xs: List[u8]) -> u64 {
+use std.bits (u64)
+
+fn plus(xs: List[Byte]) -> u64 {
   if xs.size < 100 { xs.size + 100 } else { 0 }
 }
 
-fn at(xs: List[u8], i: u64) -> u8 {
+fn at(xs: List[Byte], i: u64) -> Byte {
   var ys = xs
   if i < ys.size { ys[i] } else { 0 }
 }
@@ -138,16 +142,16 @@ fn at(xs: List[u8], i: u64) -> u8 {
 
 ```
 struct Pair {
-  a: u8
-  b: u8
+  a: Byte
+  b: Byte
 }
 
-fn kept(q: Pair) -> u8 {
+fn kept(q: Pair) -> Byte {
   var p = q
   if p.a < 100 { p.a + 100 } else { 0 }
 }
 
-fn forgotten(q: Pair) -> u8 {
+fn forgotten(q: Pair) -> Byte {
   var p = q
   if p.a < 100 {
     p.a = 250
@@ -166,15 +170,17 @@ fn forgotten(q: Pair) -> u8 {
 - `shift_left(a, k)` by a number `k` is `a` times two to the `k`, when `arith` proves that this fits the type, since no bit is dropped then. Otherwise nothing is known of it but the range of its type.
 
 ```
-fn low(x: u8) -> u8 { bit_and(x, 31) + 200 }
+use std.bits (bit_and, bit_or, shift_left, shift_right)
 
-fn join(x: u8, y: u8) -> u8 {
+fn low(x: Byte) -> Byte { bit_and(x, 31) + 200 }
+
+fn join(x: Byte, y: Byte) -> Byte {
   if x < 8 and y < 8 { bit_or(x, y) + 248 } else { 0 }
 }
 
-fn high(x: u8) -> u8 { shift_right(x, 3) + 224 }
+fn high(x: Byte) -> Byte { shift_right(x, 3) + 224 }
 
-fn up(x: u8) -> u8 { if x < 64 { shift_left(x, 2) + 3 } else { 0 } }
+fn up(x: Byte) -> Byte { if x < 64 { shift_left(x, 2) + 3 } else { 0 } }
 ```
 
 `low(255)` is `231`, `join(7, 1)` is `255`, `high(255)` is `255`, and `up(63)` is `255`. `bit_and(x, 31)` is at most 31, so `+ 200` fits. Both numbers of `bit_or` are below 8, so it is below 8. `shift_right(x, 3)` is at most 31. `shift_left(x, 2)` is `x * 4`, which is below 256 when `x < 64`.
@@ -190,7 +196,7 @@ It claims no more. `bit_and(x, 63) + 200` is refused, since 63 + 200 does not fi
 `arith` decides comparisons between sums and differences of variables and constants, where any multiplication is by a constant, such as `i + k < n + w - 1` and `2 * n + 1 <= m`. Comparisons may be joined with `and`, `or`, and `not`.
 
 ```
-fn left(n: u8, m: u8) -> u8
+fn left(n: Byte, m: Byte) -> Byte
   requires 2 * n + 1 <= m
 {
   m - 2 * n
@@ -202,7 +208,7 @@ fn left(n: u8, m: u8) -> u8
 It does not reason about a product of two variables, or about dividing by a variable. It treats such a term as one unknown quantity, and knows only the facts stated about that same term.
 
 ```
-fn area(w: u8, h: u8) -> u8 { w * h }
+fn area(w: Byte, h: Byte) -> Byte { w * h }
 ```
 
 This is refused, as `w * h` may be above 255, which the result does not hold. Nothing is known of `w * h` from what is known of `w` and `h`.
@@ -210,7 +216,7 @@ This is refused, as `w * h` may be above 255, which the result does not hold. No
 A fact stated about the same product is a fact about that term, so it is known.
 
 ```
-fn area(w: u8, h: u8) -> u8
+fn area(w: Byte, h: Byte) -> Byte
   requires w * h <= 255
 {
   w * h
@@ -222,7 +228,7 @@ fn area(w: u8, h: u8) -> u8
 A caller that cannot show it is refused where it calls.
 
 ```
-fn caller(x: u8, y: u8) -> u8 { area(x, y) }
+fn caller(x: Byte, y: Byte) -> Byte { area(x, y) }
 ```
 
 This is refused: "cannot prove that `x * y <= 255`, which `area` requires of its arguments".
@@ -242,7 +248,7 @@ fn drop(n: Nat, k: Nat) -> Nat {
 When `arith` cannot prove a goal, the compiler reports the goal and the line that needs it.
 
 ```
-fn double_plus(i: u8, n: u8) -> u8
+fn double_plus(i: Byte, n: Byte) -> Byte
   requires i < n
 {
   2 * i + 1

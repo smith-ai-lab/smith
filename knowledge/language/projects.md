@@ -18,6 +18,8 @@ hello/
 ```
 
 ```
+use std.console (console, print)
+
 fn main() ! console {
   print("hello world")
 }
@@ -43,6 +45,8 @@ Run in `serving/model/`, a command finds `serving/project.smith` above it, so th
 The entry is `main.smith` at the root, and its `main` is where the program starts. `smith build` and `smith run` can name another file instead, and that file's `main` is where the program starts.
 
 ```
+use std.console (console, print)
+
 fn main() ! console {
   print("hello")
 }
@@ -89,6 +93,8 @@ serving/
 `main.smith` prints a greeting from a public function.
 
 ```
+use std.console (console, print)
+
 pub fn greeting() -> str { "hello world" }
 
 fn main() ! console {

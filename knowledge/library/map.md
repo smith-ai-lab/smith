@@ -13,14 +13,14 @@ built:
 A `Map[K, V]` holds values, each under a key, and finds a value by its key in a time that does not grow with the size of the map.
 
 ```
-fn ages() -> Map[str, u8] ! alloc {
-  var m: Map[str, u8] = []
+fn ages() -> Map[str, Byte] ! alloc {
+  var m: Map[str, Byte] = []
   m = insert(m, "ada", 36)
   m = insert(m, "alan", 41)
   m
 }
 
-fn age_of(m: Map[str, u8], name: str) -> u8 {
+fn age_of(m: Map[str, Byte], name: str) -> Byte {
   match m[name] {
     .some(age) { age }
     .none { 0 }
@@ -36,8 +36,8 @@ fn age_of(m: Map[str, u8], name: str) -> u8 {
 A map keeps its entries in the order their keys were first added. `m.keys` and `m.values` are lists in that order, and the value at a place belongs to the key at the same place. So a walk over a map is a walk over two lists, and it visits the same entries in the same order every time the program runs.
 
 ```
-fn oldest(m: Map[str, u8]) -> u8 {
-  var top: u8 = 0
+fn oldest(m: Map[str, Byte]) -> Byte {
+  var top: Byte = 0
   loop i in 0..m.values.size {
     if m.values[i] > top { top = m.values[i] }
   }

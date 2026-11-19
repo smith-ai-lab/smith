@@ -30,6 +30,8 @@ fn go(l: Light) -> bool {
 A case that holds a value is written with a pattern for it in parentheses. A bare name there introduces a new variable for what the case holds, and the block can use it.
 
 ```
+use std.bits (i32)
+
 fn sides(s: Shape) -> i32 {
   match s {
     .circle(c) { 0 }
@@ -48,6 +50,8 @@ A case the enum does not have is refused: `.blue { ... }` on a `Light` gives "`L
 A `match` whose value is used is an expression, and its blocks give the same type. Blocks that give whole numbers give the smallest range that holds the values of all of them, as for an [`if`](if.md#both-blocks-give-the-same-type).
 
 ```
+use std.console (console, print)
+
 fn main() ! console, alloc {
   l = Light.red
   word = match l {
@@ -74,6 +78,8 @@ fn go(l: Light) -> str {
 This gives "this is a number, where text is needed". Used as a statement, nothing its blocks give is read, so they need not agree.
 
 ```
+use std.console (console, print)
+
 fn main() ! console, alloc {
   match Light.red {
     .green { print("go") }
@@ -142,7 +148,7 @@ This is allowed, and `red` is the value that is not `.green`. Because it is a ne
 A case's pattern may hold another pattern, for what the case holds. The enum `Option[u8]` holds an `u8` in `.some`.
 
 ```
-fn describe(found: Option[u8]) -> str {
+fn describe(found: Option[Byte]) -> str {
   match found {
     .some(0) { "the first one" }
     .some(n) { "a later one" }
@@ -154,7 +160,7 @@ fn describe(found: Option[u8]) -> str {
 `describe(.some(0))` is `"the first one"`, `describe(.some(3))` is `"a later one"`, and `describe(.none)` is `"not there"`. A pattern may be as deep as the value is.
 
 ```
-fn inner(x: Option[Option[u8]]) -> u8 {
+fn inner(x: Option[Option[Byte]]) -> Byte {
   match x {
     .some(.some(n)) { n }
     .some(.none) { 1 }
@@ -172,10 +178,10 @@ enum Token {
   equal_equal
   arrow
   assign
-  single: u8
+  single: Byte
 }
 
-fn two(b: u8, next: u8) -> Token {
+fn two(b: Byte, next: Byte) -> Token {
   match (b, next) {
     ('=', '=') { .equal_equal }
     ('-', '>') { .arrow }
@@ -192,7 +198,7 @@ fn two(b: u8, next: u8) -> Token {
 A literal is a pattern. It matches a value equal to it: a whole number, a character, or a text. It goes wherever a pattern goes, so inside a case and inside a tuple too, as `0` and `'='` do above.
 
 ```
-fn word(n: u8) -> str {
+fn word(n: Byte) -> str {
   match n {
     0 { "zero" }
     1 { "one" }
@@ -234,7 +240,7 @@ This is refused, as the `match` does not cover `3`, with the fix to add a block 
 A range of many values is covered by a bare name in practice, as no list is long enough, so a `match` on a `Byte` of 0 and 1 ends with one. Without it, it is refused.
 
 ```
-fn word(n: u8) -> str {
+fn word(n: Byte) -> str {
   match n {
     0 { "zero" }
     1 { "one" }

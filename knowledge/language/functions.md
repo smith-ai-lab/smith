@@ -25,6 +25,8 @@ A call writes the name and an argument for each parameter, in order. `area(2.0, 
 A body is a block, and the last expression of a block is its value, so `area` gives `w * h`. A block may have several lines. Each line is a statement, and the last one is the value.
 
 ```
+use std.console (console, print)
+
 fn echo(text: str) -> str ! console {
   print(text)
   text
@@ -40,6 +42,8 @@ A function that does something outside itself says so after its type, as `! cons
 A function with nothing to give leaves out `->` and the type. Its body gives nothing, and so does a call to it.
 
 ```
+use std.console (console, print)
+
 fn say(text: str) ! console {
   print(text)
   print(text)
@@ -79,6 +83,8 @@ fn first(a: str, b: str) -> str { a }
 Arguments are evaluated from left to right, in the order they are written.
 
 ```
+use std.console (console, print)
+
 fn noisy(text: str) -> str ! console {
   print(text)
   text
@@ -96,6 +102,8 @@ This prints `one`, `two`, and `one`.
 An argument may be named, as in `area(w: 2.0, h: 3.0)`. A call that names its arguments gives the same value as one that does not, and either way of writing it is allowed. Named arguments are written in any order, and are evaluated in the order they are written.
 
 ```
+use std.console (console, print)
+
 fn main() ! console {
   print(first(b: "y", a: "x"))
 }
@@ -122,6 +130,8 @@ fn scale(x: f32, by: f32 = 2.0) -> f32 { x * by }
 A call that names an argument may skip one before it. Here `m` is set, and `n` keeps its default.
 
 ```
+use std.console (console, print)
+
 fn show(label: str, n: str = "x", m: str = "y") ! console {
   print(label)
   print(n)
@@ -148,6 +158,8 @@ The compiler fills in a missing argument where the call is written. The function
 A function may be called above the place where it is written.
 
 ```
+use std.console (console, print)
+
 fn main() ! console {
   print(before())
 }

@@ -20,6 +20,8 @@ trait Repr[T] {
 `repr` is an ordinary function, called inside the braces of a string like any other. The braces always use `Fmt`, and a value never prints differently because of where it is.
 
 ```
+use std.console (console, print)
+
 struct Cat {
   name: str
 }
@@ -44,6 +46,8 @@ fn describe(tom: Cat) ! console, alloc {
 - A struct with exactly one field that is not a proof, such as `Pos`, is written as that field's value.
 
 ```
+use std.console (console, print)
+
 enum Pet {
   cat: str
   none
@@ -63,6 +67,9 @@ Both traits are given automatically, as [`Copy`](ownership.md) is: a struct, an 
 `without` takes one away. After `without Fmt for Secret`, a `Secret` cannot be put in braces.
 
 ```
+use std.bits (i32)
+use std.console (console, print)
+
 struct Secret {
   key: i32
 }

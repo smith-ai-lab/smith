@@ -51,8 +51,8 @@ trait Neg[A, out C = A] {
 
 ```
 struct Rect {
-  w: i64
-  h: i64
+  w: Int
+  h: Int
 }
 
 impl Add[Rect] {
@@ -110,7 +110,7 @@ impl Mul[f32, Weights, Weights] {
 
 ```
 struct Circle {
-  r: i64
+  r: Int
 }
 
 derive Add for Circle

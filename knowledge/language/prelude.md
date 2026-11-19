@@ -45,8 +45,8 @@ No syntax means `print`, or the `console` effect it needs, so a program that pri
 A name that is not in the table is imported. That holds for the rest of the standard library as for a program's own modules.
 
 ```
+use std.fs (FsError, fs, read_all)
 use std.list (push)
-use std.fs (fs, read_all, FsError)
 
 fn lines_of(path: str) -> Result[List[Byte], FsError] ! fs, alloc {
   read_all(path)
