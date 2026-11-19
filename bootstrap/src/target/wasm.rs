@@ -609,6 +609,8 @@ impl Lowering<'_> {
         }
         match &block.end {
             End::Return(values) => {
+                // What ends the function is its own, named for it, and no line wrote it.
+                self.note_place(Place::of(&f.name));
                 for v in values {
                     self.get(*v);
                 }
@@ -744,6 +746,8 @@ impl Lowering<'_> {
         }
         match &block.end {
             End::Return(values) => {
+                // What ends the function is its own, named for it, and no line wrote it.
+                self.note_place(Place::of(&f.name));
                 for v in values {
                     self.get(*v);
                 }

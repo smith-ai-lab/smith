@@ -885,6 +885,9 @@ enum Saved {
 struct Writer<'a, S> {
     program: &'a Program,
     f: &'a Function,
+    /// The place of the code that ends the function, which no line wrote: its
+    /// own, named for the function.
+    exit: Written,
     texts: &'a [usize],
     functions: &'a [usize],
     fail: usize,
@@ -981,6 +984,7 @@ fn function<S: System>(
         let w = Writer::<S> {
             program,
             f,
+            exit: Written::of(&f.name),
             texts,
             functions,
             fail,
@@ -1993,6 +1997,7 @@ impl<S: System> Writer<'_, S> {
                 }
             }
             End::Return(values) => {
+                asm.note_place(self.exit);
                 let moves: Vec<Move<Loc>> = (values.iter().zip(&self.leave))
                     .map(|(value, to)| Move {
                         to: *to,
