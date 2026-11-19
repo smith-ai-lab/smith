@@ -2,7 +2,7 @@
 type: specification
 title: Pipeline
 description: "`|>`, which writes a call after its first argument, so that a value passed through several calls reads in the order they run, `_` for another place, and `try` on a step."
-status: planned
+status: built
 ---
 
 # Pipeline
@@ -45,7 +45,7 @@ A call has at most one `_`.
 fn twice(x: f32) -> f32 { x |> scale(_, _) }
 ```
 
-This is refused: the value on the left is one value, and writing it in two places would copy it without a word.
+This is refused: "a call has one `_`, and this is one more". The value on the left is one value, and writing it in two places would copy it without a word.
 
 The `_` is a whole argument and no part of one.
 
@@ -53,7 +53,7 @@ The `_` is a whole argument and no part of one.
 fn wrong(x: f32) -> f32 { x |> scale(0.5, half(_)) }
 ```
 
-This is refused: the value goes to the call that `|>` stands before, which is `scale`, and a `_` inside another call would hide which call receives it. Written out, it is `x |> half() |> scale(0.5, _)`.
+This is refused: "`_` is a whole argument, and this one is inside another expression". The value goes to the call that `|>` stands before, which is `scale`, and a `_` inside another call would hide which call receives it. Written out, it is `x |> half() |> scale(0.5, _)`.
 
 ## What stands on the right
 
@@ -63,7 +63,7 @@ The right side is a call. Whatever can be called can stand there: a function by 
 fn wrong(x: f32) -> f32 { x |> half }
 ```
 
-This is refused: `half` is a function and not a call of one. It is written `x |> half()`.
+This is refused: "the right side of `|>` is not a call", with the fix "write `half()`". `half` is a function and not a call of one. It is written `x |> half()`.
 
 ## How it groups
 

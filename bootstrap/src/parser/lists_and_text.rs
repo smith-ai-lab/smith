@@ -28,6 +28,7 @@ fn interpolated(
         unbuilt: Vec::new(),
         no_lambda: false,
         binds: Vec::new(),
+        holes: Vec::new(),
         modules: modules.to_vec(),
         qualified: Vec::new(),
     };
