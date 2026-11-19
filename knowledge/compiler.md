@@ -10,13 +10,33 @@ Smith's compiler is an optimizing compiler built around `for` expressions. Its o
 
 ## How `for` is compiled
 
+Every [`for`](language/for.md), element-wise operator, reduction, and `@` is lowered to the kernel form and leaves it as loops of the [scalar form](#scalar-form). There is no other way from a `for` to code, so nothing built for arrays is replaced when a pass is added: a pass is one more step between the two.
+
+### The kernel form
+
+The kernel form holds a computation over arrays as nests. A nest has three parts.
+
+- **An index space:** the indices of the nest, in order, each with its size, which is a constant, a size parameter, or the size of an array it reads.
+- **A body:** code of the scalar form that gives the value at one point of the index space. It reads an element of an array by its indices, and may read the value another nest gives at a point.
+- **What is done with the values:** kept as an array of the shape of the index space, or reduced along some of the indices by an operation with a starting value, as `sum` does with `+` and 0.
+
+A reduction is a part of the nest and not a loop that happens to add, so a pass that regroups it, splits it between lanes, or shares it between cores reads what it is and does not have to find it. A read of another nest's value is a part of the body, so putting one nest into another is putting its body where it is read, with its indices for the reader's.
+
+### What is built first
+
+`for` is built first with no pass at all: each nest becomes one loop for each index, in the order written, each array a nest gives is kept in memory, and each reduction adds in order. That is correct and slow. Each pass after it is measured against the same loops written in C and built with `-O3`, with the time to build beside the time to run.
+
+### The passes, in the order they are built
+
 - **Fusion.** An array read once per element fuses into its consumer. An array read repeatedly, or by several consumers, gets a buffer.
-- **Contractions.** A `for` with a `sum` over a shared index, which is what every `@` expands to, is recognized and compiled as a tuned library would write it: loop order chosen, blocked for the cache, with a vector kernel inside.
-- **Strategy by size.** Type parameters are always specialized. For size parameters, a shared version always exists that takes the sizes at run time and picks its strategy with a size check: a simple loop, or cache blocking and threads. A specialized copy is made only when the sizes are constants and the operation count at those sizes is under a fixed bound, as for a 4 by 4 matrix, which is then fully unrolled into SIMD registers. The rule uses no profile data, and `smith cost` reports which version a call uses.
 - **Whole-function vectorization.** A scalar function called inside a `for` runs across SIMD lanes or GPU threads, with branches turned into masks.
 - **Reductions.** Each core runs several SIMD accumulators, cores combine their partial results, and a GPU uses a tree. The grouping is fixed for a given compiler and target and never depends on thread count, so results are repeatable. A reduction that fills one element of an array runs in order along its index.
+- **Contractions.** A `for` with a `sum` over a shared index, which is what every `@` expands to, is recognized and compiled as a tuned library would write it: loop order chosen, blocked for the cache, with a vector kernel inside.
+- **Strategy by size.** Type parameters are always specialized. For size parameters, a shared version always exists that takes the sizes at run time and picks its strategy with a size check: a simple loop, or cache blocking and threads. A specialized copy is made only when the sizes are constants and the operation count at those sizes is under a fixed bound, as for a 4 by 4 matrix, which is then fully unrolled into SIMD registers. The rule uses no profile data, and `smith cost` reports which version a call uses.
 - **Layout.** No address is observable, so the compiler is free to store an array of structs as one array per field.
 - **Devices.** Inside `with device(gpu)`, each fused loop nest becomes a GPU kernel.
+
+None is built. Each is one step over the kernel form, and the nests that leave it are the nests the next reads.
 
 ## Scalar form
 
