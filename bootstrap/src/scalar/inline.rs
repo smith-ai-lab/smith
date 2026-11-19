@@ -233,6 +233,26 @@ pub(super) fn renamed(op: &Op, rename: &impl Fn(Value) -> Value) -> Op {
             a: rename(*a),
             b: rename(*b),
         },
+        Op::FloatBinary { op, a, b } => Op::FloatBinary {
+            op: *op,
+            a: rename(*a),
+            b: rename(*b),
+        },
+        Op::FloatNegate(value) => Op::FloatNegate(rename(*value)),
+        Op::FloatCompare { op, a, b } => Op::FloatCompare {
+            op: *op,
+            a: rename(*a),
+            b: rename(*b),
+        },
+        Op::FloatFromInt { signed, value } => Op::FloatFromInt {
+            signed: *signed,
+            value: rename(*value),
+        },
+        Op::IntFromFloat { signed, value } => Op::IntFromFloat {
+            signed: *signed,
+            value: rename(*value),
+        },
+        Op::FloatResize(value) => Op::FloatResize(rename(*value)),
         Op::Widen { signed, value } => Op::Widen {
             signed: *signed,
             value: rename(*value),

@@ -305,11 +305,20 @@ impl Env {
 fn each_read(op: &Op, mut f: impl FnMut(Value)) {
     match op {
         Op::Constant(_) => {}
-        Op::Binary { a, b, .. } | Op::Compare { a, b, .. } | Op::Overflows { a, b, .. } => {
+        Op::Binary { a, b, .. }
+        | Op::Compare { a, b, .. }
+        | Op::Overflows { a, b, .. }
+        | Op::FloatBinary { a, b, .. }
+        | Op::FloatCompare { a, b, .. } => {
             f(*a);
             f(*b);
         }
-        Op::Widen { value, .. } | Op::Narrow(value) => f(*value),
+        Op::Widen { value, .. }
+        | Op::Narrow(value)
+        | Op::FloatNegate(value)
+        | Op::FloatFromInt { value, .. }
+        | Op::IntFromFloat { value, .. }
+        | Op::FloatResize(value) => f(*value),
         Op::Choose {
             on,
             then,

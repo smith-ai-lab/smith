@@ -2,7 +2,7 @@
 //! each value that is in the frame at the size of its type, at a place that
 //! is a multiple of that size, and where a call's arguments and results go.
 
-use crate::scalar::{Bits, Function, Op, Program, Type};
+use crate::scalar::{Bits, FloatBits, Function, Op, Program, Type};
 
 /// How many bytes a value of the type takes, and so where it is a multiple
 /// of.
@@ -11,7 +11,8 @@ pub fn size(ty: Type) -> u32 {
         Type::Int(Bits::B8) => 1,
         Type::Int(Bits::B16) => 2,
         Type::Int(Bits::B32) => 4,
-        Type::Int(Bits::B64) | Type::Address => 8,
+        Type::Float(FloatBits::F32) => 4,
+        Type::Int(Bits::B64) | Type::Float(FloatBits::F64) | Type::Address => 8,
     }
 }
 

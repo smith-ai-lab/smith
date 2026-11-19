@@ -13,7 +13,10 @@
 
 use std::collections::{HashMap, HashSet};
 
-use super::eval::{binary, bits_of, compare, mask, narrow, widen};
+use super::eval::{
+    binary, bits_of, compare, float_binary, float_bits_of, float_compare, float_from_int,
+    float_mask, float_negate, float_resize, int_from_float, mask, narrow, widen,
+};
 use super::graph::{self, jumps};
 use super::{Binary, Constant, End, Function, Instruction, Op, Program, Type, Value};
 
@@ -97,6 +100,34 @@ fn folded(f: &Function) -> Function {
                     known[result.0] = Some(n & mask(bits_of(ty)));
                     None
                 }
+                Op::Constant(Constant::Float(n)) => {
+                    known[result.0] = Some(n & float_mask(float_bits_of(ty)));
+                    None
+                }
+                // A float is worked out by the code the evaluator uses, with
+                // nothing rewritten: only an instruction whose inputs are all
+                // constants is replaced, by the bits the evaluator gives.
+                Op::FloatBinary { op, a, b } => match (known[a.0], known[b.0]) {
+                    (Some(x), Some(y)) => Some(float_binary(*op, float_bits_of(ty), x, y)),
+                    _ => None,
+                },
+                Op::FloatNegate(value) => {
+                    known[value.0].map(|x| float_negate(float_bits_of(ty), x))
+                }
+                Op::FloatCompare { op, a, b } => match (known[a.0], known[b.0]) {
+                    (Some(x), Some(y)) => {
+                        Some(float_compare(*op, float_bits_of(f.types[a.0]), x, y))
+                    }
+                    _ => None,
+                },
+                Op::FloatFromInt { signed, value } => known[value.0].map(|n| {
+                    float_from_int(*signed, bits_of(f.types[value.0]), float_bits_of(ty), n)
+                }),
+                Op::IntFromFloat { signed, value } => known[value.0].map(|x| {
+                    int_from_float(*signed, float_bits_of(f.types[value.0]), bits_of(ty), x)
+                }),
+                Op::FloatResize(value) => known[value.0]
+                    .map(|x| float_resize(float_bits_of(f.types[value.0]), float_bits_of(ty), x)),
                 Op::Binary { op, a, b } => {
                     // An operation that leaves its first value as it was.
                     let leaves = matches!(
@@ -151,7 +182,10 @@ fn folded(f: &Function) -> Function {
                     known[result.0] = Some(n);
                     instructions.push(Instruction {
                         results: vec![result],
-                        op: Op::Constant(Constant::Int(n)),
+                        op: Op::Constant(match ty {
+                            Type::Float(_) => Constant::Float(n),
+                            _ => Constant::Int(n),
+                        }),
                     });
                 }
                 None => {

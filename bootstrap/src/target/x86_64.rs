@@ -1327,11 +1327,18 @@ impl<S: System> Writer<'_, S> {
 
     fn instruction(&self, asm: &mut Asm, results: &[Value], operation: &Op) {
         match operation {
+            Op::FloatBinary { .. }
+            | Op::FloatNegate(_)
+            | Op::FloatCompare { .. }
+            | Op::FloatFromInt { .. }
+            | Op::IntFromFloat { .. }
+            | Op::FloatResize(_) => unreachable!("x86-64 does not build floats yet"),
             Op::Constant(_) if matches!(self.at[results[0].0], Loc::Imm(_)) => {}
             Op::Constant(c) => {
                 let result = results[0];
                 let t = self.target(result, &[]);
                 match c {
+                    Constant::Float(_) => unreachable!("x86-64 does not build floats yet"),
                     Constant::Int(n) => {
                         let n = match self.width(result) {
                             8 => *n,
