@@ -367,7 +367,7 @@ fn uses(g: &mut Gen) -> Uses {
                 file.push(")\n");
             }
             3 => {
-                let bad = *g.pick(&["Option", "Result", "List", "eq", "alloc", "i64"]);
+                let bad = *g.pick(&["Option", "Result", "List", "eq", "alloc", "Int"]);
                 file.push(&format!("use {m} ("));
                 file.mistake(bad, format!("`{bad}` is in the prelude"));
                 file.push(&format!(", {first})\n"));

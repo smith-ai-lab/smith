@@ -1013,7 +1013,7 @@ impl<'a> Checker<'a> {
                         *op_pos,
                         format!(
                             "cannot prove that `{written} {text}`, so `{written}` may not fit `{}`",
-                            t.name()
+                            self.defs.spelling(t)
                         ),
                     )
                     .with_fix(match t {
@@ -1059,7 +1059,7 @@ impl<'a> Checker<'a> {
                     pos,
                     format!(
                         "cannot prove that `{by} < {bits}`, which a shift of a `{}` needs",
-                        t.name()
+                        self.defs.spelling(t)
                     ),
                 )
                 .with_fix(format!(
@@ -1113,7 +1113,7 @@ impl<'a> Checker<'a> {
                         pos,
                         format!(
                             "cannot prove that `{value} {text}`, so `{written}` may not fit `{}`",
-                            to.name()
+                            self.defs.spelling(to)
                         ),
                     )
                     .with_fix(

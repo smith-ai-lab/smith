@@ -63,6 +63,8 @@ const LIBRARY_EFFECTS_EXPORTED: &[(&str, &str)] = &[("console", "console")];
 /// The names that are in scope in every file with no `use`, as the page of
 /// the prelude lists them, which a `use` is refused for.
 const PRELUDE_LISTED: &[&str] = &[
+    "Int",
+    "Byte",
     "i8",
     "i16",
     "i32",
@@ -149,6 +151,10 @@ const TYPES_NOT_BUILT: &[&str] = &[
     "usize", "f16", "bf16", "f32", "f64", "Pos", "Fin", "Ptr", "Map",
 ];
 
+/// The names of sizes, which `std.bits` holds, and which the compiler knows
+/// as the whole number types of that many bits.
+const SIZES: &[&str] = &["u8", "u16", "u32", "u64", "i8", "i16", "i32", "i64"];
+
 /// The names of the types `PRELUDE` defines.
 const PRELUDE_TYPES: &[&str] = &[
     TEXT,
@@ -158,6 +164,8 @@ const PRELUDE_TYPES: &[&str] = &[
     "Order",
     "Flow",
     "Utf8Error",
+    "Int",
+    "Byte",
     "i8",
     "i16",
     "i32",
@@ -799,6 +807,17 @@ struct Defs<'a> {
     /// How many defaults of type parameters are being resolved inside one
     /// another, so that a default that names its own type ends.
     default_depth: Cell<u8>,
+    /// How the program's own code wrote `i64` and `u8`, so that an error
+    /// names a type as the program wrote it.
+    spelled: Cell<Spelled>,
+}
+
+/// For each whole number type that has two names, whether the first name the
+/// program wrote for it is the new one (`Int`, `Byte`), once it wrote one.
+#[derive(Clone, Copy, Default)]
+struct Spelled {
+    int: Option<bool>,
+    byte: Option<bool>,
 }
 
 impl<'a> Defs<'a> {
@@ -910,6 +929,9 @@ impl<'a> Defs<'a> {
         }
         if name == TEXT || Int::named(name).is_some() {
             no_args("the type", errors);
+            if !of_prelude(t.pos) && !of_std(t.pos) {
+                self.spell(name);
+            }
             return match (t.args.is_empty(), Int::named(name)) {
                 (false, _) => Ty::Unknown,
                 (_, Some(int)) => Ty::Int(int),
@@ -994,6 +1016,30 @@ impl<'a> Defs<'a> {
         }
     }
 
+    /// Notes how the program wrote a whole number type, when it is one of the
+    /// two that have two names and the program has not written either yet.
+    fn spell(&self, name: &str) {
+        let mut spelled = self.spelled.get();
+        match name {
+            "Int" | "i64" => spelled.int.get_or_insert(name == "Int"),
+            "Byte" | "u8" => spelled.byte.get_or_insert(name == "Byte"),
+            _ => return,
+        };
+        self.spelled.set(spelled);
+    }
+
+    /// How a whole number type is written in an error: `Int` and `Byte` where
+    /// the program wrote those names first, and the name of the type
+    /// otherwise.
+    fn spelling(&self, int: Int) -> &'static str {
+        let spelled = self.spelled.get();
+        match int {
+            Int::I64 if spelled.int == Some(true) => "Int",
+            Int::U8 if spelled.byte == Some(true) => "Byte",
+            _ => int.name(),
+        }
+    }
+
     /// The type, with nothing reported.
     fn quietly(&self, t: &Type, scope: &Scope) -> Ty {
         self.resolve(t, scope, &mut Vec::new())
@@ -1066,7 +1112,7 @@ impl<'a> Defs<'a> {
     fn text(&self, ty: &Ty, scope: &Scope) -> String {
         match ty {
             Ty::Text => TEXT.to_string(),
-            Ty::Int(int) => int.name().to_string(),
+            Ty::Int(int) => self.spelling(*int).to_string(),
             Ty::Struct(_, args) | Ty::Enum(_, args) => {
                 let name = self.type_name(ty);
                 if args.is_empty() {
@@ -1744,6 +1790,7 @@ fn check_file(
         result: prelude_item(&file, Kind::Enum, "Result"),
         withouts: Vec::new(),
         default_depth: Cell::new(0),
+        spelled: Cell::new(Spelled::default()),
     };
     let mut done = Vec::new();
     for &d in &reached_types {
@@ -2307,6 +2354,11 @@ fn not_defined(module: &str, kind: Kind, name: &str) -> ! {
     )
 }
 
+/// Whether a name is one of the sizes, and the module is `std.bits`.
+fn of_bits(module: &str, name: &str) -> bool {
+    module == "std.bits" && SIZES.contains(&name)
+}
+
 /// Whether a definition is in a module of the library or of the project.
 fn of_library(pos: Pos) -> bool {
     pos.line >= STEP
@@ -2722,7 +2774,10 @@ impl<'l, 'a> Resolver<'l, 'a> {
                             "rename the definition, or delete `{name}` from the `use`"
                         )),
                     )
-                } else if item.alias.is_none() && PRELUDE_LISTED.contains(&name) {
+                } else if item.alias.is_none()
+                    && PRELUDE_LISTED.contains(&name)
+                    && !of_bits(&module, name)
+                {
                     Some(
                         Error::new(
                             pos,
@@ -2730,9 +2785,10 @@ impl<'l, 'a> Resolver<'l, 'a> {
                         )
                         .with_fix(format!("delete `{name}` from the `use`")),
                     )
-                } else if !exports.iter().any(|e| e == name) {
+                } else if !exports.iter().any(|e| e == name) && !of_bits(&module, name) {
                     Some(self.missing(&module, slot, name, pos))
-                } else if item.alias.is_some() && self.fixed(slot, name) {
+                } else if item.alias.is_some() && (self.fixed(slot, name) || of_bits(&module, name))
+                {
                     Some(Error::unsupported(
                         at_name,
                         "`as` on a name the compiler builds",

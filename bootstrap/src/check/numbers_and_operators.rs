@@ -46,7 +46,14 @@ impl Int {
         }
     }
 
+    /// The type a name written in a file stands for: `Int` is `i64` and
+    /// `Byte` is `u8`.
     pub(super) fn named(name: &str) -> Option<Int> {
+        let name = match name {
+            "Int" => "i64",
+            "Byte" => "u8",
+            _ => name,
+        };
         Int::ALL.into_iter().find(|t| t.name() == name)
     }
 
@@ -252,8 +259,8 @@ impl<'a> Checker<'a> {
                     format!(
                         "`{symbol}` needs both sides to be of one type, and the left is `{}` \
                          where the right is `{}`",
-                        a.name(),
-                        b.name()
+                        self.defs.spelling(*a),
+                        self.defs.spelling(*b)
                     ),
                 ));
                 return Ty::Unknown;
@@ -337,7 +344,7 @@ impl<'a> Checker<'a> {
                 format!(
                     "`{}` is not ASCII, so it takes more than one byte and is not a `{}`",
                     written_expr(expr),
-                    int.name()
+                    self.defs.spelling(int)
                 ),
             ));
         }
@@ -351,7 +358,7 @@ impl<'a> Checker<'a> {
                 format!(
                     "`{}` does not fit `{}`{because}, which holds {} to {}",
                     written_expr(expr),
-                    int.name(),
+                    self.defs.spelling(int),
                     int.min(),
                     int.max()
                 ),
@@ -451,7 +458,7 @@ impl<'a> Checker<'a> {
                     call.pos,
                     format!(
                         "this is already a `{}`, so there is nothing to narrow",
-                        from.name()
+                        self.defs.spelling(from)
                     ),
                 )
             } else {
@@ -459,8 +466,8 @@ impl<'a> Checker<'a> {
                     call.pos,
                     format!(
                         "`{}` holds every value of `{}`, so there is nothing to narrow",
-                        to.name(),
-                        from.name()
+                        self.defs.spelling(to),
+                        self.defs.spelling(from)
                     ),
                 )
                 .with_fix("use `convert`")
