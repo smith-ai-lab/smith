@@ -1,3 +1,3 @@
-number_two_uses.smith:11:8: `x` is `u8`, as the use at 10:8 needs, where a `i32` is needed
+number_two_uses.smith:11:8: `x` is `u8`, as the use at 10:8 needs, where a `i8` is needed
   11 |   word(x)
      |        ^

@@ -1,9 +1,9 @@
-use std.bits (i32)
+use std.bits (i8)
 use std.console (console)
 
 fn byte(n: Byte) -> Byte { n }
 
-fn word(n: i32) -> i32 { n }
+fn word(n: i8) -> i8 { n }
 
 fn main() ! console {
   x = 10

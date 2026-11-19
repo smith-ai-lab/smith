@@ -98,6 +98,16 @@ impl Int {
             .unwrap_or(64)
     }
 
+    /// Whether every value of `other` is a value of the type.
+    pub(super) fn holds(self, other: Int) -> bool {
+        self.min <= other.min && other.max <= self.max
+    }
+
+    /// The smallest range that holds every number of both, if a type holds it.
+    pub(super) fn hull(self, other: Int) -> Option<Int> {
+        Int::between(self.min.min(other.min), self.max.max(other.max))
+    }
+
     /// The size the type is kept at: the smallest one that holds it as itself.
     pub(super) fn holder(self) -> Int {
         Int::sized(self.signed(), self.bits())
