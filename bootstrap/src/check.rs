@@ -5907,7 +5907,7 @@ impl<'a> Checker<'a> {
             lambdas: 0,
         };
         let gives = self.expr(&mut body, value, &Want::Ty(needed.clone()));
-        self.expect(&body, value, &gives, needed);
+        self.expect(&mut body, value, &gives, needed);
     }
 
     /// Checks the defaults of the parameters of `f`, whose signature is
@@ -6024,7 +6024,7 @@ impl<'a> Checker<'a> {
     }
 
     /// Reports a value that gives `given` where `needed` is needed.
-    fn expect(&mut self, body: &Body, value: &Expr, given: &Ty, needed: &Ty) {
+    fn expect(&mut self, body: &mut Body<'a>, value: &Expr, given: &Ty, needed: &Ty) {
         let defs = self.defs;
         match (given, needed) {
             (_, Ty::Unknown) | (Ty::Unknown, _) => {}
@@ -6042,6 +6042,12 @@ impl<'a> Checker<'a> {
                 if g != n {
                     self.widened.insert(addr(value), *n);
                 }
+            }
+            // A range is taken where a narrower one is needed only where it
+            // is shown to fit.
+            (Ty::Int(g), Ty::Int(n)) => {
+                self.widened.insert(addr(value), *n);
+                self.enters(body, value, (*g, *n));
             }
             (given, needed) if given != needed => {
                 let message = self.mismatch(
@@ -6061,7 +6067,7 @@ impl<'a> Checker<'a> {
     /// in `sol`, and fills in `sol`.
     fn fit(
         &mut self,
-        body: &Body,
+        body: &mut Body<'a>,
         value: &Expr,
         given: &Ty,
         pattern: &Ty,
@@ -6080,6 +6086,10 @@ impl<'a> Checker<'a> {
                 if g != n {
                     self.widened.insert(addr(value), *n);
                 }
+            }
+            (Ty::Int(g), Ty::Int(n)) => {
+                self.widened.insert(addr(value), *n);
+                self.enters(body, value, (*g, *n));
             }
             (given, pattern) => {
                 use_at(value.pos());
@@ -6247,7 +6257,9 @@ impl<'a> Checker<'a> {
                 let t = t.text(&view, self.defs);
                 self.ends_with_nothing(f, pos, &t)
             }
-            (End::Value(gives, value), Some(_)) => self.expect(&body, value, &gives, &view.gives),
+            (End::Value(gives, value), Some(_)) => {
+                self.expect(&mut body, value, &gives, &view.gives)
+            }
             (
                 End::Value(
                     gives
@@ -7581,7 +7593,7 @@ impl<'a> Checker<'a> {
     /// first block gives, and gives it.
     fn arm_gives(
         &mut self,
-        body: &Body,
+        body: &mut Body<'a>,
         arm: &Arm,
         end: End,
         want: &Want,
@@ -7610,10 +7622,11 @@ impl<'a> Checker<'a> {
             return gives;
         }
         // A range is taken where a wider one is wanted, with nothing written.
-        if let (Want::Ty(Ty::Int(n)), Ty::Int(g), End::Value(_, value)) = (want, &gives, &end)
-            && n.holds(*g)
-        {
+        if let (Want::Ty(Ty::Int(n)), Ty::Int(g), End::Value(_, value)) = (want, &gives, &end) {
             self.widened.insert(addr(*value), *n);
+            if !n.holds(*g) {
+                self.enters(body, value, (*g, *n));
+            }
             return gives;
         }
         let gives_what = match (&end, &gives) {

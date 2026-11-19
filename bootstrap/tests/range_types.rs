@@ -38,6 +38,10 @@ pub const ONCE: &[Test] = &[
         a_range_is_taken_where_a_range_that_holds_every_number_of_it_is_needed,
     ),
     (
+        "a_value_enters_a_narrower_range_exactly_when_a_condition_or_a_requires_shows_it_fits",
+        a_value_enters_a_narrower_range_exactly_when_a_condition_or_a_requires_shows_it_fits,
+    ),
+    (
         "the_blocks_of_an_if_and_a_match_give_the_smallest_range_that_holds_them",
         the_blocks_of_an_if_and_a_match_give_the_smallest_range_that_holds_them,
     ),
@@ -309,4 +313,54 @@ fn the_blocks_of_an_if_and_a_match_give_the_smallest_range_that_holds_them() {
         let other = [c, a][*which];
         assert_eq!(stdout(&source), format!("{want} {other}\n"), "for\n{source}");
     });
+}
+
+/// A value of a range enters a narrower range, as a result, a binding, an
+/// argument, and a block, only where the facts about it show it fits: a
+/// `requires` or the condition of an `if` does, and nothing does not, and
+/// the error says what could not be proven.
+fn a_value_enters_a_narrower_range_exactly_when_a_condition_or_a_requires_shows_it_fits() {
+    generate::check(4009, 30, nested, |((low, high), (ilow, ihigh), n)| {
+        let wide = format!("{low}..{}", high + 1);
+        let narrow = format!("{ilow}..{}", ihigh + 1);
+        let strictly = ilow > low || ihigh < high;
+        let lead = format!(
+            "fn takes(v: {narrow}) -> {narrow} {{ v }}\n\nfn result(x: {wide}) -> {narrow}"
+        );
+        let facts = format!("requires x >= {ilow} and x <= {ihigh}");
+        let tail = format!(
+            "fn checked(x: {wide}) -> {narrow} {{\n  if x >= {ilow} and x <= {ihigh} {{ x }} else {{ {ilow} }}\n}}\n\nfn bound(x: {wide}) -> {narrow} {{\n  var y: {narrow} = {ilow}\n  if x >= {ilow} and x <= {ihigh} {{ y = x }}\n  y\n}}\n\nfn passed(x: {wide}) -> {narrow}\n  {facts}\n{{\n  takes(x)\n}}\n\nfn main() ! console, alloc {{\n  a: {wide} = {n}\n  print(\"{{result(a)}} {{checked(a)}} {{bound(a)}} {{passed(a)}}\")\n}}\n"
+        );
+        let proven = with_header(format!("{lead}\n  {facts}\n{{ x }}\n\n{tail}"));
+        assert_eq!(stdout(&proven), format!("{}\n", vec![n.to_string(); 4].join(" ")), "for\n{proven}");
+        let unproven = with_header(format!("{lead} {{ x }}\n\n{tail}"));
+        if strictly {
+            let errors = check(unproven.as_bytes()).expect_err("a value that may not fit");
+            assert!(
+                errors.iter().any(|e| e.message.contains("cannot prove") && e.message.contains(&narrow_name(*ilow, *ihigh))),
+                "{errors:?} for\n{unproven}"
+            );
+        } else {
+            assert!(compiles(&unproven), "for\n{unproven}");
+        }
+    });
+}
+
+/// How the error spells a range: by the name of the size it fills, if any.
+fn narrow_name(low: i128, high: i128) -> String {
+    for (name, l, h) in [
+        ("u8", 0, 255),
+        ("u16", 0, 65535),
+        ("u32", 0, 4294967295),
+        ("u64", 0, 18446744073709551615),
+        ("i8", -128, 127),
+        ("i16", -32768, 32767),
+        ("i32", -2147483648, 2147483647),
+        ("i64", -9223372036854775808, 9223372036854775807),
+    ] {
+        if (low, high) == (l, h) {
+            return name.to_string();
+        }
+    }
+    format!("{low}..{}", high + 1)
 }

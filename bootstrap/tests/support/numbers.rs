@@ -734,16 +734,22 @@ pub fn program_with_mistake(g: &mut Gen) -> NumberCase {
     let (before, after, mentions): (String, String, String) = match kind {
         0 => {
             // A type that does not hold every value of the type the number was
-            // given, as a type that does takes it.
+            // given, which the number is shown not to fit when it is the one
+            // value of the first type that the second does not hold.
             let apart: Vec<Int> = (INTS.iter())
                 .filter(|t| !t.holds_all(ty))
                 .copied()
                 .collect();
             let other = *g.pick(&apart);
+            let outside = if ty.min() < other.min() { ty.min() } else { ty.max() };
+            fix = Some("check the value first".to_string());
             (
-                format!("x = 5\n  id_{}(x)\n  id_{}(", ty.name, other.name),
+                format!(
+                    "x = {outside}\n  id_{}(x)\n  id_{}(",
+                    ty.name, other.name
+                ),
                 "x)".into(),
-                format!("where a `{}` is needed", other.name),
+                format!("may not fit `{}`", other.name),
             )
         }
         1 => (
