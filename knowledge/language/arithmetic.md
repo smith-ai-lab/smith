@@ -1,12 +1,12 @@
 ---
 type: specification
 title: Integer arithmetic
-description: The exact range that a plain +, -, *, or / gives, the proof asked where a value enters a narrower range, and the functions that wrap.
+description: The exact range that a plain +, -, *, or / gives, the proof asked where a value enters a narrower range, narrow and clamp where nothing proves it, and the functions that wrap.
 status: partial
 built:
   - "a plain `+`, `-`, or `*` on `u8` to `i64`, which compiles when `arith` proves that the result fits the type of its operands, and an error that says what could not be proven"
   - "`wrapping_`, `saturating_`, and `checked_` of `add`, `sub`, and `mul`"
-  - "not a range as a type, the exact range of a result, `/`, or `%`"
+  - "not a range as a type, the exact range of a result, `/`, `%`, or `narrow(x)` and `clamp(x)` of every range"
 ---
 
 # Integer arithmetic
@@ -88,9 +88,45 @@ fn main() ! console, alloc {
 
 This prints `8 255 2 0`. In the first block of `gap`, `a >= b` holds, so `a - b` is at least 0, and in the `else` the subtraction is not written. The same holds for a condition with `and`, `or`, and `not`. What the compiler can prove appears under [What arith proves](arith.md), and how to state a fact once for a whole function under [Contracts](contracts.md).
 
+## Entering a range with no proof
+
+Where nothing proves that a value fits the range it enters, as a number read from outside, two functions of [`std.int`](../library/int.md) take it in. Each takes a value of any range and gives the range that is expected where it is written. They serve every operator and any expression, and each costs the comparisons it says when the program runs.
+
+`narrow(x)` gives an `Option` of the range expected: `.some(x)` when `x` is in that range, and `.none` when it is not. `checked_add(a, b)` is `narrow(a + b)`.
+
+```
+fn to_byte(n: Nat) -> Option[Byte] { narrow(n) }
+
+fn next_checked(i: Byte) -> Option[Byte] { narrow(i + 1) }
+```
+
+`to_byte(200)` is `.some(200)` and `to_byte(300)` is `.none`. `next_checked(7)` is `.some(8)` and `next_checked(255)` is `.none`.
+
+`clamp(x)` gives the value of the range expected that is nearest `x`: `x` when it is in the range, the least value when `x` is below it, and the greatest when it is above. `saturating_add(a, b)` is `clamp(a + b)`.
+
+```
+fn next_saturating(i: Byte) -> Byte { clamp(i + 1) }
+
+fn floor(x: Int) -> Byte { clamp(x) }
+
+fn main() ! console, alloc {
+  print("{next_saturating(255)} {next_saturating(7)} {floor(-3)} {floor(300)}")
+}
+```
+
+This prints `255 8`, `0`, and `255`: `floor(-3)` is `0`, the least `Byte`, and `floor(300)` is `255`, the greatest.
+
+Where the range expected holds every value of `x`, the call is refused as needless, as `convert` of a value to its own type is, since it does nothing the program could see.
+
+```
+fn same(x: Byte) -> Option[Byte] { narrow(x) }
+```
+
+This is refused, as `Byte` holds every value of `x`. A call with no range expected is refused too, as `n = narrow(x)` with nothing that states the range of `n`.
+
 ## More than 64 bits
 
-A result whose range needs more than 64 bits has no type that holds it, so it is refused until it is narrowed. It is narrowed where it enters a range of 64 bits or fewer, with the proof that it fits.
+A result whose range needs more than 64 bits has no type that holds it, so it is refused until it is narrowed. It is narrowed where it enters a range of 64 bits or fewer, with the proof that it fits, or by `narrow` or `clamp`.
 
 ```
 fn doubled(n: Nat) -> Nat { n * 2 }
@@ -171,6 +207,8 @@ This is refused, as `a` and `b` are of two ranges. The fix is to bind the narrow
 | `a / b`, `a % b` | The exact range, with the range of `b` excluding zero |
 | A value where a narrower range is expected | Compiles when it is shown to fit, refused otherwise |
 | A result of more than 64 bits | Refused until it is narrowed |
+| `narrow(x)` | `.some(x)` when `x` is in the range expected, `.none` when it is not |
+| `clamp(x)` | The value of the range expected that is nearest `x` |
 | `wrapping_add(a, b)`, `wrapping_sub(a, b)`, `wrapping_mul(a, b)` | The low bits, for a range that fills a size |
 
 Next: [Bit operations](bits.md)

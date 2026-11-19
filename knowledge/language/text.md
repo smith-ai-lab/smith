@@ -29,7 +29,7 @@ So everything a `Slice` is, a text is: it has `Copy`, any number of names share 
 fn count_spaces(s: str) -> Nat {
   var n: Nat = 0
   loop i in 0..s.size {
-    if s[i] == ' ' { n = saturating_add(n, 1) }
+    if s[i] == ' ' { n = clamp(n + 1) }
   }
   n
 }

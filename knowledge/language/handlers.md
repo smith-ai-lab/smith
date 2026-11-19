@@ -47,7 +47,7 @@ fn fake_clock[T](body: fn() -> T ! time) -> T {
   var ticks: u64 = 0
   time(
     now: {
-      ticks = saturating_add(ticks, 1)
+      ticks = clamp(ticks + 1)
       ticks
     },
     body: body,

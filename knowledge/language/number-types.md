@@ -41,7 +41,7 @@ fn never(x: 5..5) -> Nat { 0 }
 
 `never` is accepted, and no call of it is, as no value is a `5..5`.
 
-A value goes the other way only where it is shown to fit, as [Integer arithmetic](arithmetic.md#where-a-value-enters-a-narrower-range) says.
+A value goes the other way only where it is shown to fit, or taken in by `narrow` or `clamp`, as [Integer arithmetic](arithmetic.md#where-a-value-enters-a-narrower-range) says.
 
 ```
 fn dim(level: 0..256) -> 0..101 { level }
@@ -121,7 +121,7 @@ How many bytes a range takes, and in what form, is the compiler's choice, and a 
 | `u8` to `u64`, `i8` to `i64` | The ranges that fill 8 to 64 bits, imported from `std.bits` |
 | `f16`, `bf16`, `f32`, `f64` | A float of 16, 16, 32, or 64 bits |
 | A range where a wider one is expected | Accepted, with nothing written |
-| A range where a narrower one is expected | Accepted where it is shown to fit, refused otherwise |
+| A range where a narrower one is expected | Accepted where it is shown to fit, or taken in by `narrow` or `clamp`, refused otherwise |
 | `a == b`, `a < b`, and the rest | A `bool`, for any two ranges |
 | A range and a float in an operator | Refused: `float(n)` makes one of the other |
 
