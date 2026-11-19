@@ -409,8 +409,8 @@ pub enum Op {
         b: Value,
     },
     /// What `op` says of three floats of one size, worked out exactly and
-    /// rounded once. A pass makes it of a product whose only use is one sum or
-    /// difference.
+    /// rounded once. `fuse` makes it, where the form is made, of a product whose
+    /// only use is one sum or difference, and no pass makes or takes one apart.
     FloatFused {
         op: Fused,
         a: Value,
