@@ -4,8 +4,8 @@ title: The prelude
 description: The names that are in scope in every file without a use, and what a file imports for everything else.
 status: partial
 built:
-  - "every name below, `Int` and `Byte` among them, in scope in every file, with `u8` to `i64`, which are in scope too until a file must import them from `std.bits`"
-  - "not `use`, so every other name of the standard library that the compiler builds, such as `print`, `console`, `push`, `narrow`, and the `wrapping_` functions, is in scope too until it is, and the examples of the other pages are written without their `use` lines until then"
+  - "every name below, `Int` and `Byte` among them, in scope in every file with no import"
+  - "a name of the standard library outside the table, such as `print`, `console`, `push`, `narrow`, a `wrapping_` function, or the name of a size, is refused where a file uses it with no `use`, and the error names the module to import it from"
 ---
 
 # The prelude

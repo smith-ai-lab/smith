@@ -32,7 +32,7 @@ fn main() ! console {
 }
 ```
 
-This prints `one`, then `two`. `print` is in scope in [every file](prelude.md), and the rest of the console is in [std.console](../library/console.md).
+This prints `one`, then `two`. `print` and the effect `console` are imported from [std.console](../library/console.md) on the first line, as [the prelude](prelude.md) says of every name that syntax does not mean.
 
 ## `! console`
 

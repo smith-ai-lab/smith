@@ -323,9 +323,18 @@ fn a_file_that_imports_the_names_it_uses_builds_what_it_built_without_the_use() 
         let used = names_used(&bare);
         if used.is_empty() {
             assert_eq!(&bare, source);
+            return;
         }
-        for (module, _) in &used {
-            assert!(with.contains(&format!("use std.{module} (")), "for\n{with}");
+        let errors = check(bare.as_bytes()).expect_err("names that are not imported");
+        assert_eq!(errors.len(), used.len(), "{errors:?} for\n{bare}");
+        for (module, name) in &used {
+            let wanted = format!("`{name}` is in `std.{module}`, and this file does not import it");
+            let fix = format!("use std.{module} ({name})");
+            assert!(
+                errors.iter().any(|e| e.message.contains(&wanted)
+                    && e.fix.as_deref().is_some_and(|f| f.contains(&fix))),
+                "no error that says {wanted} in {errors:?} for\n{bare}"
+            );
         }
     });
 }
