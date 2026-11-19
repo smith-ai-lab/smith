@@ -5,7 +5,7 @@ The modules of the standard library, one file each, named for the module. A modu
 - [list.md](list.md): `List`, an array kept together with its size, which can grow.
 - [slice.md](slice.md): `Slice`, a run of elements that cannot change and is shared freely, made from a `List` by `freeze`.
 - [list-functions.md](list-functions.md): `std.list`'s functions that search and compare any list, a text among them, and `append`.
-- [text.md](text.md): `std.text`'s `split_once` and `strip_prefix`, which cut a text into pieces that share its memory.
+- [text.md](text.md): `std.text`'s `split_once` and `strip_prefix`, which cut a text into pieces that share its memory, and `Text`, a text that grows and becomes a `str` with nothing read again.
 - [int.md](int.md): `std.int`, `narrow` and `clamp`, which take a value into the range expected, and arithmetic that wraps, for the ranges that fill a size.
 - [float.md](float.md): `std.float`, `floor`, `ceil`, `trunc`, and `round`, which round a float to a whole number that is still a float.
 - [bits.md](bits.md): `std.bits`, the names of sizes `u8` to `i64`, the `Bits` trait, and its functions on the bits of a range that fills a size.
