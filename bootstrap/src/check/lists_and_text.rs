@@ -376,6 +376,11 @@ impl<'a> Checker<'a> {
         let at = self.expr(body, index, &wanted);
         match &at {
             Ty::Int(Int::U64) | Ty::Unknown => {}
+            // A range of numbers that are not below 0 is a `Nat` where an index
+            // is needed, with nothing written.
+            Ty::Int(t) if Int::U64.holds(*t) => {
+                self.widened.insert(addr(index), Int::U64);
+            }
             Ty::Int(t) => {
                 self.errors.push(
                     Error::new(

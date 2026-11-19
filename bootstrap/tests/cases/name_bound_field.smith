@@ -1,0 +1,10 @@
+use std.console (console, print)
+
+struct Cursor {
+  size: Nat
+  at: 0..size
+}
+
+fn main() ! console, alloc {
+  print("{1}")
+}

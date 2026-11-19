@@ -370,6 +370,84 @@ impl<'a> Checker<'a> {
         gives
     }
 
+    /// The type of a binding written `a..b` where a bound is a name, which is
+    /// the smallest range that holds every number the range can have, and
+    /// each name with whether it is the end. None, with the mistake reported,
+    /// where a name is not one that cannot change.
+    pub(super) fn named_range(
+        &mut self,
+        body: &Body<'a>,
+        t: &Type,
+    ) -> Option<(Ty, Vec<(String, bool)>)> {
+        let Some((first, end)) = &t.range else {
+            return None;
+        };
+        let mut ends = [0i128; 2];
+        let mut named = Vec::new();
+        for (at, (bound, is_end)) in [(first, false), (end, true)].into_iter().enumerate() {
+            ends[at] = match bound {
+                Bound::Number(n) => *n,
+                Bound::Name(name) => {
+                    let found = body
+                        .names
+                        .iter()
+                        .rfind(|(n, _)| n == name)
+                        .map(|(_, ty)| ty);
+                    match found {
+                        None => {
+                            self.errors.push(
+                                Error::new(
+                                    t.pos,
+                                    format!(
+                                        "there is no name `{name}` defined before this, and a bound is one"
+                                    ),
+                                )
+                                .with_fix("write the bound as a number, or bind the name first"),
+                            );
+                            return None;
+                        }
+                        Some(_) if body.vars.contains(name) => {
+                            self.errors.push(
+                                Error::new(
+                                    t.pos,
+                                    format!("`{name}` is a `var`, which can change, so it is not a bound"),
+                                )
+                                .with_fix("bind its value to a name with `=`, and write the name"),
+                            );
+                            return None;
+                        }
+                        Some(Ty::Int(int)) => {
+                            named.push((name.clone(), is_end));
+                            if is_end { int.max() } else { int.min() }
+                        }
+                        Some(Ty::Unknown) => return None,
+                        Some(_) => {
+                            self.errors.push(Error::new(
+                                t.pos,
+                                format!("`{name}` is not a whole number, and a bound is one"),
+                            ));
+                            return None;
+                        }
+                    }
+                }
+            };
+        }
+        let [min, end] = ends;
+        match Int::between(min, (end - 1).max(min - 1)) {
+            Some(int) => Some((Ty::Int(int), named)),
+            None => {
+                self.errors.push(Error::new(
+                    t.pos,
+                    format!(
+                        "`{}` needs more than 64 bits, which is not built yet",
+                        t.written()
+                    ),
+                ));
+                None
+            }
+        }
+    }
+
     /// What is wanted of the operand `side`, which is flexible, beside `other`,
     /// the type of the other operand, which is on the left when `other_left`.
     fn literal_want(&self, op: ArithOp, side: (&Expr, &Ty), other_left: bool) -> Want {
