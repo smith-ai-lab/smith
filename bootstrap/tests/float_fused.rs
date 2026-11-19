@@ -38,7 +38,7 @@ pub const MACHINE: &[Test] = &[(
 )];
 
 /// The types a product is made of: floats of each size, and vectors of floats.
-fn types() -> Vec<Type> {
+pub fn types() -> Vec<Type> {
     let mut all = Vec::new();
     for bits in [FloatBits::F32, FloatBits::F64] {
         all.push(Type::Float(bits));
@@ -47,7 +47,7 @@ fn types() -> Vec<Type> {
     all
 }
 
-fn bits_of(ty: Type) -> FloatBits {
+pub fn bits_of(ty: Type) -> FloatBits {
     match ty {
         Type::Float(bits) | Type::Vector(Lane::Float(bits)) => bits,
         _ => panic!("not a float"),
@@ -73,7 +73,7 @@ fn sum(b: &mut Builder, ty: Type, op: FloatBinary, x: Value, y: Value) -> Value 
 /// A function of three parameters that gives what a product of the first two
 /// and the third make: the product first or second in the sum or the
 /// difference.
-fn shape(ty: Type, op: FloatBinary, product_first: bool) -> Builder {
+pub fn shape(ty: Type, op: FloatBinary, product_first: bool) -> Builder {
     let mut b = Builder::new();
     let v = b.params(&[ty, ty, ty]);
     let p = product(&mut b, ty, v[0], v[1]);
@@ -86,7 +86,7 @@ fn shape(ty: Type, op: FloatBinary, product_first: bool) -> Builder {
     b
 }
 
-fn program(ty: Type, b: Builder, args: &[u128]) -> Program {
+pub fn program(ty: Type, b: Builder, args: &[u128]) -> Program {
     let f = b.finish(&[ty]);
     let args: Vec<(Type, u128)> = [ty, ty, ty].into_iter().zip(args.iter().copied()).collect();
     vf::observed(vec![f], 0, &args, true)
