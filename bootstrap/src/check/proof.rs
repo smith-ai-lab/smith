@@ -1016,12 +1016,17 @@ impl<'a> Checker<'a> {
                             self.defs.spelling(t)
                         ),
                     )
-                    .with_fix(format!(
-                        "check the operands first, or use `{}`, `{}`, or `{}`",
-                        named("wrapping", *op),
-                        named("saturating", *op),
-                        named("checked", *op)
-                    )),
+                    .with_fix(if Int::ALL.contains(&t) {
+                        format!(
+                            "check the operands first, or use `{}`, `{}`, or `{}`",
+                            named("wrapping", *op),
+                            named("saturating", *op),
+                            named("checked", *op)
+                        )
+                    } else {
+                        // A range that fills no size has none of those functions.
+                        "check the operands first".to_string()
+                    }),
                 );
                 return;
             }
