@@ -1,7 +1,7 @@
 ---
 type: specification
 title: Conversion
-description: The Convert trait, which turns a value of one type into another where nothing is lost, how it lets two types meet in an operator, and narrowing a whole number.
+description: The Convert trait, which turns a value of one type into another where nothing is lost, how it lets two types meet in an operator, and why two whole numbers need none.
 status: partial
 built:
   - "`convert` between whole number types, from `u8`, `u16`, `u32`, and `u64` to a `Nat` and from a `Nat` to a `u64`, an `impl Convert` of a program's own, and the conversion an enum is given from the type of exactly one of its cases, the type that is expected picking which, with `without Convert` taking an enum's away"
@@ -13,7 +13,7 @@ built:
 `convert` turns a value of one type into a value of another that can hold it. The type that is expected picks which.
 
 ```
-fn widen(small: u8) -> u32 { convert(small) }
+fn widen(x: f32) -> f64 { convert(x) }
 ```
 
 It is the one function of a trait, and a conversion is an implementation of it.
@@ -25,8 +25,20 @@ trait Convert[A, B] {
 ```
 
 - A conversion loses nothing and cannot fail. What can fail returns an `Option` or a `Result` under a name of its own.
-- Each integer type converts to every integer type that holds all of its values, so a `u8` converts to a `u16` and to an `i16`, and a `u32` does not convert to an `i32`. Each float type converts to every wider one.
+- Each float type converts to every wider one.
 - No type converts to itself, and conversions do not chain: `convert` takes one step.
+
+## Whole numbers need none
+
+Two whole numbers are two ranges, and a wider range takes a narrower one with nothing written, as [Number types](number-types.md#a-range-as-a-type) says. So there is no `Convert` between them, and a call that asks for one is refused.
+
+```
+fn widen(small: 0..256) -> 0..65536 { convert(small) }
+```
+
+This is refused, as `0..256` has no `Convert` to `0..65536`. `fn widen(small: 0..256) -> 0..65536 { small }` is the way it is written. A value goes to a narrower range where it is shown to fit, as [Integer arithmetic](arithmetic.md#where-a-value-enters-a-narrower-range) says. A whole number becomes a float with `float(n)`, as [Number types](number-types.md#floats) says.
+
+## Types of a program's own
 
 A program's own types join by adding an `impl`.
 
@@ -52,7 +64,9 @@ s: Shape = convert(Rect(w: 1.0, h: 1.0))
 
 `s` is `.rect(Rect(w: 1.0, h: 1.0))`. A type that two cases hold has no conversion, since it would not say which case, and `without Convert for Shape` takes them all away.
 
-Conversion is how two types meet in an operator. Each number type implements `Add` once, for itself, and one implementation for each side adds any type that converts to it:
+## Two types in an operator
+
+Conversion is how two types that are not whole numbers meet in an operator. Each float type implements `Add` once, for itself, and one implementation for each side adds any type that converts to it:
 
 ```
 impl[A, B] Add[A, B, B]
@@ -68,26 +82,7 @@ impl[A, B] Add[B, A, B]
 }
 ```
 
-So an `i32` plus an `i64` is an `i64`, and a `u32` plus an `i32` is a compile error, because neither holds every value of the other. The result must fit like any other, as [Integer arithmetic](arithmetic.md) says. The other arithmetic operators, `Eq`, and `Ord` have the same two implementations, so an `i32` is compared with an `i64` too. They are written for every type and not for numbers alone, so `Feet` is added to `Meters` once `Meters` implements `Add`.
-
-A whole number goes to a type that does not hold all of its values with `narrow`, which follows the pattern of [integer arithmetic](arithmetic.md). The plain form compiles only when `arith` proves that the value fits, and costs nothing. Where that cannot be proven, the author picks what happens by name.
-
-```
-fn digit(n: u64) -> u8
-  requires n < 10
-{
-  narrow(n)
-}
-```
-
-| Function | When the value does not fit |
-| --- | --- |
-| `narrow(x)` | Does not compile |
-| `wrapping_narrow(x)` | Keeps the low bits |
-| `saturating_narrow(x)` | Gives the nearest value the type holds |
-| `checked_narrow(x)` | Gives `.none` |
-
-The type that is expected picks the result, as for `convert`. Going between a signed and an unsigned type of one size is narrowing too, since neither holds every value of the other.
+So an `f32` plus an `f64` is an `f64`. The other arithmetic operators, `Eq`, and `Ord` have the same two implementations, so an `f32` is compared with an `f64` too. They are written for every type and not for floats alone, so `Feet` is added to `Meters` once `Meters` implements `Add`. A whole number has its own `Add`, whose result is the range that [Integer arithmetic](arithmetic.md) gives, and it is not one of these.
 
 Nothing is converted without a call. The operators call `convert` in these implementations, [`try`](try.md) calls it on a failure, and everywhere else it is written.
 

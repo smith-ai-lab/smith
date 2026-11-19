@@ -1,11 +1,12 @@
 ---
 type: specification
 title: Match
-description: match takes an enum or another value apart, with a pattern and a block for each way it can be, patterns for cases, tuples, and literals, and the rules for covering every case.
+description: match takes an enum or another value apart, with a pattern and a block for each way it can be, patterns for cases, tuples, and literals, and the rules for covering every case, which a range of whole numbers is covered by listing its values.
 status: partial
 built:
   - "`match` as a statement and as an expression, patterns that name a case, a bare name, a tuple, and a whole number, a character, or a text, written inside a case and inside a tuple too, the first pattern that matches being taken, and an error for a case left out, for a `match` on whole numbers or text with no bare name at the end, and for a pattern the ones before it cover, with a `match` on whole numbers compiled to one jump"
   - "a pattern for a case that holds `()` written without it, as `.more`"
+  - "not a `match` on a range of whole numbers that is complete without a bare name"
 ---
 
 # Match
@@ -202,7 +203,35 @@ fn word(n: u8) -> str {
 
 `word(0)` is `"zero"` and `word(9)` is `"many"`. The first pattern that matches is the one taken, so an earlier pattern wins over a later one that would also match, as `.some(0)` wins over `.some(n)` above. A literal written twice is refused as a case is: `0 { ... }` after `0 { ... }` gives "this pattern is never reached, as the patterns before it match everything it matches".
 
-No list of literals covers every number or every text, so a `match` on them ends with a bare name. Without one it is refused.
+A list of literals covers a whole number when it lists every value of its range, and a `match` on a range is complete then, with no bare name.
+
+```
+fn name(d: 0..3) -> str {
+  match d {
+    0 { "none" }
+    1 { "one" }
+    2 { "two" }
+  }
+}
+```
+
+`name(2)` is `"two"`. A bare name after these is refused as a pattern that is never reached, since the patterns before it cover every value.
+
+A value of the range that no literal lists is a case left out.
+
+```
+fn name(d: 0..4) -> str {
+  match d {
+    0 { "none" }
+    1 { "one" }
+    2 { "two" }
+  }
+}
+```
+
+This is refused, as the `match` does not cover `3`, with the fix to add a block for `3`, or to end with a bare name that covers the rest.
+
+A range of many values is covered by a bare name in practice, as no list is long enough, so a `match` on a `Byte` of 0 and 1 ends with one. Without it, it is refused.
 
 ```
 fn word(n: u8) -> str {
@@ -213,7 +242,7 @@ fn word(n: u8) -> str {
 }
 ```
 
-This gives "this `match` does not cover the rest of the values", with the fix "end with a bare name that covers the rest". The same holds for a text: `"one" { ... }` and `"two" { ... }` with no bare name give the same message.
+This gives "this `match` does not cover the rest of the values", with the fix "end with a bare name that covers the rest". No list of literals covers every text, so the same holds for a text: `"one" { ... }` and `"two" { ... }` with no bare name give the same message.
 
 A literal must be of the type matched: `"zero" { ... }` on a `u8` gives "this is a text, and this matches a `u8`".
 

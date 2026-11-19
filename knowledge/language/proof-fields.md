@@ -1,7 +1,7 @@
 ---
 type: specification
 title: A struct that holds a proof
-description: A statement about values is a type, a struct holds a proof as a field, Pos and Fin are defined that way, and a fact that must hold in every round of a loop is kept in a type.
+description: A statement about values is a type, a struct holds a proof as a field, Pos is defined that way, an index that travels is a range, and a fact that must hold in every round of a loop is kept in a type.
 status: planned
 ---
 
@@ -58,16 +58,17 @@ Tooling proposes the remaining `requires` lines, as it proposes effects.
 
 ## An index that travels
 
-A number that is below a size, kept in a field or passed on, is a `Fin`. It indexes an axis of that size wherever it goes, with nothing more to prove.
+A number that is below a size, kept in a field or passed on, is a range `0..n`. It indexes an axis of that size wherever it goes, with nothing more to prove, and it needs no struct, as the proof is its type.
 
 ```
-struct Fin[n: Nat] {
-  value: Nat
-  below: value < n
+struct Cell[n: Nat] {
+  at: 0..n
 }
+
+fn read[n: Nat](xs: [n]f32, c: Cell[n]) -> f32 { xs[c.at] }
 ```
 
-A `Fin[n]` is used as a `Nat`, as a `Pos` is, and `arith` has `value < n` of it. [`check`](check.md) shows how outside data becomes one.
+A `0..n` is used as a `Nat` wherever one is expected, as a range goes where a wider one is, and `arith` has `value < n` of it. [`check`](check.md) shows how outside data becomes one.
 
 ## A fact that must hold in every round
 
@@ -112,7 +113,7 @@ Everyday code uses helpers that carry these proofs. `pad(x, 1, 1, 0.0)` adds a b
 | `name: statement` in a struct | A field that is a proof of the statement |
 | `Pos(value: e)` | A `Pos`, with its proof built by `arith` |
 | `[n: Pos]` | A size known to be above zero |
-| `Fin[n]` | A number proven below `n` |
-| `p` where a `Nat` is expected | The `value` of a `Pos` or a `Fin` |
+| `0..n` | A number proven below `n` |
+| `p` where a `Nat` is expected | The `value` of a `Pos` |
 
 Next: [check](check.md)

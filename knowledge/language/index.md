@@ -15,7 +15,7 @@ The files are a tour. Read them in the order below: each one uses only what the 
 - [structs.md](structs.md): structs with named fields and defaults, reading a field, assigning to a field of a `var`, and a definition at the top level of a file.
 - [tuples.md](tuples.md): tuples that group values without names, patterns that take them apart and assign, and the empty tuple.
 - [enums.md](enums.md): enums that hold exactly one of their cases, each case holding a type or nothing, and how a case is built.
-- [match.md](match.md): `match`, which takes a value apart with a pattern and a block for each way it can be, patterns for cases, tuples, and literals, and the rules for covering every case.
+- [match.md](match.md): `match`, which takes a value apart with a pattern and a block for each way it can be, patterns for cases, tuples, and literals, and the rules for covering every case, including a range of whole numbers.
 - [type-parameters.md](type-parameters.md): a name for a type that a function or a type leaves open, how a call or a binding settles it, and a default for one.
 - [traits.md](traits.md): a trait as a set of functions over one or more types, an `impl` that supplies them, how a call finds the `impl`, and the defaults of a trait's parameters.
 - [bounds.md](bounds.md): what a function or an `impl` needs of its type parameters, written as a bound or as `requires`, and how an `impl` with type parameters is chosen.
@@ -23,11 +23,11 @@ The files are a tour. Read them in the order below: each one uses only what the 
 - [operators.md](operators.md): an arithmetic operator as a call of a trait function, operands of different types, and `derive`.
 - [comparisons.md](comparisons.md): `==` and `!=` through `Eq`, `<`, `<=`, `>`, and `>=` through `Ord`, and the laws every implementation keeps.
 - [automatic-traits.md](automatic-traits.md): the `Eq` and `Ord` that a struct, an enum, a tuple, or an array is given, how each orders its values, and `without`.
-- [literals.md](literals.md): how a number, a character, a text, `true`, `false`, or an array is written, the trait that backs each, and how the type of a literal is decided.
-- [number-types.md](number-types.md): the whole number and float types, what each holds, and why a number has exactly one type.
-- [arithmetic.md](arithmetic.md): integer arithmetic that never overflows silently, a plain `+`, `-`, or `*` that compiles only when its result provably fits, and `wrapping_`, `saturating_`, and `checked_` where it cannot be proven.
-- [bits.md](bits.md): the functions that and, or, xor, and not the bits of a whole number and shift them, with a shift proven to stay inside the type.
-- [conversion.md](conversion.md): the `Convert` trait, which turns a value of one type into another where nothing is lost, how it lets two types meet in an operator, and narrowing a whole number.
+- [literals.md](literals.md): how a number, a character, a text, `true`, `false`, or an array is written, the trait that backs each, and how a whole number is the range that holds it alone.
+- [number-types.md](number-types.md): every whole number as a range `a..b`, the floats, the names `Int`, `Nat`, and `Byte`, and the names of sizes in `std.bits`.
+- [arithmetic.md](arithmetic.md): the exact range that `+`, `-`, `*`, and `/` give, the proof asked where a value enters a narrower range, and `wrapping_` for a range that fills a size.
+- [bits.md](bits.md): the functions that and, or, xor, and not the bits of a range that fills a size and shift them, with a shift proven to stay inside the range.
+- [conversion.md](conversion.md): the `Convert` trait, which turns a value of one type into another where nothing is lost, how it lets two types meet in an operator, and why two whole numbers need none.
 - [lambdas.md](lambdas.md): a function with no name, written where it is passed to a call.
 - [function-values.md](function-values.md): a function with a name used as a value, which can be passed, stored, and returned.
 - [with.md](with.md): `with`, which passes the rest of a block to a function as a lambda.
@@ -47,8 +47,8 @@ The files are a tour. Read them in the order below: each one uses only what the 
 - [take.md](take.md): lending an argument, `take`, which gives the callee ownership, and a random `Key` that cannot be used twice.
 - [resources.md](resources.md): a value with neither `Copy` nor `Discard`, which must be taken exactly once on every path.
 - [arrays.md](arrays.md): an array as a fixed number of elements of one type, a size that is a `Nat` and may be any name that cannot change, and a `List` as an array kept with its size.
-- [indexing.md](indexing.md): `x[i]`, an index proven to be in range when the program is built, the `Index` trait with its `valid`, and assigning an element.
-- [ranges.md](ranges.md): `a..b`, which excludes `b`, and `x[a..b]`, `x[..k]`, and `x[k..]` as parts of an array.
+- [indexing.md](indexing.md): `x[i]`, an index proven to be in range or typed as a range `0..n`, the `Index` trait with its `valid`, and assigning an element.
+- [ranges.md](ranges.md): `a..b`, which excludes `b` and is also the type of its numbers, and `x[a..b]`, `x[..k]`, and `x[k..]` as parts of an array.
 - [array-patterns.md](array-patterns.md): a pattern in brackets, which takes an array or a list apart with a pattern for each element.
 - [for.md](for.md): `for` as a description of an array by the value at every index, and where each index gets its size.
 - [element-wise.md](element-wise.md): the operators on arrays that mean what they mean in linear algebra, no broadcasting, and `map`.
@@ -63,7 +63,7 @@ The files are a tour. Read them in the order below: each one uses only what the 
 - [arith.md](arith.md): what the `arith` procedure proves by itself and from what, what it cannot decide, and what the compiler says when it cannot prove.
 - [contracts.md](contracts.md): `requires` and `ensures` on a function, what the caller owes and what the function gives.
 - [termination.md](termination.md): every function ends unless it carries `diverge`, and `decreases` on a function that calls itself.
-- [proof-fields.md](proof-fields.md): a struct that holds a proof, `Pos` and `Fin`, and a fact kept in a type for every round of a loop.
+- [proof-fields.md](proof-fields.md): a struct that holds a proof, `Pos`, an index that travels as a range `0..n`, and a fact kept in a type for every round of a loop.
 - [check.md](check.md): `check`, which gives a proof of outside data when a test passes, and a failure that is returned.
 - [proof-functions.md](proof-functions.md): a proof passed, returned, and held, and a predicate as a function that returns `bool`.
 - [statements.md](statements.md): a statement as a type built from what data is built from, a proof as a value of it, and how "for every" is a function type.
@@ -94,7 +94,7 @@ The files are a tour. Read them in the order below: each one uses only what the 
 - [modules.md](modules.md): a file as a module, and how its path gives the module its name.
 - [pub.md](pub.md): everything in a module private unless marked `pub`, on an item or on a single field, and what that lets another module do with a struct.
 - [use.md](use.md): `use`, which brings the names of another module into a file from an explicit list, and what is said when a name is missing or unused.
-- [prelude.md](prelude.md): the names that are in scope in every file without a `use`, and what a file imports for everything else.
+- [prelude.md](prelude.md): the names that are in scope in every file without a `use`, `Int`, `Nat`, and `Byte` among them, and what a file imports for everything else.
 - [qualified-names.md](qualified-names.md): a `use` with no list, which brings in the module itself under its last path segment, `as`, and a name two modules share.
 - [impl-placement.md](impl-placement.md): an `impl`, which is not imported, is visible everywhere, and lives in the module that defines the trait or the type.
 - [projects.md](projects.md): a folder as a project, its root and entry, the names of its modules and its executable, `project.smith`, and what `smith new` creates.
