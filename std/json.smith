@@ -3,6 +3,7 @@ use std.deserialize (Deserialize, Problem, ReadError, Reader, fail, read)
 use std.int (checked_add, checked_mul, narrow, saturating_add, saturating_sub, wrapping_add, wrapping_mul, wrapping_narrow, wrapping_sub)
 use std.list (freeze, push)
 use std.serialize (Serialize, Writer, write)
+use std.text (Text, append, append_ascii, finish, text)
 use std.utf8 (utf8)
 
 pub enum Cases {
@@ -41,7 +42,7 @@ struct Open {
 
 struct Out {
   settings: Json
-  bytes: List[Byte]
+  bytes: Text
   depth: Nat
   comma: bool
   tagged: bool
@@ -49,51 +50,85 @@ struct Out {
   top: Nat
 }
 
-fn put(to: take Out, b: Byte) -> Out ! alloc {
+fn put(to: take Out, b: 0..128) -> Out ! alloc {
   var w = to
-  w.bytes = push(w.bytes, b)
+  w.bytes = append_ascii(w.bytes, b)
   w
 }
 
 fn put_text(to: take Out, s: str) -> Out ! alloc {
   var w = to
-  loop i in 0..s.size { w.bytes = push(w.bytes, s[i]) }
+  w.bytes = append(w.bytes, s)
   w
 }
 
-fn hex_digit(d: Byte) -> Byte {
-  if d < 10 { wrapping_add(d, '0') } else { wrapping_add(d, 87) }
+// A hexadecimal digit, in lower case, of a number below 16.
+fn put_hex(to: take Out, d: Byte) -> Out ! alloc {
+  if d < 10 {
+    put(to, d + 48)
+  } else if d < 16 {
+    put(to, d + 87)
+  } else {
+    to
+  }
 }
 
-// The text as a string of JSON: `"`, `\`, and the bytes below a space are
-// written as escapes, and every other byte as it is.
-fn quote(to: take Out, s: List[Byte]) -> Out ! alloc {
-  var w = put(to, '"')
-  loop i in 0..s.size {
-    b = s[i]
-    if b == '"' {
-      w = put(put(w, '\\'), '"')
-    } else if b == '\\' {
-      w = put(put(w, '\\'), '\\')
-    } else if b == '\n' {
-      w = put(put(w, '\\'), 'n')
-    } else if b == '\t' {
-      w = put(put(w, '\\'), 't')
-    } else if b == 13 {
-      w = put(put(w, '\\'), 'r')
-    } else if b == 8 {
-      w = put(put(w, '\\'), 'b')
-    } else if b == 12 {
-      w = put(put(w, '\\'), 'f')
-    } else if b < 32 {
-      w = put(put(put(put(put(put(w, '\\'), 'u'), '0'), '0'), hex_digit(shift_right(b, 4))), hex_digit(bit_and(b, 15)))
-    } else {
-      w = put(w, b)
+// The bytes of `s` from `from` up to `end`, which are whole characters, as
+// they are.
+fn run(to: take Out, s: str, from: Nat, end: Nat) -> Out ! alloc {
+  var w = to
+  if from == 0 and end == s.size {
+    w = put_text(w, s)
+  } else if from < end and end <= s.size {
+    match utf8(s.bytes[from..end]) {
+      .ok(t) { w = put_text(w, t) }
+      .err(e) { }
     }
   }
-  put(w, '"')
+  w
 }
 
+// How a byte that a string cannot hold as it is is written.
+fn escape(to: take Out, b: Byte) -> Out ! alloc {
+  if b == '"' {
+    put_text(to, "\\\"")
+  } else if b == '\\' {
+    put_text(to, "\\\\")
+  } else if b == '\n' {
+    put_text(to, "\\n")
+  } else if b == '\t' {
+    put_text(to, "\\t")
+  } else if b == 13 {
+    put_text(to, "\\r")
+  } else if b == 8 {
+    put_text(to, "\\b")
+  } else if b == 12 {
+    put_text(to, "\\f")
+  } else {
+    put_hex(put_hex(put_text(to, "\\u00"), shift_right(b, 4)), bit_and(b, 15))
+  }
+}
+
+// The text as the inside of a string of JSON: `"`, `\`, and the bytes below a
+// space are written as escapes, and every other byte as it is. The bytes
+// between two that are escaped are written together.
+fn body(to: take Out, s: str) -> Out ! alloc {
+  var w = to
+  var from: Nat = 0
+  loop i in 0..s.size {
+    b = s[i]
+    if b >= 32 and b != '"' and b != '\\' {
+    } else {
+      w = escape(run(w, s, from, i), b)
+      from = i + 1
+    }
+  }
+  run(w, s, from, s.size)
+}
+
+fn quote(to: take Out, s: str) -> Out ! alloc {
+  put_text(body(put_text(to, "\""), s), "\"")
+}
 
 // A name with each `_` that is followed by a lower case letter taken out, and
 // the letter in upper case. A `_` that follows a `_`, that ends the name, or
@@ -101,21 +136,19 @@ fn quote(to: take Out, s: List[Byte]) -> Out ! alloc {
 // case letters, digits, and `_` are never made one.
 fn camel_case(to: take Out, name: str) -> Out ! alloc {
   var w = to
-  var up = false
+  var from: Nat = 0
+  var after: Nat = 0
   var before: Byte = 0
   loop i in 0..name.size {
-    b = name[i]
-    if up {
-      w = put(w, wrapping_sub(b, 32))
-      up = false
-    } else if b == '_' and before != '_' and i + 1 < name.size and name[i + 1] >= 'a' and name[i + 1] <= 'z' {
-      up = true
-    } else {
-      w = put(w, b)
+    next: Byte = if i + 1 < name.size { name[i + 1] } else { 0 }
+    if i >= after and name[i] == '_' and before != '_' and next >= 'a' and next <= 'z' {
+      w = put(run(w, name, from, i), next - 32)
+      from = saturating_add(i, 2)
+      after = saturating_add(i, 2)
     }
-    before = b
+    before = name[i]
   }
-  w
+  run(w, name, from, name.size)
 }
 
 // Starts a value: a `,` where the value follows another, or what a case
@@ -135,7 +168,7 @@ fn start(to: take Out) -> Out ! alloc {
 }
 
 // Ends a value, and closes each case whose value it is.
-fn finish(to: take Out) -> Out ! alloc {
+fn ended(to: take Out) -> Out ! alloc {
   var w = to
   w.comma = true
   loop j in 0..w.top {
@@ -155,51 +188,53 @@ fn finish(to: take Out) -> Out ! alloc {
   w
 }
 
-fn scalar(to: take Out, s: str) -> Out ! alloc { finish(put_text(start(to), s)) }
+fn scalar(to: take Out, s: str) -> Out ! alloc { ended(put_text(start(to), s)) }
 
-fn open(to: take Out, b: Byte) -> Out ! alloc {
+fn open(to: take Out, b: 0..128) -> Out ! alloc {
   var w = put(start(to), b)
   w.depth = saturating_add(w.depth, 1)
   w
 }
 
-fn close(to: take Out, b: Byte) -> Out ! alloc {
+fn close(to: take Out, b: 0..128) -> Out ! alloc {
   var w = put(to, b)
   w.depth = saturating_sub(w.depth, 1)
-  finish(w)
+  ended(w)
 }
 
 // The bytes as the bytes of a text: each byte that does not begin a character
 // of UTF-8 is U+FFFD.
-fn text_of(bytes: Slice[Byte]) -> List[Byte] ! alloc {
-  var acc: List[Byte] = []
+fn text_of(bytes: Slice[Byte]) -> str ! alloc {
+  var acc = text()
   var i: Nat = 0
   loop k in 0..bytes.size {
     if i >= bytes.size { break }
     c = bytes[i]
-    n: Nat = if c < 128 { 1 } else if c >= 194 and c < 224 { 2 } else if c >= 224 and c < 240 { 3 } else if c >= 240 and c < 245 { 4 } else { 0 }
-    end = saturating_add(i, n)
-    var whole = false
-    if n > 0 and i <= end and end <= bytes.size {
-      whole = true
-      if n > 1 {
+    if c < 128 {
+      acc = append_ascii(acc, c)
+      i = saturating_add(i, 1)
+    } else {
+      n: Nat = if c >= 194 and c < 224 { 2 } else if c >= 224 and c < 240 { 3 } else if c >= 240 and c < 245 { 4 } else { 0 }
+      end = saturating_add(i, n)
+      var whole = false
+      if n > 0 and i <= end and end <= bytes.size {
         match utf8(bytes[i..end]) {
-          .ok(t) { }
-          .err(e) { whole = false }
+          .ok(t) {
+            acc = append(acc, t)
+            whole = true
+          }
+          .err(e) { }
         }
       }
-    }
-    if whole {
-      loop j in 0..bytes.size {
-        if j >= i and j < end { acc = push(acc, bytes[j]) }
+      if whole {
+        i = end
+      } else {
+        acc = append(acc, "�")
+        i = saturating_add(i, 1)
       }
-      i = end
-    } else {
-      acc = push(push(push(acc, 239), 191), 189)
-      i = saturating_add(i, 1)
     }
   }
-  acc
+  finish(acc)
 }
 
 impl Writer[Out] {
@@ -208,7 +243,7 @@ impl Writer[Out] {
   }
   fn signed(w: take Out, value: Int) -> Out ! alloc { scalar(w, fmt(value)) }
   fn unsigned(w: take Out, value: u64) -> Out ! alloc { scalar(w, fmt(value)) }
-  fn text(w: take Out, value: str) -> Out ! alloc { finish(quote(start(w), value)) }
+  fn text(w: take Out, value: str) -> Out ! alloc { ended(quote(start(w), value)) }
   fn nothing(w: take Out) -> Out ! alloc { scalar(w, "null") }
   fn absent(w: take Out) -> Out ! alloc { scalar(w, "null") }
   fn present(w: take Out) -> Out ! alloc { if w.tagged { start(w) } else { w } }
@@ -228,13 +263,13 @@ impl Writer[Out] {
   }
   fn field(w: take Out, name: str) -> Out ! alloc {
     var v = w
-    if v.comma { v = put(v, ',') }
+    lead = if v.comma { ",\"" } else { "\"" }
     match v.settings.names {
-      .written { v = quote(v, name) }
-      .camel { v = put(camel_case(put(v, '"'), name), '"') }
+      .written { v = body(put_text(v, lead), name) }
+      .camel { v = camel_case(put_text(v, lead), name) }
     }
     v.comma = false
-    put(v, ':')
+    put_text(v, "\":")
   }
   fn end_structure(w: take Out) -> Out ! alloc { close(w, '}') }
   fn case(w: take Out, of: str, name: str, holds: bool) -> Out ! alloc {
@@ -246,7 +281,7 @@ impl Writer[Out] {
           v.top = v.opens.size
           v
         } else {
-          finish(quote(start(w), name))
+          ended(quote(start(w), name))
         }
       }
       .tag(t) {
@@ -256,7 +291,7 @@ impl Writer[Out] {
           v.comma = true
           v
         } else {
-          finish(put(v, '}'))
+          ended(put(v, '}'))
         }
       }
     }
@@ -266,11 +301,14 @@ impl Writer[Out] {
   fn raw(w: take Out, of: str, bytes: Slice[Byte]) -> Out ! alloc {
     var v = start(w)
     if of == "json" {
-      loop i in 0..bytes.size { v.bytes = push(v.bytes, bytes[i]) }
-      finish(v)
+      match utf8(bytes) {
+        .ok(t) { v = put_text(v, t) }
+        .err(e) { }
+      }
+      ended(v)
     } else {
       // Bytes of another format are a text.
-      finish(quote(v, text_of(bytes)))
+      ended(quote(v, text_of(bytes)))
     }
   }
 }
@@ -348,14 +386,14 @@ fn same_bytes(bytes: List[Byte], t: str) -> bool {
 }
 
 // The name of a field as `Out` writes it.
-fn written_name(name: str, camel: bool) -> List[Byte] ! alloc {
-  var w = Out(settings: Json(cases: .key, names: .camel), bytes: [], depth: 0, comma: false, tagged: false, opens: [], top: 0)
+fn written_name(name: str, camel: bool) -> str ! alloc {
+  var w = Out(settings: Json(cases: .key, names: .camel), bytes: text(), depth: 0, comma: false, tagged: false, opens: [], top: 0)
   if camel {
     w = camel_case(w, name)
   } else {
     w = put_text(w, name)
   }
-  w.bytes
+  finish(w.bytes)
 }
 
 impl Writer[Check] {
@@ -432,11 +470,8 @@ fn clash_in[T: Serialize](value: T, json: Json) -> Option[Clash] ! alloc {
 }
 
 fn render[T: Serialize](value: T, json: Json) -> str ! alloc {
-  w = write(value, Out(settings: json, bytes: [], depth: 0, comma: false, tagged: false, opens: [], top: 0))
-  match utf8(freeze(w.bytes)) {
-    .ok(t) { t }
-    .err(e) { "" }
-  }
+  w = write(value, Out(settings: json, bytes: text(), depth: 0, comma: false, tagged: false, opens: [], top: 0))
+  finish(w.bytes)
 }
 
 pub fn to_json_as[T: Serialize](value: T, json: Json) -> Result[str, Clash] ! alloc {
