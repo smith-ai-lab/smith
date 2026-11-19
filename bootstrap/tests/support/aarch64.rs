@@ -49,6 +49,9 @@ fn u64_at(bytes: &[u8], at: usize) -> u64 {
 struct Machine {
     regions: Vec<(u64, Vec<u8>)>,
     x: [u64; 31],
+    /// The low 64 bits of each register of floats, which hold a float of 32
+    /// or of 64 bits, with zeros above a float of 32.
+    f: [u64; 32],
     sp: u64,
     pc: u64,
     /// The flags: negative, zero, carry, overflow.
@@ -66,6 +69,7 @@ pub fn run(bytes: &[u8]) -> Ran {
     let mut m = Machine {
         regions: Vec::new(),
         x: [0; 31],
+        f: [0; 32],
         sp: STACK_BASE + STACK_SIZE - 256,
         pc: u64_at(bytes, 24),
         n: false,
@@ -206,6 +210,27 @@ impl Machine {
             // ldrsw xt, [xn, xm, lsl #2]
             let value = self.read(self.get_sp(rn) + 4 * self.get(rm), 4);
             self.set(rd, value as u32 as i32 as i64 as u64);
+        } else if w & 0x7f20_0000 == 0x1e20_0000 {
+            self.float_step(w);
+        } else if w & 0x3f00_0000 == 0x3d00_0000 {
+            // ldr or str of a float, with an offset that is a multiple of its size.
+            let size = 1u64 << (w >> 30);
+            let address = self.get_sp(rn) + (((w >> 10) & 0xfff) as u64) * size;
+            if w >> 22 & 3 == 1 {
+                self.f[rd as usize] = self.read(address, size);
+            } else {
+                assert!(w >> 22 & 3 == 0, "unknown instruction {w:#010x}");
+                let value = self.f[rd as usize];
+                self.write(address, size, value);
+            }
+        } else if w & 0x3fe0_ec00 == 0x3c20_6800 {
+            // str of a float, at an address that is a register and another,
+            // shifted left by log2 of its size or not.
+            let size = 1u64 << (w >> 30);
+            let by = if w >> 12 & 1 == 1 { size.trailing_zeros() } else { 0 };
+            let address = self.get_sp(rn) + (self.get(rm) << by);
+            let value = self.f[rd as usize];
+            self.write(address, size, value);
         } else if w == 0xd400_0001 {
             return self.system_call();
         } else if w & 0x7c00_0000 == 0x1400_0000 {
@@ -359,6 +384,104 @@ impl Machine {
             panic!("unknown instruction {w:#010x} at {at:#x}");
         }
         None
+    }
+
+    /// Runs one instruction of floats, the arithmetic and the conversions, which
+    /// the host's own floats do as the chip does: round to the nearest, ties to
+    /// even, and a conversion to an integer that saturates and gives 0 for a
+    /// number that is not one.
+    fn float_step(&mut self, w: u32) {
+        let (rd, rn, rm) = ((w & 31) as usize, ((w >> 5) & 31) as usize, ((w >> 16) & 31) as usize);
+        let double = w >> 22 & 3 == 1;
+        let (a, b) = (self.f[rn], self.f[rm]);
+        let f32s = |n: u64| f32::from_bits(n as u32);
+        if w & 0xff20_0c00 == 0x1e20_0800 {
+            self.f[rd] = if double {
+                let (x, y) = (f64::from_bits(a), f64::from_bits(b));
+                match w >> 12 & 15 {
+                    0 => x * y,
+                    1 => x / y,
+                    2 => x + y,
+                    3 => x - y,
+                    _ => panic!("unknown instruction {w:#010x}"),
+                }
+                .to_bits()
+            } else {
+                let (x, y) = (f32s(a), f32s(b));
+                u64::from(
+                    match w >> 12 & 15 {
+                        0 => x * y,
+                        1 => x / y,
+                        2 => x + y,
+                        3 => x - y,
+                        _ => panic!("unknown instruction {w:#010x}"),
+                    }
+                    .to_bits(),
+                )
+            };
+        } else if w & 0xff3f_fc00 == 0x1e21_4000 {
+            // fneg
+            self.f[rd] = a ^ if double { 1 << 63 } else { 1 << 31 };
+        } else if w & 0xffff_fc00 == 0x1e60_4000 {
+            // fmov dd, dn
+            self.f[rd] = a;
+        } else if w & 0xffff_fc00 == 0x1e22_c000 {
+            // fcvt dd, sn
+            self.f[rd] = f64::from(f32s(a)).to_bits();
+        } else if w & 0xffff_fc00 == 0x1e62_4000 {
+            // fcvt sd, dn
+            self.f[rd] = u64::from((f64::from_bits(a) as f32).to_bits());
+        } else if w & 0xff20_fc1f == 0x1e20_2000 {
+            // fcmp fn, fm
+            let order = if double {
+                f64::from_bits(a).partial_cmp(&f64::from_bits(b))
+            } else {
+                f32s(a).partial_cmp(&f32s(b))
+            };
+            (self.n, self.z, self.c, self.v) = match order {
+                Some(std::cmp::Ordering::Less) => (true, false, false, false),
+                Some(std::cmp::Ordering::Equal) => (false, true, true, false),
+                Some(std::cmp::Ordering::Greater) => (false, false, true, false),
+                None => (false, false, true, true),
+            };
+        } else if w & 0xff20_0c00 == 0x1e20_0c00 {
+            // fcsel fd, fn, fm, cond
+            self.f[rd] = if self.holds(w >> 12 & 15) { a } else { b };
+        } else if w & 0x7f20_fc00 == 0x1e20_0000 {
+            let sf = w >> 31 == 1;
+            let opcode = (w >> 16) & 7;
+            let rmode = (w >> 19) & 3;
+            match (rmode, opcode) {
+                (0, 2) | (0, 3) => {
+                    assert!(sf, "unknown instruction {w:#010x}");
+                    let n = self.get(rn as u32);
+                    let signed = opcode == 2;
+                    self.f[rd] = match (double, signed) {
+                        (true, true) => (n as i64 as f64).to_bits(),
+                        (true, false) => (n as f64).to_bits(),
+                        (false, true) => u64::from((n as i64 as f32).to_bits()),
+                        (false, false) => u64::from((n as f32).to_bits()),
+                    };
+                }
+                (3, 0) | (3, 1) => {
+                    assert!(sf, "unknown instruction {w:#010x}");
+                    let x = if double { f64::from_bits(a) } else { f64::from(f32s(a)) };
+                    let n = if opcode == 0 { x as i64 as u64 } else { x as u64 };
+                    self.set(rd as u32, n);
+                }
+                (0, 6) => {
+                    let n = if sf { a } else { a & 0xffff_ffff };
+                    self.set(rd as u32, n);
+                }
+                (0, 7) => {
+                    let n = self.get(rn as u32);
+                    self.f[rd] = if sf { n } else { n & 0xffff_ffff };
+                }
+                _ => panic!("unknown instruction {w:#010x}"),
+            }
+        } else {
+            panic!("unknown instruction {w:#010x}");
+        }
     }
 
     fn flags(&mut self, result: u64, c: bool, v: bool, bits: u32) {
