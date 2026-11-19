@@ -60,11 +60,11 @@ pub fn before_choice(f: &Function) -> Vec<Vec<bool>> {
                 .iter()
                 .zip(next)
                 .map(|(i, next)| match next.map(|n| (&n.op, n.results.first())) {
-                    // A choice between floats is not made on the flags.
+                    // A choice between floats or vectors is not made on the flags.
                     Some((Op::Choose { on, .. }, Some(chosen))) => {
                         flag(i) == Some(*on)
                             && reads[on.0] == 1
-                            && !matches!(f.types[chosen.0], Type::Float(_))
+                            && !matches!(f.types[chosen.0], Type::Float(_) | Type::Vector(_))
                     }
                     _ => false,
                 })
