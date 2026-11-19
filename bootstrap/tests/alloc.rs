@@ -27,6 +27,10 @@ pub const ONCE: &[Test] = &[
         a_function_that_calls_nothing_and_fits_the_registers_keeps_everything_in_them,
     ),
     (
+        "a_function_that_calls_nothing_and_has_a_loop_keeps_everything_in_registers_when_the_chip_has_enough",
+        a_function_that_calls_nothing_and_has_a_loop_keeps_everything_in_registers_when_the_chip_has_enough,
+    ),
+    (
         "a_function_saves_the_registers_a_call_does_not_change_that_it_uses_and_no_others",
         a_function_saves_the_registers_a_call_does_not_change_that_it_uses_and_no_others,
     ),
@@ -310,6 +314,36 @@ fn all_reachable(f: &Function) -> bool {
     seen.into_iter().all(|s| s)
 }
 
+/// Whether a block that the first reaches can be reached again from itself.
+fn has_a_loop(f: &Function) -> bool {
+    let n = f.blocks.len();
+    let mut reached = vec![false; n];
+    let mut stack = vec![0];
+    reached[0] = true;
+    while let Some(b) = stack.pop() {
+        for s in f.blocks[b].end.successors() {
+            if !reached[s] {
+                reached[s] = true;
+                stack.push(s);
+            }
+        }
+    }
+    (0..n).filter(|b| reached[*b]).any(|start| {
+        let mut seen = vec![false; n];
+        let mut stack = f.blocks[start].end.successors();
+        while let Some(b) = stack.pop() {
+            if b == start {
+                return true;
+            }
+            if !seen[b] {
+                seen[b] = true;
+                stack.extend(f.blocks[b].end.successors());
+            }
+        }
+        false
+    })
+}
+
 fn a_function_that_calls_nothing_and_fits_the_registers_keeps_everything_in_them() {
     for_every_allocation(|f, facts, registers, a| {
         // A block that nothing reaches may read what no path leads to, so
@@ -323,8 +357,21 @@ fn a_function_that_calls_nothing_and_fits_the_registers_keeps_everything_in_them
     });
 }
 
+fn a_function_that_calls_nothing_and_has_a_loop_keeps_everything_in_registers_when_the_chip_has_enough()
+{
+    for_every_allocation(|f, facts, registers, a| {
+        if !facts.calls
+            && has_a_loop(f)
+            && most_together(facts) <= registers.count()
+            && all_reachable(f)
+        {
+            assert_eq!(a.frame, 0, "{registers:?}");
+        }
+    });
+}
+
 fn a_function_saves_the_registers_a_call_does_not_change_that_it_uses_and_no_others() {
-    for_every_allocation(|_, facts, registers, a| {
+    for_every_allocation(|f, facts, registers, a| {
         let mut used: Vec<usize> = a
             .homes
             .iter()
@@ -339,7 +386,9 @@ fn a_function_saves_the_registers_a_call_does_not_change_that_it_uses_and_no_oth
         // A function with no value alive across a call saves nothing, and
         // keeps every value in a register a call may change or in the frame,
         // however many are alive together.
-        if facts.across.iter().all(Vec::is_empty) {
+        // A function that calls nothing and has a loop is offered every
+        // register, and so is not held to this.
+        if facts.across.iter().all(Vec::is_empty) && (facts.calls || !has_a_loop(f)) {
             assert!(a.saved.is_empty(), "{registers:?}");
             for home in &a.homes {
                 if let Home::Register(r) = home {
