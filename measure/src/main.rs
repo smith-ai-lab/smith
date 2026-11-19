@@ -11,6 +11,7 @@
 
 mod build;
 mod json;
+mod profile;
 mod wasm;
 
 use std::hint::black_box;
