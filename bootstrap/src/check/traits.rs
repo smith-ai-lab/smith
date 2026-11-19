@@ -38,13 +38,6 @@ pub(super) const PRELUDE_TRAITS: &[&str] = &[
     "Convert",
 ];
 
-/// The place of the prelude's trait with the name among the file's.
-pub(super) fn prelude_trait(file: &File, name: &str) -> usize {
-    (file.traits.iter())
-        .position(|t| t.name == name && of_prelude(t.pos))
-        .expect("the prelude defines it")
-}
-
 /// Moves the `requires` lines that name a trait from the contracts of each
 /// function to what it needs. Parsing does not know what a name refers to,
 /// so a line that is `Name[...]` is one that names a trait here. A function
@@ -227,7 +220,7 @@ pub(super) fn withouts(defs: &Defs, errors: &mut Vec<Error>) -> Vec<(usize, Def)
                 ]
                 .contains(&k)
                     || defs.serialize == Some(k)
-                    || defs.deserialize() == Some(k) =>
+                    || defs.deserialize == Some(k) =>
             {
                 k
             }
@@ -738,7 +731,7 @@ impl<'a> Defs<'a> {
                 && self.holding(*e, args, &types[0]).len() == 1)
                 .then(Vec::new);
         }
-        if self.serialize == Some(k) || self.deserialize() == Some(k) {
+        if self.serialize == Some(k) || self.deserialize == Some(k) {
             let taken = |d: Def| self.withouts.contains(&(k, d));
             return match &types[0] {
                 Ty::Text | Ty::Nothing | Ty::Int(_) => Some(Vec::new()),
@@ -773,32 +766,19 @@ impl<'a> Defs<'a> {
         }
     }
 
-    /// The standard library's `Deserialize`, which `std.deserialize` defines,
-    /// when the program has that module. However the program names it, it is
-    /// the one the library defines, and a trait of the program's own is not it.
-    pub(super) fn deserialize(&self) -> Option<usize> {
-        serialize_trait(self.file, "read")
-    }
-
-    /// The standard library's `Reader`, which `std.deserialize` defines, when
-    /// the program has that module.
-    pub(super) fn reader(&self) -> Option<usize> {
-        serialize_trait(self.file, "more")
-    }
-
     /// The trait `Ord`, which the prelude defines.
     pub(super) fn ord(&self) -> usize {
-        self.trait_names["Ord"]
+        self.ord
     }
 
     /// The trait `Hash`, which the prelude defines.
     pub(super) fn hash(&self) -> usize {
-        self.trait_names["Hash"]
+        self.hash
     }
 
     /// The trait `Convert`, which the prelude defines.
     pub(super) fn convert(&self) -> usize {
-        self.trait_names["Convert"]
+        self.convert
     }
 
     /// The names of the cases of enum `e`, with the types `args`, that hold a `t`.
@@ -887,7 +867,7 @@ impl<'a> Defs<'a> {
         if self.serialize == Some(k) {
             return self.serialize_calls(&types[0], &types[1]);
         }
-        if self.deserialize() == Some(k) {
+        if self.deserialize == Some(k) {
             return self.deserialize_calls(&types[0], &types[1]);
         }
         let run = |k: usize, t: &Ty| self.chosen(k, 0, vec![t.clone()], Vec::new()).0;
@@ -939,9 +919,9 @@ impl<'a> Defs<'a> {
     /// reader's `Reader` that the shape of `t` is read with.
     fn deserialize_calls(&self, t: &Ty, r: &Ty) -> Vec<Instance> {
         let deserialize = self
-            .deserialize()
+            .deserialize
             .expect("a program that reads has the module");
-        let reader = self.reader().expect("a program that reads has the module");
+        let reader = self.reader.expect("a program that reads has the module");
         let names: &[&str] = match t {
             Ty::Int(i) if i.signed() => &["signed", "fail"],
             Ty::Int(_) => &["unsigned", "fail"],
@@ -1164,7 +1144,7 @@ impl<'a> Checker<'a> {
             });
             return;
         };
-        if name == "Eq" && !of_prelude(im.pos) {
+        if k == defs.eq && !of_prelude(im.pos) {
             self.errors.push(Error::new(
                 im.pos,
                 "`==` means that two values are the same value, so `Eq` is given to a type \
@@ -1451,7 +1431,7 @@ impl<'a> Checker<'a> {
                     ));
                     return Ty::Unknown;
                 }
-                let bits = defs.file.traits[k].name == "Bits";
+                let bits = k == defs.bits;
                 let function = defs.file.traits[k].functions[fi].name.as_str();
                 let shifts = bits && function.starts_with("shift_");
                 if let (true, Ty::Int(t)) = (bits, &types[0]) {

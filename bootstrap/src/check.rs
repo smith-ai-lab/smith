@@ -50,7 +50,7 @@ use lists_and_text::{as_read, is_freeze, is_push, is_utf8};
 use numbers_and_operators::{Int, Narrowing, Numbers, flexible, literal_blocks, narrowing};
 use traits::{
     Found, ImplInfo, PRELUDE_TRAITS, Requirement, TRAITS_NOT_BUILT, bounds_named, impl_info,
-    needs_named, overlaps, prelude_trait, split_needs, withouts,
+    needs_named, overlaps, split_needs, withouts,
 };
 
 include!(concat!(env!("OUT_DIR"), "/std_modules.rs"));
@@ -769,17 +769,31 @@ struct Defs<'a> {
     /// traits.
     exit: usize,
     iterate: usize,
+    /// The prelude's `Ord`, `Hash`, `Convert`, and `Bits`, by their places in
+    /// the file's traits.
+    ord: usize,
+    hash: usize,
+    convert: usize,
+    bits: usize,
     /// The standard library's `Serialize` and `Writer`, which `std.serialize`
+    /// defines, and its `Deserialize` and `Reader`, which `std.deserialize`
     /// defines, by their places in the file's traits, when the program has
     /// that module.
     serialize: Option<usize>,
     writer: Option<usize>,
-    /// The prelude's `bool`, `Order`, `Option`, and `Flow`, by their places in
-    /// the file's enums.
+    deserialize: Option<usize>,
+    reader: Option<usize>,
+    /// The `ReadError` and the `Problem` of `std.deserialize`, by their places
+    /// in the file's structs and enums, when the program has that module.
+    read_error: Option<usize>,
+    problem: Option<usize>,
+    /// The prelude's `bool`, `Order`, `Option`, `Flow`, and `Result`, by their
+    /// places in the file's enums.
     boolean: usize,
     order: usize,
     option: usize,
     flow: usize,
+    result: usize,
     /// Each trait taken away from a struct or an enum by `without`.
     withouts: Vec<(usize, Def)>,
     /// How many defaults of type parameters are being resolved inside one
@@ -921,10 +935,7 @@ impl<'a> Defs<'a> {
     /// dropped.
     fn is_result(&self, ty: &Ty) -> bool {
         match ty {
-            Ty::Enum(e, _) => {
-                let e = &self.file.enums[*e];
-                e.name == "Result" && of_prelude(e.pos)
-            }
+            Ty::Enum(e, _) => *e == self.result,
             _ => false,
         }
     }
@@ -1495,8 +1506,8 @@ fn check_with(mut file: File, library: &Library, prelude: &Prelude) -> Result<Ch
     for module in &read {
         placement(&module.file, &mut errors);
     }
-    let file = splice(file, read, &mut errors);
-    check_file(file, errors, warnings, prelude)
+    let (file, items) = splice(file, read, &mut errors);
+    check_file(file, items, errors, warnings, prelude)
         .map(|mut checked| {
             checked.warnings = localize(checked.warnings, &labels);
             checked
@@ -1533,6 +1544,7 @@ pub fn check_module(name: &str, library: &Library) -> Result<Vec<Error>, Vec<Err
 /// Checks the file, with the items of the modules it imports among its own.
 fn check_file(
     file: File,
+    items: Items,
     mut errors: Vec<Error>,
     import_warnings: Vec<Error>,
     prelude: &Prelude,
@@ -1710,25 +1722,26 @@ fn check_file(
             .collect(),
         impls: Vec::new(),
         impls_of: vec![Vec::new(); file.traits.len()],
-        fmt: prelude_trait(&file, "Fmt"),
-        repr: prelude_trait(&file, "Repr"),
-        eq: prelude_trait(&file, "Eq"),
-        exit: prelude_trait(&file, "Exit"),
-        iterate: prelude_trait(&file, "Iterate"),
-        serialize: serialize_trait(&file, "write"),
-        writer: serialize_trait(&file, "structure"),
-        boolean: (file.enums.iter())
-            .position(|e| e.name == "bool" && of_prelude(e.pos))
-            .expect("the prelude defines it"),
-        order: (file.enums.iter())
-            .position(|e| e.name == "Order" && of_prelude(e.pos))
-            .expect("the prelude defines it"),
-        option: (file.enums.iter())
-            .position(|e| e.name == "Option" && of_prelude(e.pos))
-            .expect("the prelude defines it"),
-        flow: (file.enums.iter())
-            .position(|e| e.name == "Flow" && of_prelude(e.pos))
-            .expect("the prelude defines it"),
+        fmt: prelude_item(&file, Kind::Trait, "Fmt"),
+        repr: prelude_item(&file, Kind::Trait, "Repr"),
+        eq: prelude_item(&file, Kind::Trait, "Eq"),
+        exit: prelude_item(&file, Kind::Trait, "Exit"),
+        iterate: prelude_item(&file, Kind::Trait, "Iterate"),
+        ord: prelude_item(&file, Kind::Trait, "Ord"),
+        hash: prelude_item(&file, Kind::Trait, "Hash"),
+        convert: prelude_item(&file, Kind::Trait, "Convert"),
+        bits: prelude_item(&file, Kind::Trait, "Bits"),
+        serialize: library_item(&file, &items, "std.serialize", Kind::Trait, "Serialize"),
+        writer: library_item(&file, &items, "std.serialize", Kind::Trait, "Writer"),
+        deserialize: library_item(&file, &items, "std.deserialize", Kind::Trait, "Deserialize"),
+        reader: library_item(&file, &items, "std.deserialize", Kind::Trait, "Reader"),
+        read_error: library_item(&file, &items, "std.deserialize", Kind::Struct, "ReadError"),
+        problem: library_item(&file, &items, "std.deserialize", Kind::Enum, "Problem"),
+        boolean: prelude_item(&file, Kind::Enum, "bool"),
+        order: prelude_item(&file, Kind::Enum, "Order"),
+        option: prelude_item(&file, Kind::Enum, "Option"),
+        flow: prelude_item(&file, Kind::Enum, "Flow"),
+        result: prelude_item(&file, Kind::Enum, "Result"),
         withouts: Vec::new(),
         default_depth: Cell::new(0),
     };
@@ -1947,6 +1960,7 @@ impl<'a> Names<'a> {
 /// items but is not walked, and is in the set the call gives beside them: its
 /// head is checked, and nothing it holds is, until its type is reached.
 fn reach(file: &File, names: &Names, start_at: usize, contracts: bool) -> (Vec<Item>, Set<usize>) {
+    let fmt = prelude_item(file, Kind::Trait, "Fmt");
     let mut reached: Vec<Item> = vec![Item::Fn(start_at)];
     let mut queue: Vec<Item> = vec![Item::Fn(start_at)];
     let mut unbuilt: Set<usize> = Set::default();
@@ -2099,7 +2113,7 @@ fn reach(file: &File, names: &Names, start_at: usize, contracts: bool) -> (Vec<I
             Item::Trait(k) => {
                 let t = &file.traits[k];
                 // The `Fmt` a type is given runs its `Repr`.
-                if t.name == "Fmt" && of_prelude(t.pos) {
+                if k == fmt {
                     type_name("Repr", &mut found);
                 }
                 for f in &t.functions {
@@ -2233,17 +2247,64 @@ const STEP: usize = 1 << 32;
 /// are numbered below it, so that a place says which kind of module it is in.
 const FIRST_PROJECT: usize = 1 << 16;
 
-/// The place of the trait of `std.serialize` that has a function named
-/// `function`, if the file has that module: `write` is `Serialize`'s and
-/// `structure` is `Writer`'s. However the program names the trait, it is the
-/// one the library defines, and a trait of the program's own is not it.
-fn serialize_trait(file: &File, function: &str) -> Option<usize> {
-    (file.traits.iter()).position(|t| {
-        of_std(t.pos)
-            && t.functions
-                .iter()
-                .any(|f| written_name(&f.name) == function)
-    })
+/// The module that holds the prelude, whose items are written as they are.
+const PRELUDE_MODULE: &str = "std.prelude";
+
+/// What kind of item of a module a lookup is for.
+#[derive(Clone, Copy)]
+enum Kind {
+    Trait,
+    Struct,
+    Enum,
+}
+
+/// The name each item of each module of the standard library that the program
+/// reads has in the file, by the module and the name the module gives it. The
+/// file writes an item as the program lists it, as another name when the
+/// program lists it with `as`, and with its module after it when the program
+/// lists it not at all, so what the file calls an item says nothing of what
+/// the item is.
+#[derive(Clone, Default)]
+struct Items(Vec<(String, HashMap<String, String>)>);
+
+/// The place, among the file's traits, structs, or enums, of the item that the
+/// library defines with the name `name` in the module `module`, written as
+/// `std.serialize`, or `None` when the program does not read the module.
+/// Every lookup of an item of the library goes through this function, so that
+/// what the compiler leans on is in the calls of it, and a name that `std/`
+/// no longer defines stops the compiler at once, saying which.
+fn library_item(file: &File, items: &Items, module: &str, kind: Kind, name: &str) -> Option<usize> {
+    let (written, home): (&str, fn(Pos) -> bool) = if module == PRELUDE_MODULE {
+        (name, of_prelude)
+    } else {
+        let (_, names) = items.0.iter().find(|(m, _)| m == module)?;
+        let Some(written) = names.get(name) else {
+            not_defined(module, kind, name)
+        };
+        (written, of_std)
+    };
+    let at = match kind {
+        Kind::Trait => (file.traits.iter()).position(|t| t.name == written && home(t.pos)),
+        Kind::Struct => (file.structs.iter()).position(|s| s.name == written && home(s.pos)),
+        Kind::Enum => (file.enums.iter()).position(|e| e.name == written && home(e.pos)),
+    };
+    Some(at.unwrap_or_else(|| not_defined(module, kind, name)))
+}
+
+/// An item of the prelude, which every program has.
+fn prelude_item(file: &File, kind: Kind, name: &str) -> usize {
+    library_item(file, &Items::default(), PRELUDE_MODULE, kind, name).expect("the prelude is read")
+}
+
+fn not_defined(module: &str, kind: Kind, name: &str) -> ! {
+    let kind = match kind {
+        Kind::Trait => "trait",
+        Kind::Struct => "struct",
+        Kind::Enum => "enum",
+    };
+    panic!(
+        "internal error: the compiler needs the {kind} `{name}` of the module `{module}`, and the module does not define it"
+    )
 }
 
 /// Whether a definition is in a module of the library or of the project.
@@ -2955,7 +3016,7 @@ fn renamed_tokens(
 /// the file or in another module, and the file cannot write it. A module that
 /// lists names of another writes them as that module does. Items are checked
 /// and compiled only when the program reaches them, as the file's are.
-fn splice(mut file: File, modules: Vec<Module>, errors: &mut Vec<Error>) -> File {
+fn splice(mut file: File, modules: Vec<Module>, errors: &mut Vec<Error>) -> (File, Items) {
     // The names each module writes as they are, since the file lists them, or
     // since the compiler builds them.
     let kept: Vec<HashSet<String>> = modules
@@ -3084,7 +3145,13 @@ fn splice(mut file: File, modules: Vec<Module>, errors: &mut Vec<Error>) -> File
         file.withouts.extend(found.withouts);
     }
     file.scopes = scopes;
-    file
+    let items = Items(
+        (modules.iter().zip(finals))
+            .filter(|(module, _)| module.name.starts_with("std."))
+            .map(|(module, names)| (module.name.clone(), names))
+            .collect(),
+    );
+    (file, items)
 }
 
 /// An error for each `impl` that is neither in the module of its trait nor in

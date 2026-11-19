@@ -32,7 +32,7 @@ impl<'a> Lowering<'a> {
         if defs.serialize == Some(k) {
             return self.serialized(&given[0], &given[1]);
         }
-        if defs.deserialize() == Some(k) {
+        if defs.deserialize == Some(k) {
             return self.deserialized(&given[0], &given[1]);
         }
         let ty = &given[0];
@@ -863,25 +863,16 @@ impl<'a> Lowering<'a> {
     /// `Result[ok, ReadError]`.
     fn result_ty(&self, ok: &Ty) -> Ty {
         let defs = self.typed.defs;
-        let result = (defs.file.enums.iter())
-            .position(|e| e.name == "Result" && crate::check::of_prelude(e.pos))
-            .expect("the prelude defines it");
-        Ty::Enum(result, vec![ok.clone(), self.read_error()])
+        Ty::Enum(defs.result, vec![ok.clone(), self.read_error()])
     }
 
     fn read_error(&self) -> Ty {
-        let defs = self.typed.defs;
-        let at = (defs.file.structs.iter())
-            .position(|s| s.name == "ReadError" && crate::check::of_std(s.pos))
-            .expect("a program that reads has the module");
+        let at = (self.typed.defs.read_error).expect("a program that reads has the module");
         Ty::Struct(at, Vec::new())
     }
 
     fn problem_ty(&self) -> Ty {
-        let defs = self.typed.defs;
-        let at = (defs.file.enums.iter())
-            .position(|e| e.name == "Problem" && crate::check::of_std(e.pos))
-            .expect("a program that reads has the module");
+        let at = (self.typed.defs.problem).expect("a program that reads has the module");
         Ty::Enum(at, Vec::new())
     }
 
@@ -936,7 +927,7 @@ impl<'a> Lowering<'a> {
         gives: &Ty,
     ) -> (Vec<form::Value>, Vec<form::Value>) {
         let defs = self.typed.defs;
-        let k = defs.reader().expect("a program that reads has the module");
+        let k = defs.reader.expect("a program that reads has the module");
         let at = crate::check::traits::trait_function(&defs.file.traits[k], name)
             .expect("a function of `Reader`");
         let (instance, _) = defs.chosen(k, at, vec![c.reader.clone()], Vec::new());
@@ -1026,7 +1017,7 @@ impl<'a> Lowering<'a> {
     ) -> (Vec<form::Value>, Vec<form::Value>) {
         let defs = self.typed.defs;
         let k = defs
-            .deserialize()
+            .deserialize
             .expect("a program that reads has the module");
         let (instance, _) = defs.chosen(k, 0, vec![ty.clone()], vec![c.reader.clone()]);
         let function = self.place(Body::Copy(instance));
