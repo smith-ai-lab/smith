@@ -268,6 +268,12 @@ pub fn not_run() -> Vec<String> {
             };
             format!("{}: not run, as {why}", t.name())
         })
+        .chain(
+            (!crate::x86_level_missing::emulator()).then(|| {
+                "an executable on a chip without the level x86-64-v3: not run, as qemu-x86_64 is not installed"
+                    .to_string()
+            }),
+        )
         .collect()
 }
 

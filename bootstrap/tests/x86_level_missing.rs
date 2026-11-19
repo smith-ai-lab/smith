@@ -14,6 +14,25 @@ pub const MACHINE: &[Test] = &[(
 
 const HELLO: &[u8] = b"use std.console (console, print)\n\nfn main() ! console { print(\"hello world\") }\n";
 
+/// Whether `qemu-x86_64`, which can make a chip lack a feature, is installed.
+pub fn emulator() -> bool {
+    std::process::Command::new("qemu-x86_64")
+        .arg("--version")
+        .output()
+        .is_ok()
+}
+
+/// A chip that the emulator makes, and the feature the check names first for
+/// it. `Nehalem` and `SandyBridge` have no FMA and no AVX2, as FMA is checked
+/// first, and `Haswell` with one feature off lacks only that one.
+const LACKING: [(&str, &str); 5] = [
+    ("Nehalem", "FMA"),
+    ("SandyBridge", "FMA"),
+    ("Haswell,-avx2", "AVX2"),
+    ("Haswell,-bmi2", "BMI2"),
+    ("Haswell,-abm", "LZCNT"),
+];
+
 fn an_executable_started_on_a_chip_without_the_level_names_what_is_missing_and_runs_no_main() {
     let target = linux_x86_64();
     let bytes = build(HELLO, target).unwrap_or_else(|e| panic!("{e:?}"));
@@ -21,32 +40,45 @@ fn an_executable_started_on_a_chip_without_the_level_names_what_is_missing_and_r
     if crate::targets::fingerprinting() {
         return;
     }
-    let qemu = std::process::Command::new("qemu-x86_64")
-        .arg("--version")
-        .output();
-    if qemu.is_err() {
-        eprintln!("skipped: qemu-x86_64 is not installed, so no chip is made to lack the level");
+    if !emulator() {
+        // The checks run where the emulator is installed, and a run there that
+        // finds it missing has tested nothing of what this is for.
+        assert_ne!(
+            std::env::var("CI").as_deref(),
+            Ok("true"),
+            "qemu-x86_64 is not installed, so no chip is made to lack the level"
+        );
         return;
     }
     let dir = crate::scratch::path("level");
     std::fs::create_dir_all(&dir).unwrap();
     let path = dir.join("program");
     crate::executable::write(&path, &bytes);
-    // Nehalem has SSE4.2 and none of AVX, AVX2, or the fused multiply and add.
-    let output = crate::clock::output_within(
-        std::process::Command::new("qemu-x86_64")
-            .args(["-cpu", "Nehalem"])
-            .arg(&path),
-        true,
-    )
-    .unwrap();
+    let started = |cpu: &str| {
+        crate::clock::output_within(
+            std::process::Command::new("qemu-x86_64")
+                .args(["-cpu", cpu])
+                .arg(&path),
+            true,
+        )
+        .unwrap()
+    };
+    // On a chip with the level the program runs.
+    let output = started("Haswell");
+    assert_eq!(output.status.code(), Some(0));
+    assert!(String::from_utf8_lossy(&output.stdout).contains("hello"));
+    for (cpu, feature) in LACKING {
+        let output = started(cpu);
+        let said = String::from_utf8_lossy(&output.stderr);
+        assert_ne!(output.status.code(), Some(0), "{cpu}");
+        assert!(output.stdout.is_empty(), "{cpu} ran main");
+        assert!(said.contains("x86-64-v3"), "{cpu}: the level is named: {said}");
+        assert!(
+            said.contains(&format!("no {feature}")),
+            "{cpu}: {feature} is named: {said}"
+        );
+    }
     std::fs::remove_dir_all(&dir).unwrap();
-    assert_ne!(output.status.code(), Some(0));
-    assert!(!String::from_utf8_lossy(&output.stdout).contains("hello"));
-    assert!(
-        String::from_utf8_lossy(&output.stderr).contains("x86-64-v3"),
-        "the line on the error output names the level"
-    );
 }
 
 /// The target whose executable runs under `qemu-x86_64`: Linux on x86-64.
