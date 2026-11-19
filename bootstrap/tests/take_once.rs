@@ -48,6 +48,10 @@ pub const ONCE: &[Test] = &[
         taking_a_part_of_a_value_leaves_each_other_part_to_be_taken,
     ),
     (
+        "a_chain_of_vars_that_a_loop_moves_a_value_along_is_read_until_it_settles",
+        a_chain_of_vars_that_a_loop_moves_a_value_along_is_read_until_it_settles,
+    ),
+    (
         "a_made_value_that_is_only_lent_or_read_is_dropped",
         a_made_value_that_is_only_lent_or_read_is_dropped,
     ),
@@ -490,13 +494,24 @@ impl Paths {
                     let mut round = now.clone();
                     let reused = !self.again.is_empty();
                     next.extend(now.iter().copied());
-                    for _ in 0..3 {
+                    // Rounds go on until what is known at the head repeats: the
+                    // states are drawn from a few bits and the places that made
+                    // a value, so they do, and a limit far above that fails a
+                    // model that does not settle.
+                    for rounds in 0.. {
+                        assert!(rounds < 1000, "the states of a loop never settle");
+                        // What a round finds out about the value being used after it
+                        // was given away is known to the rounds after it.
+                        let known = (round.len(), self.again.len());
                         let a = self.run(body, &round, shape, lacks);
                         next.extend(a.next.iter().copied());
                         next.extend(a.out);
                         // The next round begins where the loop began or
                         // where a round ended.
                         round.extend(a.next);
+                        if (round.len(), self.again.len()) == known {
+                            break;
+                        }
                     }
                     // A value the loop was entered with and gives away again
                     // in each round is reported there, and not also as dropped
@@ -710,7 +725,7 @@ fn write(c: &Case) -> Written {
 }
 
 fn a_value_without_discard_is_refused_exactly_where_a_path_drops_it_or_takes_it_again() {
-    generate::check(4341, 60, case, |c| {
+    generate::check(4341, 100, case, |c| {
         let w = write(c);
         let found = errors(&w.source);
         let lacks = c.held == Held::Res;
@@ -1008,4 +1023,38 @@ fn a_made_value_that_is_only_lent_or_read_is_dropped() {
     assert_eq!(found.len(), 1, "{found:?}\n{generic}");
     assert!(found[0].message.contains("`T` has no `Discard`"), "{}", found[0]);
     assert!(found[0].fix.as_deref().unwrap().contains("T: Discard"));
+}
+
+fn a_chain_of_vars_that_a_loop_moves_a_value_along_is_read_until_it_settles() {
+    // Each round of the loop moves a value one name along, or all the way
+    // when the moves are written in order. Whatever the length of the chain,
+    // each name holds a value that is dropped where it is assigned again or
+    // taken twice, so the errors grow by two for each name.
+    for n in 3..=8usize {
+        for forward in [true, false] {
+            let names: Vec<String> = (0..n).map(|i| format!("v{i}")).collect();
+            let mut body = String::new();
+            let moves = names.windows(2).map(|w| format!("    {} = {}\n", w[1], w[0]));
+            let fresh = format!("    {} = mk()\n", names[0]);
+            if forward {
+                body.push_str(&moves.collect::<String>());
+                body.push_str(&fresh);
+            } else {
+                body.push_str(&fresh);
+                body.push_str(&moves.collect::<String>());
+            }
+            let mut source = format!("{PARTS}fn mk2() -> Tx {{ begin() }}\n\nfn run(c: bool) ! diverge {{\n");
+            for v in &names {
+                source.push_str(&format!("  var {v} = mk2()\n"));
+            }
+            source.push_str(&format!("  loop i in 0..3 {{\n{}  }}\n", body.replace("mk()", "mk2()")));
+            for v in &names {
+                source.push_str(&format!("  commit({v})\n"));
+            }
+            source.push_str("}\n\nfn main() ! diverge {\n  run(true)\n}\n");
+            let found = errors(&source);
+            let wanted = if forward { 2 * n - 2 } else { 2 * n };
+            assert_eq!(found.len(), wanted, "{found:?}\n{source}");
+        }
+    }
 }
