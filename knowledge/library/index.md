@@ -30,4 +30,5 @@ The modules of the standard library, one file each, named for the module. A modu
 - [fs.md](fs.md): the `fs` effect, for files: a file open for a block, ranges of it read as values, and reading and writing a whole file.
 - [net.md](net.md): the `net` effect, for connections and datagrams, each a value used exactly once.
 - [store.md](store.md): the `store` effect, which keeps bytes under keys past the end of the program, and `save` and `load`, which keep any value that has `Serialize`.
+- [fetch.md](fetch.md): the `fetch` effect, by which a program sends an HTTP request to another server, and what answers it natively and in a WebAssembly module.
 - [console.md](console.md): the `console` effect, for a program's standard input, output, and error.
