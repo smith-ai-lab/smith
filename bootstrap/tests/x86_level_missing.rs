@@ -41,11 +41,12 @@ fn an_executable_started_on_a_chip_without_the_level_names_what_is_missing_and_r
         return;
     }
     if !emulator() {
-        // The checks run where the emulator is installed, and a run there that
-        // finds it missing has tested nothing of what this is for.
-        assert_ne!(
-            std::env::var("CI").as_deref(),
-            Ok("true"),
+        // The `linux` job of `ci` installs the emulator, and a run there that
+        // finds it missing has tested nothing of what this is for. Other
+        // machines do not install it, and the run says it was not run.
+        let installs = cfg!(all(target_os = "linux", target_arch = "x86_64"));
+        assert!(
+            !(installs && std::env::var("CI").as_deref() == Ok("true")),
             "qemu-x86_64 is not installed, so no chip is made to lack the level"
         );
         return;
