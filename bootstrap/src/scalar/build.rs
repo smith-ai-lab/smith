@@ -38,6 +38,11 @@ impl Builder {
         values
     }
 
+    /// The type of a value made so far.
+    pub fn type_of(&self, v: Value) -> Type {
+        self.types[v.0]
+    }
+
     pub fn fresh(&mut self, ty: Type) -> Value {
         self.types.push(ty);
         Value(self.types.len() - 1)

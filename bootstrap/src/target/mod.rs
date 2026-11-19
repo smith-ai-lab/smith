@@ -118,6 +118,14 @@ impl Target {
         }
     }
 
+    /// Whether the target builds a function that has a float.
+    pub fn builds_floats(self) -> bool {
+        match self {
+            Target::LinuxX64 | Target::MacosX64 | Target::WindowsX64 => true,
+            Target::MacosArm64 | Target::LinuxArm64 | Target::WindowsArm64 | Target::Wasm => false,
+        }
+    }
+
     /// Whether what `emit` gives is a program for a chip, which the system
     /// runs, and not a module that a host runs.
     pub fn is_machine_code(self) -> bool {
