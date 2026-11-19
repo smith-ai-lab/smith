@@ -2,7 +2,10 @@
 type: specification
 title: List functions
 description: The functions of std.list that search and compare any list, such as starts_with, find, and contains, which a text uses as its bytes, and append.
-status: planned
+status: partial
+built:
+  - "`append` of `std.list`, which gives a list the elements of another after its own, with one test for room and one copy, for any `T: Copy`, and takes a `str` as a `List[u8]`"
+  - "not `contains`, `index_of`, `find`, `starts_with`, or `ends_with`"
 ---
 
 # List functions
@@ -74,7 +77,7 @@ A part is found where it first begins, so `find("abab", "ab")` is `.some(0)`. A 
 `append` gives a list of the elements of `a` and then those of `b`. It needs no `Eq`, as it compares nothing, and it allocates, as [`push`](list.md) does.
 
 ```
-fn append[T](a: take List[T], b: List[T]) -> List[T] ! alloc
+fn append[T: Copy](a: take List[T], b: List[T]) -> List[T] ! alloc
 ```
 
 ```
@@ -88,7 +91,7 @@ fn demo() ! alloc {
 
 `append([1, 2], [3])` is `[1, 2, 3]`. `append([], [3])` is `[3]`, and with an empty `b` the result has the elements of `a` alone.
 
-Nothing about `append` is known to the compiler. It is a function written with `push`, and it takes `a` as `push` takes its list, so `out = append(out, more)` grows `out` in place, as [a list is never copied unasked](../language/ownership.md#a-list-is-never-copied-unasked). `b` is lent, and its elements are copied into the room after `a`'s.
+`append` is built as `push` is. It takes `a` as `push` takes its list, so `out = append(out, more)` grows `out` in place, as [a list is never copied unasked](../language/ownership.md#a-list-is-never-copied-unasked). It tests once whether `a`'s memory has room for the elements of `b`, and when it has not, asks once for memory that holds both and copies `a`'s elements, then it copies the elements of `b` after them in one go. `b` is lent, and its elements are copied, so `T` has `Copy`: a list of lists is joined with `push`.
 
 ## The forms
 

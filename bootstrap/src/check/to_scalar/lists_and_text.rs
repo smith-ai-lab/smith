@@ -136,7 +136,8 @@ impl<'a> Lowering<'a> {
     }
 
     /// Lowers `push`, which gives the list with the item after its last
-    /// element.
+    /// element, and `append`, which gives it with the elements of another
+    /// list there.
     pub(super) fn push(
         &mut self,
         out: &mut Out<'a>,
@@ -144,9 +145,18 @@ impl<'a> Lowering<'a> {
         env: &[Ty],
     ) -> (Ty, Vec<form::Value>) {
         let (ty, mut args) = self.expr(out, &call.args[0].value, env);
-        args.extend(self.expr(out, &call.args[1].value, env).1);
+        let more = self.expr(out, &call.args[1].value, env).1;
         let results = self.scalars(&ty);
-        let kind = Runtime::Push(self.element(&ty));
+        let kind = match call.callee.ends_with("append") {
+            true => {
+                args.extend(&more[..2]);
+                Runtime::Append(self.element(&ty))
+            }
+            false => {
+                args.extend(more);
+                Runtime::Push(self.element(&ty))
+            }
+        };
         let values = self.call_runtime(out, kind, args, results);
         (ty, values)
     }

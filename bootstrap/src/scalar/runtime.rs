@@ -52,6 +52,16 @@ pub enum Runtime {
     /// size, or one when the size is 0. Each element takes that many bytes.
     /// It is cold, as `Function::cold` says.
     Grow(u64),
+    /// Takes what `Grow` takes and a number of elements, and gives what
+    /// `Grow` gives, with room for twice the size, or for that number when it
+    /// is more. It is cold, as `Grow` is.
+    Reserve(u64),
+    /// Takes a list whose elements are the scalars of the types, as `Push`
+    /// takes it, then the address and the size of another list of the same
+    /// elements, which it only reads. It gives the list with those elements
+    /// after the last, with one test for room, and when there is none, one
+    /// request for memory that holds them all, and one copy of them.
+    Append(Vec<Type>),
     /// Is where a program that takes the words it was started with starts. It
     /// takes what the system gives, as `Arguments` does, and calls the
     /// function `main` with the list of words that `Arguments` gives. It gives
@@ -112,7 +122,16 @@ pub fn build(kind: Runtime, place: &mut dyn FnMut(Runtime) -> usize) -> Function
             let (_, stride) = super::element(&scalars);
             push(&scalars, place(Runtime::Grow(stride)))
         }
-        Runtime::Grow(stride) => grow(stride, place(Runtime::Copy)),
+        Runtime::Append(scalars) => {
+            let (_, stride) = super::element(&scalars);
+            append(
+                stride,
+                place(Runtime::Reserve(stride)),
+                place(Runtime::Copy),
+            )
+        }
+        Runtime::Grow(stride) => grow(stride, place(Runtime::Copy), false),
+        Runtime::Reserve(stride) => grow(stride, place(Runtime::Copy), true),
         Runtime::Start { main } => words::start(main, place(Runtime::Arguments)),
         Runtime::Arguments => words::arguments(
             place(Runtime::Words),
@@ -523,15 +542,50 @@ fn push(scalars: &[Type], grow: usize) -> Function {
     f.finish(&LIST)
 }
 
+/// Appends the elements of one list to another, as `Runtime::Append` says.
+fn append(stride: u64, reserve: usize, copy: usize) -> Function {
+    let mut f = Builder::new();
+    let mut types = vec![ADDRESS, LENGTH, LENGTH];
+    types.extend_from_slice(&[ADDRESS, LENGTH]);
+    let p = f.params(&types);
+    let (address, size, room, from, count) = (p[0], p[1], p[2], p[3], p[4]);
+    let total = f.binary(Binary::Add, size, count);
+    let short = f.compare(Compare::LessU, room, total);
+    let (written, there) = f.block(&[ADDRESS, LENGTH]);
+    let (moved, _) = f.block(&[]);
+    f.switch(short, vec![(written, vec![address, room]), (moved, vec![])]);
+    f.at(moved);
+    let grown = f.call(
+        reserve,
+        vec![address, size, room, total],
+        &[ADDRESS, LENGTH],
+    );
+    f.jump(written, grown);
+    f.at(written);
+    let (address, room) = (there[0], there[1]);
+    let width = int(&mut f, stride);
+    let used = f.binary(Binary::Mul, size, width);
+    let at = after(&mut f, address, used);
+    let bytes = f.binary(Binary::Mul, count, width);
+    f.call(copy, vec![at, from, bytes], &[]);
+    f.ret(vec![address, total, room]);
+    f.finish(&LIST)
+}
+
 /// Gives a list whose memory has room for twice as many elements of the
-/// width as it holds, or for one when it holds none, with its elements in
-/// it, and how many it has room for. When the list's memory is the last that
+/// width as it holds, or for one when it holds none, or for the number it is
+/// given when `wanted` and that is more, with its elements in it, and how many
+/// it has room for. When the list's memory is the last that
 /// was taken from the stack the request is made in, the room it lacks is
 /// taken after it, and nothing is copied.
-fn grow(stride: u64, copy: usize) -> Function {
+fn grow(stride: u64, copy: usize, wanted: bool) -> Function {
     let mut f = Builder::new();
     f.cold();
-    let p = f.params(&[ADDRESS, LENGTH, LENGTH]);
+    let mut types = vec![ADDRESS, LENGTH, LENGTH];
+    if wanted {
+        types.push(LENGTH);
+    }
+    let p = f.params(&types);
     let (address, size, room) = (p[0], p[1], p[2]);
     let width = int(&mut f, stride);
     let one = int(&mut f, 1);
@@ -539,6 +593,14 @@ fn grow(stride: u64, copy: usize) -> Function {
     let none = f.compare(Compare::Equal, size, zero);
     let twice = f.binary(Binary::Add, size, size);
     let places_of_room = f.choose(none, one, twice);
+    // A list that is given more than it has room for is given room for them.
+    let places_of_room = match wanted {
+        true => {
+            let short = f.compare(Compare::LessU, places_of_room, p[3]);
+            f.choose(short, p[3], places_of_room)
+        }
+        false => places_of_room,
+    };
     let asked = f.binary(Binary::Mul, places_of_room, width);
     let held = f.binary(Binary::Mul, room, width);
     let (plain, _) = f.block(&[]);
