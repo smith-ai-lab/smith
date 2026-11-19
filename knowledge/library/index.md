@@ -28,5 +28,6 @@ The modules of the standard library, one file each, named for the module. A modu
 - [oauth.md](oauth.md): `std.oauth`, with which a server is an OAuth resource server: it says which authorization server to use and lets in only a request with a token from it.
 - [random.md](random.md): random bits from a key, distributions as ordinary structs with the `Sample` and `LogProb` traits, and how a program adds its own.
 - [fs.md](fs.md): the `fs` effect, for files: a file open for a block, ranges of it read as values, and reading and writing a whole file.
+- [net.md](net.md): the `net` effect, for connections and datagrams, each a value used exactly once.
 - [store.md](store.md): the `store` effect, which keeps bytes under keys past the end of the program, and `save` and `load`, which keep any value that has `Serialize`.
 - [console.md](console.md): the `console` effect, for a program's standard input, output, and error.
