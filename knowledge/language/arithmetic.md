@@ -114,7 +114,7 @@ fn main() ! console, alloc {
 }
 ```
 
-This prints `255 8`, `0`, and `255`: `floor(-3)` is `0`, the least `Byte`, and `floor(300)` is `255`, the greatest.
+This prints `255 8 0 255`. `floor(-3)` is `0`, the least `Byte`, and `floor(300)` is `255`, the greatest.
 
 Where the range expected holds every value of `x`, the call is refused as needless, as `convert` of a value to its own type is, since it does nothing the program could see.
 
