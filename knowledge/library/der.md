@@ -2,7 +2,10 @@
 type: specification
 title: DER and certificates
 description: std.der, which reads the tagged values of DER as pieces of the bytes it is given, and std.x509, which reads a certificate into its names, its time, and its key, and checks nothing.
-status: planned
+status: partial
+built:
+  - "`std.der`: `Value` and `Tag`, `value`, `children`, `whole`, `text`, and `object`, with every `Slice` of a `Value` a piece of the bytes given and each way DER is not written right that the page lists an `.err`"
+  - "not `std.x509`, `Certificate`, `certificate`, or `pem`"
 ---
 
 # DER and certificates
@@ -43,8 +46,9 @@ fn object(of: Value) -> Result[List[Nat], str] ! alloc
 ```
 
 - `value` reads one value from the front of the bytes and gives it with the bytes after it. The bytes of a `Value` are a piece of what was given, so nothing is copied.
-- `children` gives the values inside a `sequence`, a `set`, or a `context` value that holds others.
-- `whole` gives the bytes of an `integer` with no sign, as a number of any size, most significant first, with a zero at the front taken off. `text` gives the text of a value that is one. `object` gives the numbers of an object identifier.
+- `children` gives the values inside a `sequence`, a `set`, or a `context` value that holds others, and is `.err` for the bytes of one that its parts do not fill.
+- `whole` gives the bytes of an `integer` with no sign, as a number of any size, most significant first, with a zero at the front taken off when more bytes follow it, and is `.err` for a number below zero. `text` gives the text of a `utf8`, `printable`, or `ia5` value, and is `.err` for bytes that are not valid UTF-8, or for a `printable` or `ia5` value with a byte of 128 or above. `object` gives the numbers of an object identifier, the first byte standing for the first two.
+- A tag is `context` for the class of that name, with its number and whether it is built of parts, and `other` holds the byte that began the value for every class and kind that has no case of its own. A tag of more than one byte is `.err`.
 - DER has one way to write each value, and what is not written that way is `.err`: a length that could be shorter, a length with no end, an `integer` with bytes at the front it does not need, a `boolean` that is neither 0 nor 255, and bytes left inside a value that its parts do not use.
 
 ## A certificate
