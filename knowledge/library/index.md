@@ -13,6 +13,9 @@ The modules of the standard library, one file each, named for the module. A modu
 - [utf8.md](utf8.md): `std.utf8`'s `decode` and `encode`, which turn between one character's number and its bytes.
 - [fmt.md](fmt.md): `std.fmt`'s `hex` and `binary`, which write a whole number in base 16 or base 2, padded with zeros.
 - [map.md](map.md): `Map`, which finds a value by its key, kept in the order its entries were added, and the `Hash` trait a key needs.
+- [http1.md](http1.md): `std.http1`, which reads and writes the messages of HTTP/1.1 as bytes, with nothing read that the standard says to refuse.
+- [http2.md](http2.md): `std.http2`, which reads and writes the frames of HTTP/2 and the compressed headers of HPACK as bytes.
+- [der.md](der.md): `std.der` and `std.x509`, which read the tagged values of DER and the parts of a certificate, and check nothing.
 - [serialize.md](serialize.md): `Serialize`, by which a value describes its shape to a writer that knows a format, and `Writer`, which a format has.
 - [deserialize.md](deserialize.md): `Deserialize`, by which a value is built from a reader that knows a format, `Reader`, which a format has, and what is done with a missing field.
 - [describe.md](describe.md): `Describe`, by which a type says what it is made of with no value in hand, each part with its comment, and `Describer`, which a format for descriptions has.
