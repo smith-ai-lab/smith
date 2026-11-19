@@ -22,7 +22,8 @@
 //!    this finds a register whenever there are enough. A value alive across a
 //!    call takes a register the call does not change. Any other takes one a
 //!    call may change first, and a function with no value alive across a call
-//!    is offered no other, so it uses no register it must save. A parameter
+//!    is offered no other, so it uses no register it must save, unless it
+//!    calls nothing and has a loop, when it is offered every register. A parameter
 //!    of a block, a result, and a value passed or given back take the register
 //!    of the value they are given to or from, or that a call passes them in,
 //!    when it is free and the value may have it.
@@ -334,10 +335,14 @@ pub fn allocate_kinds(f: &Function, kinds: Kinds, homeless: &[bool]) -> Allocati
     };
     // A function with no value alive across a call has no use for a register
     // a call does not change, which it would have to save, so it is offered
-    // none.
+    // none, unless it calls nothing and has a loop: saving a register costs
+    // the same once however many times the loop goes round, and a value in
+    // the frame costs a store and a load every round.
     let has_a_call = (f.blocks.iter()).any(|b| b.instructions.iter().any(|i| i.op.is_call()));
     let across = if has_a_call {
         across_a_call(f, &kinds_of, &facts, homeless)
+    } else if has_a_loop(&f.blocks) {
+        [true; 2]
     } else {
         [false; 2]
     };
@@ -829,6 +834,33 @@ fn release(holder: &mut [usize], register: &[usize], values: &[Value]) {
             holder[r] = NONE;
         }
     }
+}
+
+/// Whether a block that the first reaches can be reached again from itself:
+/// a walk from the first block comes to a jump to a block it is still inside.
+fn has_a_loop(blocks: &[crate::scalar::Block]) -> bool {
+    // 0 not yet reached, 1 inside the walk, 2 left.
+    let mut state = vec![0u8; blocks.len()];
+    state[0] = 1;
+    let mut stack = vec![(0, blocks[0].end.successors(), 0)];
+    while let Some((b, next, i)) = stack.last_mut() {
+        if let Some(&s) = next.get(*i) {
+            *i += 1;
+            match state[s] {
+                1 => return true,
+                0 => {
+                    state[s] = 1;
+                    let successors = blocks[s].end.successors();
+                    stack.push((s, successors, 0));
+                }
+                _ => {}
+            }
+        } else {
+            state[*b] = 2;
+            stack.pop();
+        }
+    }
+    false
 }
 
 /// The blocks in reverse postorder of a walk from the first, so each comes
