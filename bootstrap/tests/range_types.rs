@@ -70,6 +70,10 @@ pub const ONCE: &[Test] = &[
         arith_proves_a_sum_of_a_range_exactly_when_it_fits_the_range,
     ),
     (
+        "a_range_is_taken_in_every_place_a_type_is_needed",
+        a_range_is_taken_in_every_place_a_type_is_needed,
+    ),
+    (
         "a_sum_a_difference_and_a_product_give_the_exact_range_and_no_narrower_one",
         a_sum_a_difference_and_a_product_give_the_exact_range_and_no_narrower_one,
     ),
@@ -538,6 +542,81 @@ fn a_sum_a_difference_and_a_product_give_the_exact_range_and_no_narrower_one() {
                 if low < high {
                     assert!(!compiles(&narrower), "accepted\n{narrower}");
                 }
+            }
+        },
+    );
+}
+
+
+
+/// Wherever a value is given where a type is needed, a range is taken as any
+/// value is: the item of a case, an element of a tuple, a field of a struct
+/// that is generic or not, and an item of a list. A narrower range is taken as
+/// it is, a wider one where a condition shows that it fits, and one not shown to
+/// fit is refused with what could not be proven.
+fn a_range_is_taken_in_every_place_a_type_is_needed() {
+    // The declarations, the type the place is, how the place is made of an
+    // expression, what it is made of when it is left out, and how it is read.
+    const PLACES: [(&str, &str, &str, &str, &str); 5] = [
+        (
+            "",
+            "Option[Byte]",
+            ".some(E)",
+            ".none",
+            "match r {\n    .some(v) { print(\"{v}\") }\n    .none { print(\"none\") }\n  }",
+        ),
+        (
+            "",
+            "(Byte, Byte)",
+            "(E, 1)",
+            "(0, 1)",
+            "match r {\n    (v, w) { print(\"{v}\") }\n  }",
+        ),
+        (
+            "struct Box[T] {\n  item: T\n}\n\n",
+            "Box[Byte]",
+            "Box(item: E)",
+            "Box(item: 0)",
+            "print(\"{r.item}\")",
+        ),
+        (
+            "struct Plain {\n  at: Byte\n}\n\n",
+            "Plain",
+            "Plain(at: E)",
+            "Plain(at: 0)",
+            "print(\"{r.at}\")",
+        ),
+        ("", "List[Byte]", "[E]", "[0]", "loop x in r { print(\"{x}\") }"),
+    ];
+    generate::check(
+        4008,
+        20,
+        |g: &mut Gen| (g.below(200) as i128, g.below(40) as i128 + 1),
+        |&(low, by)| {
+            for (decls, ty, make, none, read) in PLACES {
+                let program = |guard: &str, given: &str| {
+                    let made = make.replace('E', given);
+                    with_header(format!(
+                        "{decls}fn shifted(b: Byte) -> {ty} ! alloc {{\n  if {guard} {{ {made} }} else {{ {none} }}\n}}\n\nfn main() ! console, alloc {{\n  r = shifted({})\n  {read}\n}}\n",
+                        low + by
+                    ))
+                };
+                let shown = program(&format!("b >= {by}"), &format!("b - {by}"));
+                assert_eq!(stdout(&shown), format!("{low}\n"), "for\n{shown}");
+                let unshown = program("b >= 0", &format!("b - {by}"));
+                let errors = check(unshown.as_bytes()).expect_err("a value not shown to fit");
+                assert!(
+                    errors.iter().any(|e| e.message.contains("cannot prove")),
+                    "{errors:?} for\n{unshown}"
+                );
+                // A range that a wider one holds is taken with nothing shown.
+                let wide = ty.replace("Byte", "u16");
+                let wider = with_header(format!(
+                    "{}fn shifted(b: Byte) -> {wide} ! alloc {{\n  {}\n}}\n\nfn main() ! console, alloc {{\n  r = shifted({low})\n  {read}\n}}\n",
+                    decls.replace("Byte", "u16"),
+                    make.replace('E', "b")
+                ));
+                assert_eq!(stdout(&wider), format!("{low}\n"), "for\n{wider}");
             }
         },
     );

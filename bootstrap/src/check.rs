@@ -2028,6 +2028,7 @@ fn check_file(
         types: HashMap::new(),
         widened: HashMap::new(),
         comparing: false,
+        settled: false,
         value_calls: Set::default(),
         narrowed: HashSet::new(),
         fn_values: Map::default(),
@@ -5525,6 +5526,9 @@ struct Checker<'a> {
     /// Whether the arguments being fitted are those of a comparison, whose
     /// two sides are taken as the smallest range that holds both.
     comparing: bool,
+    /// Whether the type a part of a case is fitted to was settled by the type
+    /// that was asked for, which a range that is narrower is taken to.
+    settled: bool,
     /// The calls of a name that holds a function, by their addresses.
     value_calls: Set<usize>,
     /// The calls of `narrow`, by their addresses, which give the number
@@ -6284,6 +6288,22 @@ impl<'a> Checker<'a> {
                 self.widened.insert(addr(value), *n);
                 self.enters(body, value, (*g, *n));
             }
+            // A range is taken where a type that is a range is already settled,
+            // as the item of an `Option[Byte]` that is asked for, as it is taken
+            // where that range is written.
+            (Ty::Int(g), Ty::Param(p)) if self.settled && matches!(&sol[*p], Some(Ty::Int(_))) => {
+                let Some(Ty::Int(n)) = sol[*p].clone() else {
+                    unreachable!("checked")
+                };
+                if n.holds(*g) {
+                    if *g != n {
+                        self.widened.insert(addr(value), n);
+                    }
+                } else {
+                    self.widened.insert(addr(value), n);
+                    self.enters(body, value, (*g, n));
+                }
+            }
             // The other side of a comparison is a range too.
             (Ty::Int(g), Ty::Param(p))
                 if self.comparing
@@ -6959,10 +6979,24 @@ impl<'a> Checker<'a> {
                     Want::Ty(Ty::Unknown) => vec![Want::Ty(Ty::Unknown); items.len()],
                     _ => vec![Want::Any; items.len()],
                 };
-                let items: Vec<Ty> = (items.iter().zip(&wants))
+                let mut given: Vec<Ty> = (items.iter().zip(&wants))
                     .map(|(item, want)| self.expr(body, item, want))
                     .collect();
-                Ty::tuple(items)
+                // A range is taken as an element where the element the tuple is
+                // asked for is a range, as it is taken anywhere a type is needed.
+                for ((item, got), want) in items.iter().zip(&mut given).zip(&wants) {
+                    if let (Ty::Int(g), Want::Ty(Ty::Int(n))) = (&*got, want) {
+                        let (g, n) = (*g, *n);
+                        if g != n {
+                            self.widened.insert(addr(item), n);
+                            if !n.holds(g) {
+                                self.enters(body, item, (g, n));
+                            }
+                            *got = Ty::Int(n);
+                        }
+                    }
+                }
+                Ty::tuple(given)
             }
         }
     }
@@ -7284,7 +7318,9 @@ impl<'a> Checker<'a> {
                 if gives.unknown() {
                     return Ty::Unknown;
                 }
+                self.settled = true;
                 self.fit(body, p, &gives, pattern, &mut sol, vars);
+                self.settled = false;
             }
             (Some(pattern), None) if pattern.solved(&sol) == Ty::Nothing => {}
             (Some(pattern), None) => {
@@ -8430,7 +8466,9 @@ impl<'a> Checker<'a> {
                     Some(i) => {
                         given[i] = true;
                         let pattern = &defs.fields[s][i];
+                        self.settled = true;
                         self.fit(body, &arg.value, &gives, pattern, &mut sol, vars);
+                        self.settled = false;
                     }
                     None => self.errors.push(Error::new(
                         *pos,
