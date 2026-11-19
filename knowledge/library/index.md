@@ -20,7 +20,7 @@ The modules of the standard library, one file each, named for the module. A modu
 - [http.md](http.md): `std.http`, with which a program answers HTTP requests with plain functions, and `at`, which puts a server of messages at a path.
 - [cloudflare.md](cloudflare.md): `std.cloudflare`, with which a program runs as a Cloudflare Worker: `durable`, which answers `store`, and `worker`, which writes what Cloudflare needs beside a built module.
 - [html.md](html.md): `std.html`, with which a page is written as calls of plain functions that write it as they run, with every text escaped.
-- [mcp.md](mcp.md): `std.mcp`, with which a program is a Model Context Protocol server whose tools are plain functions described by their comments and parameters.
+- [mcp.md](mcp.md): `std.mcp`, with which a program is a Model Context Protocol server whose tools, resources, and prompts are plain functions described by their comments and parameters.
 - [secret.md](secret.md): `Secret[T]`, a value the time a program takes must not depend on, which cannot steer a branch or be an index.
 - [base64.md](base64.md): `std.base64`, which writes bytes as text in the base64 alphabet and reads them back, in the standard form and in the form for an address.
 - [sha2.md](sha2.md): `std.sha2`, with `sha256` and `hmac_sha256`, which signs bytes with a key that is a secret.
