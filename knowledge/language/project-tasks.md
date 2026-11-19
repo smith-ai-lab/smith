@@ -40,6 +40,29 @@ A task declares its effects like any function. A task that runs another program 
 pub fn format_all() ! exec
 ```
 
+## Building in a task
+
+`build` of `std.project` builds the package, as `smith build` does, and gives what it built.
+
+```
+fn build(package: Package, target: Target, start: fn() = main) -> Result[Built, BuildError] ! fs, alloc
+
+struct Built {
+  target: Target
+  path: str
+  beside: List[str]
+}
+
+struct BuildError {
+  errors: List[str]
+}
+```
+
+- `target` is a case of `Target`, as `.linux_x64` or `.wasm`, and `start` is the function the executable starts at, which is `main` when none is given, as [Deployments](deployments.md) says.
+- A `Built` says where the executable was written, as `path`, and what was written with it, as `beside`: for `.wasm`, the file of JavaScript that loads the module. A task hands it on, as `upload(binary, to: env)` does above.
+- A `BuildError` holds what `smith build` would have printed, one text for each error, with its file, line, and column. A task that fails with one prints them and ends with a status that is not 0.
+- `build` carries `fs` and `alloc`, as it reads the sources and writes the executable, so a task that builds carries them.
+
 ## A task that fails
 
 A `Result` error prints its message and exits non-zero. When `deploy` above gives an error, `smith deploy` prints the error's message and exits non-zero.
@@ -79,6 +102,7 @@ serving/
 
 | Written | Means |
 | --- | --- |
+| `build(package, target: t)` | The package built for `t`, as a `Built`, or the errors of the build |
 | `pub fn name(...)` in `project.smith` | The command `smith name` |
 | `--env staging` | The parameter `env`, given `"staging"` |
 | `--batch_size 64` | The parameter `batch_size`, spelled as it is in the source |
