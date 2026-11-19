@@ -107,6 +107,10 @@ fn the_fn_lines_are_in_the_order_of_their_addresses_and_cover_the_code_for_every
         for target in buildable() {
             let (executable, parts) = target.emit_parts(&program);
             assert!(!parts.is_empty(), "{}", target.name());
+            // The first line is where the executable's own header says it starts.
+            if let Some(entry) = entry_of(&executable) {
+                assert_eq!(parts[0].address, entry, "{}", target.name());
+            }
             for pair in parts.windows(2) {
                 assert_eq!(
                     pair[0].address + pair[0].size,
@@ -132,6 +136,47 @@ fn the_fn_lines_are_in_the_order_of_their_addresses_and_cover_the_code_for_every
             assert_eq!(smith::target::map(&names, &parts).lines().count(), parts.len());
         }
     });
+}
+
+fn u32_at(bytes: &[u8], at: usize) -> u64 {
+    u64::from(u32::from_le_bytes(bytes[at..at + 4].try_into().unwrap()))
+}
+
+fn u64_at(bytes: &[u8], at: usize) -> u64 {
+    u64::from_le_bytes(bytes[at..at + 8].try_into().unwrap())
+}
+
+/// The address the file's own header says the program starts at, as the
+/// system loads it, read from the bytes of the file, or none for a module,
+/// which has no such address.
+fn entry_of(file: &[u8]) -> Option<u64> {
+    if file.starts_with(b"\x7fELF") {
+        return Some(u64_at(file, 0x18));
+    }
+    if file.starts_with(b"MZ") {
+        // The optional header follows the 4 bytes `PE\0\0` and the 20 of the
+        // coff header, at the place the DOS header gives.
+        let optional = u32_at(file, 0x3c) as usize + 24;
+        return Some(u64_at(file, optional + 24) + u32_at(file, optional + 16));
+    }
+    if file.starts_with(&[0xcf, 0xfa, 0xed, 0xfe]) {
+        // The commands follow the 32 bytes of the header: the entry is an offset
+        // in the file, which `__TEXT`, loaded from its start, gives an address.
+        let (mut at, mut entry, mut text) = (32, None, None);
+        for _ in 0..u32_at(file, 16) {
+            let (kind, size) = (u32_at(file, at), u32_at(file, at + 4) as usize);
+            match kind {
+                0x8000_0028 => entry = Some(u64_at(file, at + 8)),
+                0x19 if file[at + 8..].starts_with(b"__TEXT\0") => {
+                    text = Some(u64_at(file, at + 24));
+                }
+                _ => {}
+            }
+            at += size;
+        }
+        return Some(text? + entry?);
+    }
+    None
 }
 
 /// The address that the bytes of the file end at, which no part passes: the

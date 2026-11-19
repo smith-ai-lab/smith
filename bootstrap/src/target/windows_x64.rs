@@ -39,7 +39,7 @@ pub fn emit(program: &Program) -> (Vec<u8>, Vec<Part>) {
         at = code;
         asm.finish(&data, code, iat)
     });
-    (executable, super::shifted(parts, at))
+    (executable, super::shifted(parts, pe::IMAGE_BASE + at))
 }
 
 struct Windows;
