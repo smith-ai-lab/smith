@@ -1,0 +1,4 @@
+name_bound_unproven.smith:3:33: cannot prove that `result < n`, which `first_free` ensures, where `result` is `0`
+  3 | fn first_free(n: Nat) -> 0..n { 0 }
+    |                                 ^
+  fix: state what is needed in a `requires`, or check it first with an `if`

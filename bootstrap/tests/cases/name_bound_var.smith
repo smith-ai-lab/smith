@@ -1,0 +1,7 @@
+use std.console (console, print)
+
+fn main() ! console, alloc {
+  n: Nat = 5
+  var i: 0..n = 0
+  print("{i}")
+}

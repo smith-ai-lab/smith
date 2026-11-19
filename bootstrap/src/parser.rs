@@ -198,6 +198,13 @@ type Signature = (
 
 /// A function's signature and its contracts: what its `requires` lines say,
 /// then what its `ensures` lines say.
+/// A place where a name is not a bound of a range, other than inside another type.
+#[derive(Clone, Copy, Debug)]
+enum NoNames {
+    Field,
+    Var,
+}
+
 type BodySignature = (
     String,
     Pos,
@@ -684,6 +691,7 @@ fn parse_file(tokens: &[Token], library: bool) -> Result<File, Vec<Error>> {
         errors: Vec::new(),
         unbuilt: Vec::new(),
         bound_names_allowed: false,
+        no_names: None,
         name_bound_ok: false,
         no_lambda: false,
         binds: Vec::new(),
@@ -1065,6 +1073,9 @@ struct Parser<'a> {
     /// Whether the parameters of the function being read may have a range
     /// type with a name for a bound: those of a function that has a body.
     bound_names_allowed: bool,
+    /// Where a name is not a bound, which of the places that say so it is, for
+    /// the error: none is a type inside another type.
+    no_names: Option<NoNames>,
     /// Whether the type read next is the whole type of such a parameter, so
     /// that it may have a name for a bound.
     name_bound_ok: bool,
@@ -1369,7 +1380,10 @@ impl Parser<'_> {
             }
             let (name, pos) = self.defined("a field or `}`")?;
             self.expect_punct(":", "`:` and the field's type")?;
-            let ty = self.ty()?;
+            self.no_names = Some(NoNames::Field);
+            let ty = self.ty();
+            self.no_names = None;
+            let ty = ty?;
             let mut default = None;
             if self.tok() == &Tok::Punct("=") {
                 self.bump();
@@ -1496,7 +1510,7 @@ impl Parser<'_> {
     /// is given back, for the implementation to report. Elsewhere it is
     /// recorded, and the function is skipped.
     fn function(&mut self, from: usize, nested: bool) -> Result<Option<Function>, Error> {
-        let (name, pos, generics, params, result, result_name, effects, requires, ensures) =
+        let (name, pos, generics, params, result, mut result_name, effects, requires, ensures) =
             match self.body_signature() {
                 Ok(signature) => signature,
                 Err(e) if nested => return Err(e),
@@ -1510,11 +1524,18 @@ impl Parser<'_> {
         block.inner.append(&mut self.binds);
         let mut ok = true;
         let mut requires = requires;
+        let mut ensures = ensures;
         let owed = self.bounds_owed(&params);
         ok &= owed.is_some();
         if let Some(mut owed) = owed {
             owed.append(&mut requires);
             requires = owed;
+        }
+        let given = self.result_owed(&params, result.as_ref(), &mut result_name);
+        ok &= given.is_some();
+        if let Some(mut given) = given {
+            given.append(&mut ensures);
+            ensures = given;
         }
         let end = loop {
             self.skip_newlines();
@@ -1621,6 +1642,61 @@ impl Parser<'_> {
         named.then_some(owed)
     }
 
+    /// What the function owes for a result that has a range type with a name
+    /// for a bound: a result of range `a..n` is below `n`, and one of range
+    /// `m..b` is at least `m`. A result that is not named is given a name
+    /// for the clause to be about. None when a name is not a parameter.
+    fn result_owed(
+        &mut self,
+        params: &[Param],
+        result: Option<&Type>,
+        result_name: &mut Option<(String, Pos)>,
+    ) -> Option<Vec<Expr>> {
+        let Some((first, end)) = result.and_then(|t| t.range.as_ref()) else {
+            return Some(Vec::new());
+        };
+        let pos = result.map_or(Pos::START, |t| t.pos);
+        let named = result_name.as_ref().map(|(n, _)| n.clone());
+        let mut result_is = named.unwrap_or_else(|| {
+            let mut name = "result".to_string();
+            while params.iter().any(|q| q.name == name) {
+                name.push('@');
+            }
+            name
+        });
+        if result_name.is_none() {
+            *result_name = Some((std::mem::take(&mut result_is), pos));
+        }
+        let given = result_name.as_ref().map(|(n, _)| n.clone())?;
+        let name = |n: &str| Expr::Name {
+            name: n.to_string(),
+            pos,
+        };
+        let mut owed = Vec::new();
+        let mut all_named = true;
+        for bound in [first, end] {
+            if let Bound::Name(n) = bound
+                && (*n == given || !params.iter().any(|q| q.name == *n))
+            {
+                self.errors.push(
+                    Error::new(
+                        pos,
+                        format!("`{n}` is not a parameter of this function, and a bound is one"),
+                    )
+                    .with_fix("write the bound as a number, or take it as a parameter"),
+                );
+                all_named = false;
+            }
+        }
+        if let Bound::Name(n) = first {
+            owed.push(compared(name(n), "<=", name(&given), pos));
+        }
+        if let Bound::Name(n) = end {
+            owed.push(compared(name(&given), "<", name(n), pos));
+        }
+        all_named.then_some(owed)
+    }
+
     /// Parses a function's signature, through the `{` that opens its body.
     fn body_signature(&mut self) -> Result<BodySignature, Error> {
         self.bound_names_allowed = true;
@@ -1698,7 +1774,10 @@ impl Parser<'_> {
                 self.bump();
                 self.bump();
             }
-            result = Some(self.ty()?);
+            self.name_bound_ok = self.bound_names_allowed && self.tok() != &Tok::Keyword("fn");
+            let ty = self.ty();
+            self.name_bound_ok = false;
+            result = Some(ty?);
         }
         let mut effects = Vec::new();
         if self.tok() == &Tok::Punct("!") {
@@ -1989,10 +2068,20 @@ impl Parser<'_> {
                 }
             }
             _ if !names => {
-                self.unbuilt.push(Error::unsupported(
-                    pos,
-                    "a bound of a range that is a name, except for a parameter's own type",
-                ));
+                let (what, fix) = match self.no_names {
+                    Some(NoNames::Field) => (
+                        "the type of a field",
+                        "write the bound as a number, or say what holds between two fields with a proof field",
+                    ),
+                    Some(NoNames::Var) => (
+                        "the type of a `var`, which can change",
+                        "write the bound as a number, or bind the value with `=`",
+                    ),
+                    None => ("a type inside another type", "write the bound as a number"),
+                };
+                self.errors.push(
+                    Error::new(pos, format!("a name is not a bound in {what}")).with_fix(fix),
+                );
                 return Ok(Type {
                     name: UNBUILT.to_string(),
                     pos,
@@ -2305,7 +2394,14 @@ impl Parser<'_> {
         let mut ty = None;
         if self.tok() == &Tok::Punct(":") {
             self.bump();
-            ty = Some(self.ty()?);
+            // A name that cannot change is a bound of a binding's type, and a
+            // `var` can change.
+            self.name_bound_ok = !var && self.tok() != &Tok::Keyword("fn");
+            self.no_names = var.then_some(NoNames::Var);
+            let written = self.ty();
+            self.name_bound_ok = false;
+            self.no_names = None;
+            ty = Some(written?);
         }
         self.assignment_not_built()?;
         self.expect_punct("=", "`=`")?;
