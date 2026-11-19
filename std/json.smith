@@ -579,15 +579,18 @@ fn number(b: Slice[Byte], at: Nat) -> Result[Num, Bad] {
   if c == '0' {
     i = saturating_add(i, 1)
   } else {
-    loop k in 0..b.size {
-      d = byte(b, i)
+    // The digits run to the first byte that is not one, or to the end.
+    var stop = b.size
+    loop j in i..b.size {
+      d = b[j]
       if is_digit(d) {
         size = wrapping_add(wrapping_mul(size, 10), convert(wrapping_sub(d, '0')))
-        i = saturating_add(i, 1)
       } else {
+        stop = j
         break
       }
     }
+    i = stop
   }
   var whole = true
   if byte(b, i) == '.' {
@@ -663,9 +666,14 @@ fn quoted(b: Slice[Byte], at: Nat) -> Result[Quoted, Bad] {
   loop k in 0..b.size {
     if i >= b.size { return Result.err(malformed(i)) }
     c = b[i]
-    if c == '"' { return Result.ok(Quoted(end: saturating_add(i, 1), escaped: escaped)) }
-    if c < 32 { return Result.err(malformed(i)) }
-    if c == '\\' {
+    // Most bytes of a string are above the backslash, and none of those is special.
+    if c > '\\' {
+      i = saturating_add(i, 1)
+    } else if c == '"' {
+      return Result.ok(Quoted(end: saturating_add(i, 1), escaped: escaped))
+    } else if c < 32 {
+      return Result.err(malformed(i))
+    } else if c == '\\' {
       escaped = true
       e = byte(b, saturating_add(i, 1))
       if e == 'u' {
