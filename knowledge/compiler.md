@@ -155,7 +155,7 @@ The lexer and parser are hand-written: recursive descent for declarations and a 
 
 ### How a whole number is kept
 
-This is planned. Today the compiler keeps a whole number at the size its type names, `u8` to `i64`, as itself, and a `Nat` in 8 bytes, and it has no range as a type.
+This is planned. Today the compiler keeps a whole number as itself, in the smallest of `u8` to `i64` that holds every value of its range, signed when the range has a negative value, so a range is the size it is kept at and no smaller.
 
 A whole number is a range, and how it is kept is the compiler's choice, which no program can observe. The choice has three parts.
 

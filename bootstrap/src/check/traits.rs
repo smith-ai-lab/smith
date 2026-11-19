@@ -78,6 +78,7 @@ fn expr_type(e: &Expr) -> Option<Type> {
             pos: *pos,
             args: Vec::new(),
             function: false,
+            range: None,
         }),
         Expr::Index { of, index, .. } => {
             let Expr::Name { name, pos } = &**of else {
@@ -92,6 +93,7 @@ fn expr_type(e: &Expr) -> Option<Type> {
                 pos: *pos,
                 args: given.into_iter().map(expr_type).collect::<Option<_>>()?,
                 function: false,
+                range: None,
             })
         }
         Expr::Tuple { pos, items } => Some(Type {
@@ -99,6 +101,7 @@ fn expr_type(e: &Expr) -> Option<Type> {
             pos: *pos,
             args: items.iter().map(expr_type).collect::<Option<_>>()?,
             function: false,
+            range: None,
         }),
         _ => None,
     }
@@ -678,6 +681,26 @@ impl<'a> Defs<'a> {
         scope: &Scope,
         stack: &mut Vec<(usize, Vec<Ty>)>,
     ) -> Found {
+        // `Eq`, `Ord`, `Fmt`, `Repr`, and `Hash` are written once for every
+        // range, which is the implementation of the size it is kept at.
+        let kept: Vec<Ty>;
+        let types = if k == self.eq
+            || k == self.ord()
+            || k == self.fmt
+            || k == self.repr
+            || k == self.hash()
+        {
+            kept = types
+                .iter()
+                .map(|t| match t {
+                    Ty::Int(r) => Ty::Int(r.holder()),
+                    other => other.clone(),
+                })
+                .collect();
+            &kept[..]
+        } else {
+            types
+        };
         let mut fit: Option<(usize, Vec<Ty>, Vec<Ty>)> = None;
         'impls: for &i in &self.impls_of[k] {
             let Some(info) = &self.impls[i] else {

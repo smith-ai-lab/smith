@@ -4,20 +4,24 @@
 
 use super::*;
 
-/// The whole number types, which the compiler builds.
+/// A whole number type: the range from `min` to `max`, both held.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub(super) enum Int {
-    I8,
-    I16,
-    I32,
-    I64,
-    U8,
-    U16,
-    U32,
-    U64,
+pub(super) struct Int {
+    min: i128,
+    max: i128,
 }
 
 impl Int {
+    pub(super) const I8: Int = Int::sized(true, 8);
+    pub(super) const I16: Int = Int::sized(true, 16);
+    pub(super) const I32: Int = Int::sized(true, 32);
+    pub(super) const I64: Int = Int::sized(true, 64);
+    pub(super) const U8: Int = Int::sized(false, 8);
+    pub(super) const U16: Int = Int::sized(false, 16);
+    pub(super) const U32: Int = Int::sized(false, 32);
+    pub(super) const U64: Int = Int::sized(false, 64);
+
+    /// The sizes the compiler keeps a range at, which each has a name.
     pub(super) const ALL: [Int; 8] = [
         Int::I8,
         Int::I16,
@@ -29,16 +33,40 @@ impl Int {
         Int::U64,
     ];
 
-    pub(super) fn name(self) -> &'static str {
-        match self {
-            Int::I8 => "i8",
-            Int::I16 => "i16",
-            Int::I32 => "i32",
-            Int::I64 => "i64",
-            Int::U8 => "u8",
-            Int::U16 => "u16",
-            Int::U32 => "u32",
-            Int::U64 => "u64",
+    /// The range that fills `bits` bits, signed or not.
+    const fn sized(signed: bool, bits: u32) -> Int {
+        if signed {
+            Int {
+                min: -(1i128 << (bits - 1)),
+                max: (1i128 << (bits - 1)) - 1,
+            }
+        } else {
+            Int {
+                min: 0,
+                max: (1i128 << bits) - 1,
+            }
+        }
+    }
+
+    /// The range from `min` up to and including `max`, or none if a
+    /// number of it needs more than 64 bits.
+    pub(super) fn between(min: i128, max: i128) -> Option<Int> {
+        let int = Int { min, max };
+        let holder = int.holder();
+        (int.min >= holder.min && max <= holder.max && max >= min - 1).then_some(int)
+    }
+
+    /// The name a size is written with, which is `u8` for `0..256`.
+    fn size_name(self) -> Option<&'static str> {
+        const NAMES: [&str; 8] = ["i8", "i16", "i32", "i64", "u8", "u16", "u32", "u64"];
+        Int::ALL.iter().position(|t| *t == self).map(|i| NAMES[i])
+    }
+
+    /// How the type is written when no name of it is: `a..b`.
+    pub(super) fn name(self) -> String {
+        match self.size_name() {
+            Some(name) => name.to_string(),
+            None => format!("{}..{}", self.min, self.max + 1),
         }
     }
 
@@ -51,38 +79,38 @@ impl Int {
             "Nat" => "u64",
             _ => name,
         };
-        Int::ALL.into_iter().find(|t| t.name() == name)
+        Int::ALL.into_iter().find(|t| t.size_name() == Some(name))
     }
 
+    /// Whether the type has a negative value, so that it is kept signed.
     pub(super) fn signed(self) -> bool {
-        matches!(self, Int::I8 | Int::I16 | Int::I32 | Int::I64)
+        self.min < 0
     }
 
+    /// How many bits the smallest size that holds the type as itself has.
     pub(super) fn bits(self) -> u32 {
-        match self {
-            Int::I8 | Int::U8 => 8,
-            Int::I16 | Int::U16 => 16,
-            Int::I32 | Int::U32 => 32,
-            Int::I64 | Int::U64 => 64,
-        }
+        [8, 16, 32, 64]
+            .into_iter()
+            .find(|&bits| {
+                let size = Int::sized(self.signed(), bits);
+                size.min <= self.min && self.max <= size.max
+            })
+            .unwrap_or(64)
+    }
+
+    /// The size the type is kept at: the smallest one that holds it as itself.
+    pub(super) fn holder(self) -> Int {
+        Int::sized(self.signed(), self.bits())
     }
 
     /// The least value of the type.
     pub(super) fn min(self) -> i128 {
-        if self.signed() {
-            -(1i128 << (self.bits() - 1))
-        } else {
-            0
-        }
+        self.min
     }
 
     /// The greatest value of the type.
     pub(super) fn max(self) -> i128 {
-        if self.signed() {
-            (1i128 << (self.bits() - 1)) - 1
-        } else {
-            (1i128 << self.bits()) - 1
-        }
+        self.max
     }
 }
 
@@ -328,11 +356,12 @@ impl<'a> Checker<'a> {
                 return Ty::Unknown;
             }
         };
-        let fits = if negative {
-            magnitude <= int.min().unsigned_abs()
+        let value = if negative {
+            -(magnitude as i128)
         } else {
-            magnitude <= int.max() as u128
+            magnitude as i128
         };
+        let fits = int.min() <= value && value <= int.max();
         // A character outside ASCII takes more than one byte in a text.
         let wide = expr_is_wide_character(expr, magnitude);
         if fits && wide && int.bits() == 8 {
