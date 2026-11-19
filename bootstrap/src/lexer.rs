@@ -17,7 +17,7 @@ const KEYWORDS: &[&str] = &[
 /// longest one.
 const PUNCTUATION: &[&str] = &[
     "..", "->", "+=", "-=", "*=", "/=", "==", "!=", "<=", ">=", "(", ")", "[", "]", "{", "}", ",",
-    ":", ".", "=", "<", ">", "+", "-", "*", "/", "@", "^", "!",
+    ":", ".", "=", "<", ">", "+", "-", "*", "/", "@", "^", "!", "|>",
 ];
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -372,6 +372,12 @@ impl<'a> Lexer<'a> {
         };
         for _ in 0..p.len() {
             self.bump();
+        }
+        // A line that starts with `|>` goes on from the line before.
+        if *p == "|>" {
+            while self.tokens.last().is_some_and(|t| t.tok == Tok::Newline) {
+                self.tokens.pop();
+            }
         }
         self.push(Tok::Punct(p), start);
     }
