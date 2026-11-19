@@ -24,6 +24,7 @@ pub const IF: u8 = 0x04;
 pub const ELSE: u8 = 0x05;
 pub const END: u8 = 0x0B;
 pub const BR: u8 = 0x0C;
+pub const BR_IF: u8 = 0x0D;
 pub const BR_TABLE: u8 = 0x0E;
 pub const RETURN: u8 = 0x0F;
 pub const CALL: u8 = 0x10;
@@ -156,6 +157,13 @@ impl Code {
 
     pub fn br(&mut self, depth: u32) {
         self.op(BR);
+        unsigned(&mut self.bytes, u64::from(depth));
+    }
+
+    /// Leaves the structure `depth` out when the 32-bit number on the stack is
+    /// not 0.
+    pub fn br_if(&mut self, depth: u32) {
+        self.op(BR_IF);
         unsigned(&mut self.bytes, u64::from(depth));
     }
 

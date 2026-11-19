@@ -11,6 +11,7 @@
 
 use super::wasm_code::*;
 use super::wasm_module::{Body, Export, Global, Module, Signature};
+use super::wasm_structure::{self as structure, Shape};
 use crate::scalar::{
     Binary, Bits, Builder, Compare, Constant, End, Function, Instruction, Jump, Op, Program,
     Stream, System, Type, Value,
@@ -388,23 +389,54 @@ fn status() -> Body {
 
 /// The signature and the body of a function of the form.
 fn lower(f: &Function, context: &Context) -> (Signature, Body) {
+    let shape = structure::analyze(f);
     let params = &f.blocks[0].params;
+    // The value whose place a value has. A parameter of a block that one jump
+    // reaches is the value that jump gives it, which is alive wherever the
+    // block is, and needs no copy.
+    let mut same: Vec<usize> = (0..f.types.len()).collect();
+    if let Some(shape) = &shape {
+        let mut entering: Vec<Option<&Jump>> = vec![None; f.blocks.len()];
+        for (from, block) in f.blocks.iter().enumerate() {
+            if shape.order[from] == usize::MAX {
+                continue;
+            }
+            for jump in jumps(&block.end) {
+                if !shape.back(from, jump.block) {
+                    entering[jump.block] = Some(jump);
+                }
+            }
+        }
+        let mut blocks: Vec<usize> = (1..f.blocks.len())
+            .filter(|&b| shape.order[b] != usize::MAX)
+            .collect();
+        blocks.sort_by_key(|&b| shape.order[b]);
+        for b in blocks {
+            if let (Some(jump), 1, false) = (entering[b], shape.entries[b], shape.header[b]) {
+                for (p, a) in f.blocks[b].params.iter().zip(&jump.args) {
+                    same[p.0] = same[a.0];
+                }
+            }
+        }
+    }
     let mut local = vec![u32::MAX; f.types.len()];
     for (place, p) in params.iter().enumerate() {
         local[p.0] = place as u32;
     }
-    // The place that holds the block to run comes first of the locals of 32
-    // bits, which come before those of 64.
+    // A function whose blocks are not written as loops keeps the number of the
+    // block to run in a local, which comes first of the locals of 32 bits,
+    // which come before those of 64.
     let mut next = params.len() as u32;
     let pc = next;
+    let numbered = shape.is_none() && f.blocks.len() > 1;
     let mut locals = Vec::new();
     for here in [Kind::I32, Kind::I64] {
         let before = next;
-        if here == Kind::I32 && f.blocks.len() > 1 {
+        if here == Kind::I32 && numbered {
             next += 1;
         }
         for (v, ty) in f.types.iter().enumerate() {
-            if local[v] == u32::MAX && kind(*ty) == here {
+            if local[v] == u32::MAX && same[v] == v && kind(*ty) == here {
                 local[v] = next;
                 next += 1;
             }
@@ -413,6 +445,9 @@ fn lower(f: &Function, context: &Context) -> (Signature, Body) {
             locals.push((next - before, here));
         }
     }
+    for v in 0..local.len() {
+        local[v] = local[same[v]];
+    }
     let mut lowering = Lowering {
         f,
         context,
@@ -420,6 +455,8 @@ fn lower(f: &Function, context: &Context) -> (Signature, Body) {
         local,
         pc,
         block: 0,
+        shape,
+        frames: Vec::new(),
     };
     lowering.function();
     let signature = Signature {
@@ -435,20 +472,205 @@ fn lower(f: &Function, context: &Context) -> (Signature, Body) {
     )
 }
 
+/// The jumps a block's end makes, in order.
+fn jumps(end: &End) -> Vec<&Jump> {
+    match end {
+        End::Jump(j) => vec![j],
+        End::Switch { jumps, .. } => jumps.iter().collect(),
+        End::Return(_) => Vec::new(),
+    }
+}
+
+/// What is open at a place in a function that is written as loops: the
+/// structures that `br` can leave.
+#[derive(Clone, Copy, PartialEq)]
+enum Frame {
+    /// The loop that starts with a block, which a jump back goes to.
+    Loop(usize),
+    /// The `block` that ends where a block is written, which every jump that
+    /// is not a jump back goes to.
+    Before(usize),
+    /// An `if`, or a `block` that a choice between many ends.
+    Other,
+}
+
 struct Lowering<'a> {
     f: &'a Function,
     context: &'a Context<'a>,
     code: Code,
     /// The local of each value.
     local: Vec<u32>,
-    /// The local that holds the number of the block to run.
+    /// The local that holds the number of the block to run, when the function
+    /// has no shape.
     pc: u32,
-    /// The block being written.
+    /// The block being written, when the function has no shape.
     block: usize,
+    /// How the function's blocks are written as loops, or `None` when they
+    /// cannot be.
+    shape: Option<Shape>,
+    frames: Vec<Frame>,
 }
 
 impl Lowering<'_> {
     fn function(&mut self) {
+        if self.shape.is_some() {
+            self.tree(0);
+            self.code.op(UNREACHABLE);
+            self.code.op(END);
+        } else {
+            self.numbered();
+        }
+    }
+
+    /// Writes a block, and the blocks it dominates, in a `loop` when it starts
+    /// one.
+    fn tree(&mut self, x: usize) {
+        let shape = self.shape.as_ref().unwrap();
+        let (header, merges) = (shape.header[x], shape.merges[x].clone());
+        if header {
+            self.code.open(LOOP);
+            self.frames.push(Frame::Loop(x));
+        }
+        self.within(x, &merges);
+        if header {
+            self.code.op(END);
+            self.frames.pop();
+        }
+    }
+
+    /// Writes a block after the blocks of `merges` that it dominates and that
+    /// more than one jump reaches, each of which is written where the `block`
+    /// that its jumps leave ends.
+    fn within(&mut self, x: usize, merges: &[usize]) {
+        match merges.split_last() {
+            Some((&y, rest)) => {
+                self.code.open(BLOCK);
+                self.frames.push(Frame::Before(y));
+                self.within(x, rest);
+                self.code.op(END);
+                self.frames.pop();
+                self.tree(y);
+            }
+            None => self.node(x),
+        }
+    }
+
+    /// The instructions of a block, and how it ends.
+    fn node(&mut self, x: usize) {
+        let f = self.f;
+        let block = &f.blocks[x];
+        for instruction in &block.instructions {
+            self.instruction(instruction);
+        }
+        match &block.end {
+            End::Return(values) => {
+                for v in values {
+                    self.get(*v);
+                }
+                self.code.op(RETURN);
+            }
+            End::Jump(jump) => self.branch(x, jump),
+            End::Switch { on, jumps } => self.choice(x, *on, jumps),
+        }
+    }
+
+    /// How far out the structure that a jump leaves is, or `None` when the
+    /// block is written where the jump is.
+    fn depth(&self, from: usize, jump: &Jump) -> Option<u32> {
+        let shape = self.shape.as_ref().unwrap();
+        let wanted = if shape.back(from, jump.block) {
+            Frame::Loop(jump.block)
+        } else if shape.merge(jump.block) {
+            Frame::Before(jump.block)
+        } else {
+            return None;
+        };
+        let place = self.frames.iter().rposition(|&frame| frame == wanted);
+        Some((self.frames.len() - 1 - place.expect("the block is open")) as u32)
+    }
+
+    /// The jump from a block: the values it gives, and then the way there.
+    fn branch(&mut self, from: usize, jump: &Jump) {
+        self.give(jump);
+        match self.depth(from, jump) {
+            Some(depth) => self.code.br(depth),
+            None => self.tree(jump.block),
+        }
+    }
+
+    fn choice(&mut self, from: usize, on: Value, jumps: &[Jump]) {
+        match jumps {
+            [only] => self.branch(from, only),
+            [zero, one] => {
+                // A jump that gives nothing and leaves a structure is a
+                // `br_if`, and the other is what follows it.
+                let bare = |me: &Self, jump: &Jump| {
+                    me.given(jump).is_empty() && me.depth(from, jump).is_some()
+                };
+                if bare(self, one) {
+                    self.get_wrapped(on);
+                    self.code.br_if(self.depth(from, one).unwrap());
+                    self.branch(from, zero);
+                } else if bare(self, zero) {
+                    self.get_wrapped(on);
+                    self.code.op(I32_EQZ);
+                    self.code.br_if(self.depth(from, zero).unwrap());
+                    self.branch(from, one);
+                } else {
+                    self.get_wrapped(on);
+                    self.code.open(IF);
+                    self.frames.push(Frame::Other);
+                    self.branch(from, one);
+                    self.code.op(ELSE);
+                    self.branch(from, zero);
+                    self.code.op(END);
+                    self.frames.pop();
+                }
+            }
+            _ => {
+                let m = jumps.len();
+                for _ in 0..m {
+                    self.code.open(BLOCK);
+                    self.frames.push(Frame::Other);
+                }
+                self.get_wrapped(on);
+                self.code.br_table(m as u32);
+                for jump in jumps {
+                    self.code.op(END);
+                    self.frames.pop();
+                    self.branch(from, jump);
+                }
+            }
+        }
+    }
+
+    /// The parameters of the block a jump goes to that are not already the
+    /// values it gives, as the value each is given.
+    fn given(&self, jump: &Jump) -> Vec<(Value, Value)> {
+        let params = &self.f.blocks[jump.block].params;
+        let pairs = params.iter().zip(&jump.args);
+        pairs
+            .filter(|(p, a)| self.local[p.0] != self.local[a.0])
+            .map(|(p, a)| (*p, *a))
+            .collect()
+    }
+
+    /// Puts the values a jump gives in the parameters of its block, as if all
+    /// were copied at once.
+    fn give(&mut self, jump: &Jump) {
+        let given = self.given(jump);
+        for (_, a) in &given {
+            self.get(*a);
+        }
+        for (p, _) in given.iter().rev() {
+            self.set(*p);
+        }
+    }
+
+    /// The function with the number of the block to run in a local: a loop
+    /// that goes to the code of each block through one `br_table`, so a jump
+    /// is that number and a `br`.
+    fn numbered(&mut self) {
         let n = self.f.blocks.len();
         self.code.open(LOOP);
         for _ in 0..n {
@@ -486,46 +708,13 @@ impl Lowering<'_> {
         }
     }
 
-    fn get(&mut self, v: Value) {
-        self.code.local_get(self.local[v.0]);
-    }
-
-    fn set(&mut self, v: Value) {
-        self.code.local_set(self.local[v.0]);
-    }
-
-    fn kind(&self, v: Value) -> Kind {
-        kind(self.f.types[v.0])
-    }
-
-    fn bits(&self, v: Value) -> Bits {
-        match self.f.types[v.0] {
-            Type::Int(bits) => bits,
-            Type::Address => panic!("an address where an integer is needed"),
-        }
-    }
-
-    /// Gives a number of 64 bits, or an address, a place in 32.
-    fn get_wrapped(&mut self, v: Value) {
-        self.get(v);
-        if self.kind(v) == Kind::I64 {
-            self.code.op(I32_WRAP_I64);
-        }
-    }
-
-    /// Makes the jump: the values it gives are put in the parameters of its
-    /// block at once, and the loop of the function goes on from there. `open` is
-    /// how many blocks and choices are open here besides those that make the
-    /// function's own.
+    /// Makes the jump of a function with the number of the block: the values
+    /// it gives are put in the parameters of its block, and the loop of the
+    /// function goes on from there. `open` is how many blocks and choices are
+    /// open here besides those that make the function's own.
     fn jump(&mut self, jump: &Jump, open: u32) {
-        let f = self.f;
-        for a in &jump.args {
-            self.get(*a);
-        }
-        for p in f.blocks[jump.block].params.iter().rev() {
-            self.set(*p);
-        }
-        let n = f.blocks.len();
+        self.give(jump);
+        let n = self.f.blocks.len();
         if n > 1 {
             self.code.i32_const(jump.block as i32);
             self.code.local_set(self.pc);
@@ -556,6 +745,33 @@ impl Lowering<'_> {
                     self.jump(jump, m - 1 - place as u32);
                 }
             }
+        }
+    }
+
+    fn get(&mut self, v: Value) {
+        self.code.local_get(self.local[v.0]);
+    }
+
+    fn set(&mut self, v: Value) {
+        self.code.local_set(self.local[v.0]);
+    }
+
+    fn kind(&self, v: Value) -> Kind {
+        kind(self.f.types[v.0])
+    }
+
+    fn bits(&self, v: Value) -> Bits {
+        match self.f.types[v.0] {
+            Type::Int(bits) => bits,
+            Type::Address => panic!("an address where an integer is needed"),
+        }
+    }
+
+    /// Gives a number of 64 bits, or an address, a place in 32.
+    fn get_wrapped(&mut self, v: Value) {
+        self.get(v);
+        if self.kind(v) == Kind::I64 {
+            self.code.op(I32_WRAP_I64);
         }
     }
 

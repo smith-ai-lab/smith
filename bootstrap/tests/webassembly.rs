@@ -11,14 +11,16 @@ use std::process::Command;
 use std::sync::OnceLock;
 
 use smith::lower;
-use smith::scalar::{self, Binary, Bits, Builder, Compare, Op, Outcome, Program, Stream, System};
-use smith::target::Target;
+use smith::scalar::{
+    self, Binary, Bits, Builder, Compare, Op, Outcome, Program, Stream, System, Type, Value,
+};
+use smith::target::{Target, is_structured};
 
 use crate::Test;
 use crate::cli::{folder, smith, stderr};
 use crate::generate::{self, Gen};
 use crate::targets::{case_files, updating};
-use crate::{choices, enums, lambdas, numbers, programs, text, tuples};
+use crate::{choices, enums, lambdas, numbers, programs, repeat, text, tuples};
 
 pub const ONCE: &[Test] = &[
     (
@@ -60,6 +62,18 @@ pub const ONCE: &[Test] = &[
     (
         "every_integer_operation_gives_what_the_evaluator_gives",
         every_integer_operation_gives_what_the_evaluator_gives,
+    ),
+    (
+        "every_function_of_a_generated_program_is_written_as_loops_and_branches",
+        every_function_of_a_generated_program_is_written_as_loops_and_branches,
+    ),
+    (
+        "loops_and_choices_of_many_jumps_that_join_run_as_the_evaluator_says",
+        loops_and_choices_of_many_jumps_that_join_run_as_the_evaluator_says,
+    ),
+    (
+        "a_function_with_a_loop_that_has_two_ways_in_runs_as_the_evaluator_says",
+        a_function_with_a_loop_that_has_two_ways_in_runs_as_the_evaluator_says,
     ),
     (
         "a_program_that_ends_with_a_status_ends_with_it",
@@ -501,4 +515,153 @@ fn memory_is_grown_and_a_request_that_cannot_be_met_ends_the_program() {
     for target in modules() {
         assert_eq!(run_module(target, &program), said, "{}", target.name());
     }
+}
+
+/// Whether every function of the program after the passes has only jumps back
+/// to blocks that dominate them, which is when its blocks are written as
+/// `loop`, `block`, `if`, and `br`, with no number of the block to run.
+fn written_as_loops(program: &Program) -> bool {
+    program.functions.iter().all(is_structured)
+}
+
+/// The passes never leave a function whose blocks cannot be written as
+/// WebAssembly's own loops and branches, for any program the generators build.
+fn every_function_of_a_generated_program_is_written_as_loops_and_branches() {
+    fn all<T: std::fmt::Debug>(
+        seed: u64,
+        generate: impl Fn(&mut Gen) -> T,
+        source: impl Fn(&T) -> &[u8],
+    ) {
+        generate::check(seed, 12, generate, |case| {
+            assert!(written_as_loops(&after_the_pass(source(case))));
+        });
+    }
+    all(101, programs::program, |case| &case.source);
+    all(102, text::program, |case| case.source.as_bytes());
+    all(103, numbers::program, |case| case.source.as_bytes());
+    all(104, choices::program, |case| case.source.as_bytes());
+    all(105, lambdas::program, |case| case.source.as_bytes());
+    all(106, enums::program, |case| case.source.as_bytes());
+    all(107, tuples::program, |case| case.source.as_bytes());
+    let file = include_str!("../../compiler/lexer.smith");
+    let lexer = repeat::repeated(
+        repeat::lexer(file),
+        1,
+        "lex",
+        "match lex(['f', 'n', ' ', 'm', '\\n']) {\n    .ok(tokens) { tokens.size }\n    .err(errors) { 0 }\n  }",
+    );
+    assert!(written_as_loops(&after_the_pass(lexer.as_bytes())));
+}
+
+/// Writes the byte `letter` to standard output from the buffer of one byte.
+fn write_letter(b: &mut Builder, buffer: Value, one: Value, letter: u8) {
+    let letter = b.int(Bits::B8, u64::from(letter));
+    b.store(buffer, letter);
+    let call = System::Write(Stream::Stdout);
+    b.emit(
+        Op::System {
+            call,
+            args: vec![buffer, one],
+        },
+        &[],
+    );
+}
+
+fn program_of(b: Builder) -> Program {
+    Program {
+        data: Vec::new(),
+        functions: vec![b.finish(&[])],
+        main: 0,
+    }
+}
+
+/// A loop whose round chooses among four blocks that each give a number to the
+/// one that joins them, which adds it and goes round again, and a block that
+/// writes the sum when the loop ends.
+fn loops_and_choices_of_many_jumps_that_join_run_as_the_evaluator_says() {
+    if !node() {
+        return;
+    }
+    let big = Type::Int(Bits::B64);
+    let mut b = Builder::new();
+    let one = b.int(Bits::B64, 1);
+    let buffer = b.allocate(one);
+    let zero = b.int(Bits::B64, 0);
+    let rounds = b.int(Bits::B64, 8);
+    let three = b.int(Bits::B64, 3);
+    let (head, h) = b.block(&[big, big]);
+    let (body, _) = b.block(&[]);
+    let (join, j) = b.block(&[big]);
+    let (finish, f) = b.block(&[big]);
+    let ways: Vec<usize> = (0..4).map(|_| b.block(&[]).0).collect();
+    b.jump(head, vec![zero, zero]);
+    b.at(head);
+    let more = b.compare(Compare::LessU, h[0], rounds);
+    b.switch(more, vec![(finish, vec![h[1]]), (body, vec![])]);
+    b.at(body);
+    let way = b.binary(Binary::And, h[0], three);
+    let way = b.narrow(way, Bits::B8);
+    b.switch(way, ways.iter().map(|&w| (w, vec![])).collect());
+    for (place, &way) in ways.iter().enumerate() {
+        b.at(way);
+        write_letter(&mut b, buffer, one, b'p' + place as u8);
+        let gives = b.int(Bits::B64, 1 << place);
+        b.jump(join, vec![gives]);
+    }
+    b.at(join);
+    let sum = b.binary(Binary::Add, h[1], j[0]);
+    let next = b.binary(Binary::Add, h[0], one);
+    b.jump(head, vec![next, sum]);
+    b.at(finish);
+    let last = b.narrow(f[0], Bits::B8);
+    b.store(buffer, last);
+    let call = System::Write(Stream::Stdout);
+    b.emit(
+        Op::System {
+            call,
+            args: vec![buffer, one],
+        },
+        &[],
+    );
+    b.ret(vec![]);
+    let program = program_of(b);
+    assert!(written_as_loops(&program));
+    assert!(!scalar::run(&program).stdout.is_empty());
+    agree(&program);
+}
+
+/// Two blocks that each jump to the other and that the first block of the
+/// function reaches both of, so that neither dominates the other. Its blocks
+/// cannot be written as loops, and the module is still right.
+fn a_function_with_a_loop_that_has_two_ways_in_runs_as_the_evaluator_says() {
+    if !node() {
+        return;
+    }
+    let big = Type::Int(Bits::B64);
+    let mut b = Builder::new();
+    let one = b.int(Bits::B64, 1);
+    let buffer = b.allocate(one);
+    let zero = b.int(Bits::B64, 0);
+    let (first, f) = b.block(&[big]);
+    let (second, s) = b.block(&[big]);
+    let (exit, _) = b.block(&[]);
+    let (limit_first, limit_second) = (b.int(Bits::B64, 5), b.int(Bits::B64, 7));
+    let way = b.int(Bits::B8, 1);
+    b.switch(way, vec![(first, vec![zero]), (second, vec![zero])]);
+    for (block, p, letter, limit, other) in [
+        (first, &f, b'a', limit_first, second),
+        (second, &s, b'b', limit_second, first),
+    ] {
+        b.at(block);
+        write_letter(&mut b, buffer, one, letter);
+        let next = b.binary(Binary::Add, p[0], one);
+        let more = b.compare(Compare::LessU, next, limit);
+        b.switch(more, vec![(exit, vec![]), (other, vec![next])]);
+    }
+    b.at(exit);
+    b.ret(vec![]);
+    let program = program_of(b);
+    assert!(!written_as_loops(&program));
+    assert!(!scalar::run(&program).stdout.is_empty());
+    agree(&program);
 }
