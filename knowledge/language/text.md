@@ -45,7 +45,7 @@ struct Utf8Error {
 fn utf8(bytes: Slice[u8]) -> Result[str, Utf8Error]
 ```
 
-The bytes of a text are its `bytes` field, a `Slice[u8]` that is read like any slice and cannot be assigned to. So a piece of a text is made a text again by `utf8(s.bytes[a..b])`, which copies nothing.
+The bytes of a text are its `bytes` field, a `Slice[u8]` that is read like any slice and cannot be assigned to. So a piece of a text is made a text again by `utf8(s.bytes[a..b])`, which copies nothing. The size of `s.bytes` is the size of `s` to `arith`, so a fact about one proves an index or a piece of the other, also through a name given `s.bytes`.
 
 `utf8` of the bytes of `"hi"` is `.ok("hi")`. `utf8` of bytes whose first is 255, which no UTF-8 text holds, is `.err(Utf8Error(at: 0))`.
 

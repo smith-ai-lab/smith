@@ -488,6 +488,16 @@ impl Builder<'_, '_> {
         }
     }
 
+    /// Whether `e` is a name that holds a text.
+    fn is_text(&self, e: &Expr) -> bool {
+        let Expr::Name { name, .. } = e else {
+            return false;
+        };
+        (self.body.names.iter().rev())
+            .find(|(n, _)| n == name)
+            .is_some_and(|(_, t)| matches!(t, Ty::Text))
+    }
+
     /// A field read from a name, written out with the place of the name, and
     /// for a `var` its version.
     fn path(&self, e: &Expr) -> Option<String> {
@@ -499,6 +509,9 @@ impl Builder<'_, '_> {
                 let at = self.body.names.iter().rposition(|(n, _)| n == name)?;
                 Some(root(self.body, self.facts, at))
             }
+            // The bytes of a text are the text, so what is known of the size of
+            // one is known of the size of the other.
+            Expr::Field { of, name, .. } if name == "bytes" && self.is_text(of) => self.path(of),
             Expr::Field { of, name, .. } => Some(format!("{}.{name}", self.path(of)?)),
             _ => None,
         }
@@ -769,6 +782,10 @@ impl<'a> Checker<'a> {
         let given = match value {
             Expr::List { items, .. } => Some(constant(items.len() as i128)),
             Expr::Name { .. } => builder.list_size(value),
+            // The bytes of a text are as many as the text.
+            Expr::Field { of, name, .. } if name == "bytes" && builder.is_text(of) => {
+                builder.list_size(value)
+            }
             // A frozen list is as long as the list was.
             Expr::Call(call)
                 if super::lists_and_text::is_freeze(self.defs, call) && call.args.len() == 1 =>

@@ -38,6 +38,10 @@ pub const ONCE: &[Test] = &[
         a_piece_of_the_bytes_of_a_text_is_a_text_exactly_when_both_ends_fall_between_characters,
     ),
     (
+        "what_is_known_of_the_size_of_a_text_is_known_of_the_size_of_its_bytes_and_the_other_way",
+        what_is_known_of_the_size_of_a_text_is_known_of_the_size_of_its_bytes_and_the_other_way,
+    ),
+    (
         "the_bytes_of_a_text_and_a_piece_of_them_as_text_ask_for_no_memory",
         the_bytes_of_a_text_and_a_piece_of_them_as_text_ask_for_no_memory,
     ),
@@ -180,7 +184,7 @@ fn text_and_places(g: &mut Gen) -> (Vec<u8>, usize, usize) {
 fn a_piece_of_the_bytes_of_a_text_is_a_text_exactly_when_both_ends_fall_between_characters() {
     generate::check(403, 60, text_and_places, |(bytes, a, z)| {
         let source = format!(
-            "fn main() ! console, alloc {{\n  match utf8(freeze({})) {{\n    .ok(t) {{\n      a: Nat = {a}\n      z: Nat = {z}\n      if a <= z and z <= t.bytes.size {{\n        match utf8(t.bytes[a..z]) {{\n          .ok(u) {{\n            print(\"ok {{u.size}}\")\n            loop i in 0..u.size {{ print(\"{{u[i]}}\") }}\n          }}\n          .err(e) {{ print(\"err\") }}\n        }}\n      }}\n    }}\n    .err(e) {{ print(\"bad\") }}\n  }}\n}}\n",
+            "fn main() ! console, alloc {{\n  match utf8(freeze({})) {{\n    .ok(t) {{\n      a: Nat = {a}\n      z: Nat = {z}\n      b = t.bytes\n      if a <= z and z <= t.size {{\n        match utf8(b[a..z]) {{\n          .ok(u) {{\n            print(\"ok {{u.size}}\")\n            loop i in 0..u.size {{ print(\"{{u[i]}}\") }}\n          }}\n          .err(e) {{ print(\"err\") }}\n        }}\n      }}\n    }}\n    .err(e) {{ print(\"bad\") }}\n  }}\n}}\n",
             written(bytes)
         );
         let lines = if std::str::from_utf8(&bytes[*a..*z]).is_ok() {
@@ -221,4 +225,9 @@ fn the_bytes_of_a_text_are_not_assigned_to() {
     };
     assert!(!refused(&source("s.bytes = [104]")).is_empty());
     assert!(!refused(&source("s.bytes[0] = 104")).is_empty());
+}
+
+fn what_is_known_of_the_size_of_a_text_is_known_of_the_size_of_its_bytes_and_the_other_way() {
+    let source = "fn main() ! console, alloc {\n  s = \"h\u{e9}llo\"\n  if 3 <= s.size {\n    t = s.bytes[0..3]\n    print(\"{t.size}\")\n  }\n  if 2 <= s.bytes.size {\n    print(\"{s[1]}\")\n  }\n}\n";
+    prints(source, ["3", "195"].map(String::from).to_vec());
 }
