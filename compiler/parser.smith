@@ -1,0 +1,1144 @@
+// The parser of Smith, written in Smith, following bootstrap/src/parser.rs for
+// what it does and knowledge/grammar.md for what it accepts: the tokens of
+// compiler/lexer.smith in, the tree of a file out, and the errors the parser
+// gives, each with its place. This file is not a program of its own: it uses
+// the types `Pos`, `Tok` and `Token` of the lexer, which sit above it when the
+// two are put together, as the tests do.
+//
+// The file is in two parts, cut at the last line that starts with `// ---- not built`. Everything
+// above that line compiles with the compiler on main, and the tests hold it to
+// the Rust parser. Everything below it is written as knowledge/ teaches, with
+// nothing chosen to dodge a gap, and the compiler refuses it for the reasons
+// listed on issue #675.
+
+use std.int (saturating_add, saturating_sub)
+use std.list (push)
+
+// ---- the tokens, as the parser reads them ----
+
+// The numbers of the keywords and punctuation, as the lexer's tables place them.
+fn kw_as() -> Nat { 1 }
+fn kw_use() -> Nat { 26 }
+fn p_lparen() -> Nat { 10 }
+fn p_rparen() -> Nat { 11 }
+fn p_comma() -> Nat { 16 }
+fn p_dot() -> Nat { 18 }
+
+fn is_keyword(t: Tok, k: Nat) -> bool {
+  match t {
+    .keyword(n) { n == k }
+    other { false }
+  }
+}
+
+fn is_punct(t: Tok, k: Nat) -> bool {
+  match t {
+    .punct(n) { n == k }
+    other { false }
+  }
+}
+
+fn is_newline_tok(t: Tok) -> bool {
+  match t {
+    .newline { true }
+    other { false }
+  }
+}
+
+fn is_eof(t: Tok) -> bool {
+  match t {
+    .eof { true }
+    other { false }
+  }
+}
+
+
+// ---- what the parser says ----
+
+// What was wanted where a mistake is, by number, and what was found there.
+// 1 the name of a module        2 a name after `.`
+// 3 a name for the module       4 a name to import or `)`
+// 5 the name to give it         6 `,` or `)`
+// 7 a line break                8 a list of names after a module's `as`,
+//   which is not supported yet  9 `use` after another item
+struct ParseError {
+  pos: Pos
+  wanted: u64
+  found: Tok
+}
+
+struct Name {
+  text: List[Byte]
+  pos: Pos
+}
+
+struct Listed {
+  name: Name
+  alias: Option[Name]
+}
+
+struct Use {
+  pos: Pos
+  module: List[Name]
+  alias: Option[Name]
+  listed: bool
+  names: List[Listed]
+}
+
+// ---- a place among the tokens ----
+
+struct Cursor {
+  tokens: List[Token]
+  at: Nat
+}
+
+fn eof_token() -> Token { Token(tok: .eof, pos: Pos(line: 1, col: 1)) }
+
+fn token_here(c: Cursor) -> Token {
+  if c.at < c.tokens.size { c.tokens[c.at] } else { eof_token() }
+}
+
+fn tok(c: Cursor) -> Tok { token_here(c).tok }
+
+fn pos(c: Cursor) -> Pos { token_here(c).pos }
+
+// One token on, but never past the last, which is `eof`.
+fn step(c: take Cursor) -> Cursor {
+  after = saturating_add(c.at, 1)
+  if after < c.tokens.size {
+    var next = c
+    next.at = after
+    next
+  } else {
+    c
+  }
+}
+
+fn skip_breaks(c: take Cursor) -> Cursor {
+  rounds = c.tokens.size
+  var next = c
+  loop round in 0..rounds {
+    if is_newline_tok(tok(next)) { next = step(next) } else { break }
+  }
+  next
+}
+
+fn expected(c: Cursor, wanted: u64) -> ParseError {
+  ParseError(pos: pos(c), wanted: wanted, found: tok(c))
+}
+
+// A mistake, and the cursor it was found at, which the parser reads on from.
+struct Failed {
+  at: Cursor
+  error: ParseError
+}
+
+fn fail(c: take Cursor, wanted: u64) -> Failed {
+  Failed(error: expected(c, wanted), at: c)
+}
+
+// A name, and the cursor after it.
+struct Got {
+  at: Cursor
+  name: Name
+}
+
+// A name, or what was wanted in its place.
+fn ident(c: take Cursor, wanted: u64) -> Result[Got, Failed] {
+  here = token_here(c)
+  match here.tok {
+    .ident(b) { .ok(Got(at: step(c), name: Name(text: b, pos: here.pos))) }
+    other { .err(fail(c, wanted)) }
+  }
+}
+
+// ---- skipping an item that holds a mistake ----
+
+// From `from`: to the next token, outside any bracket, that starts a line at its
+// first column. A brace, `requires` or `ensures` there belongs to the item
+// before it.
+fn skip_item(c: take Cursor, from: Nat) -> Cursor {
+  rounds = saturating_add(c.tokens.size, 1)
+  var next = Cursor(tokens: c.tokens, at: from)
+  var depth: Nat = 0
+  loop round in 0..rounds {
+    t = tok(next)
+    if is_eof(t) {
+      break
+    } else if is_newline_tok(t) and depth == 0 {
+      next = skip_breaks(next)
+      if pos(next).col == 1 and not continues_item(tok(next)) { break }
+    } else {
+      if is_punct(t, 10) or is_punct(t, 12) or is_punct(t, 14) {
+        depth = saturating_add(depth, 1)
+      } else if is_punct(t, 11) or is_punct(t, 13) or is_punct(t, 15) {
+        depth = saturating_sub(depth, 1)
+      }
+      next = step(next)
+    }
+  }
+  next
+}
+
+fn continues_item(t: Tok) -> bool {
+  is_punct(t, 14) or is_punct(t, 15) or is_keyword(t, 20) or is_keyword(t, 6)
+}
+
+// ---- use ----
+
+fn has_name(alias: Option[Name]) -> bool {
+  match alias {
+    .some(n) { true }
+    .none { false }
+  }
+}
+
+// What follows a name in a list: `as` and the name it gives.
+struct Aliased {
+  at: Cursor
+  alias: Option[Name]
+}
+
+fn alias_after(c: take Cursor, wanted: u64) -> Result[Aliased, Failed] ! alloc {
+  if is_keyword(tok(c), kw_as()) {
+    got = try ident(step(c), wanted)
+    .ok(Aliased(at: got.at, alias: .some(got.name)))
+  } else {
+    .ok(Aliased(at: c, alias: .none))
+  }
+}
+
+struct Names {
+  at: Cursor
+  names: List[Listed]
+}
+
+// The names between the parentheses of a `use`, and the `)`.
+fn listed_names(c: take Cursor) -> Result[Names, Failed] ! alloc {
+  rounds = c.tokens.size
+  var at = step(c)
+  var names: List[Listed] = []
+  var done = false
+  loop round in 0..rounds {
+    if not done {
+      at = skip_breaks(at)
+      if is_punct(tok(at), p_rparen()) {
+        done = true
+      } else {
+        got = try ident(at, 4)
+        renamed = try alias_after(got.at, 5)
+        names = push(names, Listed(name: got.name, alias: renamed.alias))
+        at = skip_breaks(renamed.at)
+        if is_punct(tok(at), p_comma()) {
+          at = step(at)
+        } else if not is_punct(tok(at), p_rparen()) {
+          return .err(fail(at, 6))
+        }
+      }
+    }
+  }
+  .ok(Names(at: step(at), names: names))
+}
+
+struct UseLine {
+  at: Cursor
+  line: Use
+}
+
+// A `use` line and the line break after it: the module's name, then the names
+// taken from it in parentheses.
+fn use_line(c: take Cursor) -> Result[UseLine, Failed] ! alloc {
+  start = pos(c)
+  rounds = c.tokens.size
+  first = try ident(step(c), 1)
+  var at = first.at
+  var module: List[Name] = [first.name]
+  loop round in 0..rounds {
+    if is_punct(tok(at), p_dot()) {
+      more = try ident(step(at), 2)
+      module = push(module, more.name)
+      at = more.at
+    } else {
+      break
+    }
+  }
+  renamed = try alias_after(at, 3)
+  at = renamed.at
+  listed = is_punct(tok(at), p_lparen())
+  if listed and has_name(renamed.alias) {
+    return .err(fail(at, 8))
+  }
+  var names: List[Listed] = []
+  if listed {
+    inside = try listed_names(at)
+    names = inside.names
+    at = inside.at
+  }
+  t = tok(at)
+  if is_newline_tok(t) or is_eof(t) {
+    .ok(UseLine(at: at, line: Use(pos: start, module: module, alias: renamed.alias,
+                                  listed: listed, names: names)))
+  } else {
+    .err(fail(at, 7))
+  }
+}
+
+// ---- the `use` lines of a file ----
+
+struct Uses {
+  uses: List[Use]
+  errors: List[ParseError]
+}
+
+// The `use` lines of a file, and the mistakes of the file in them. An item that
+// is not a `use` is stepped over, as the lines after it are not this part's:
+// it is read to the next item and no further.
+fn parse_uses(tokens: take List[Token]) -> Uses ! alloc {
+  rounds = tokens.size
+  var at = Cursor(tokens: tokens, at: 0)
+  var uses: List[Use] = []
+  var errors: List[ParseError] = []
+  var items = false
+  loop round in 0..rounds {
+    at = skip_breaks(at)
+    start = at.at
+    t = tok(at)
+    if is_eof(t) {
+      break
+    } else if is_keyword(t, kw_use()) {
+      late = items
+      here = pos(at)
+      match use_line(at) {
+        .ok(got) {
+          if late { errors = push(errors, ParseError(pos: here, wanted: 9, found: t)) }
+          uses = push(uses, got.line)
+          at = got.at
+        }
+        .err(f) {
+          errors = push(errors, f.error)
+          at = skip_item(f.at, start)
+        }
+      }
+    } else {
+      items = true
+      at = skip_item(step(at), start)
+    }
+  }
+  Uses(uses: uses, errors: errors)
+}
+
+// ---- not built ----
+
+// Everything from here down is written as knowledge/ teaches and is refused by
+// the compiler on main. Each reason is listed on issue #675 with the smallest
+// program that shows it.
+
+// ---- the tree ----
+
+// A type contains itself here and in every type below: a tree is written as a
+// type that holds its own kind (recursive-types.md).
+enum Type {
+  named: Named
+  bounds: Bounds
+  array: ArrayOf
+  tuple: List[Type]
+  function: FnType
+  statement: Comparison
+}
+
+struct Named {
+  name: Name
+  args: List[TypeArg]
+}
+
+enum TypeArg {
+  type: Type
+  expr: Expr
+}
+
+struct Bounds {
+  low: Bound
+  high: Bound
+}
+
+enum Bound {
+  number: Name
+  name: Name
+}
+
+struct ArrayOf {
+  sizes: List[Expr]
+  item: Type
+}
+
+struct FnType {
+  params: List[Type]
+  result: Option[Type]
+  effects: List[Name]
+}
+
+struct Comparison {
+  left: Expr
+  op: Nat
+  right: Expr
+}
+
+enum Piece {
+  text: List[Byte]
+  expr: Expr
+}
+
+enum Expr {
+  name: Name
+  number: Name
+  string: List[Piece]
+  tuple: List[Expr]
+  array: List[Expr]
+  call: Call
+  index: Index
+  field: Field
+  binary: Binary
+  prefix: Prefix
+  pipe: Pipe
+  range: Range
+  variant: CaseOf
+  conditional: IfOf
+  selection: MatchOf
+  counted: ForOf
+  repeated: LoopOf
+  lambda: Lambda
+}
+
+struct Arg {
+  label: Option[Name]
+  value: Expr
+}
+
+struct Call {
+  callee: Expr
+  args: List[Arg]
+  lambda: Option[Lambda]
+  pos: Pos
+}
+
+struct Index {
+  of: Expr
+  at: List[Expr]
+  pos: Pos
+}
+
+struct Field {
+  of: Expr
+  name: Name
+}
+
+struct Binary {
+  op: Nat
+  left: Expr
+  right: Expr
+  pos: Pos
+}
+
+struct Prefix {
+  op: Nat
+  operand: Expr
+  pos: Pos
+}
+
+struct Pipe {
+  value: Expr
+  call: Expr
+  tried: bool
+  pos: Pos
+}
+
+struct Range {
+  from: Option[Expr]
+  to: Option[Expr]
+  pos: Pos
+}
+
+struct CaseOf {
+  name: Name
+  args: Option[List[Arg]]
+}
+
+struct IfOf {
+  cond: Expr
+  then: List[Stmt]
+  otherwise: Option[Expr]
+  pos: Pos
+}
+
+struct Arm {
+  pattern: Pattern
+  body: List[Stmt]
+}
+
+struct MatchOf {
+  of: Expr
+  arms: List[Arm]
+  pos: Pos
+}
+
+struct ForOf {
+  names: List[Name]
+  body: List[Stmt]
+  pos: Pos
+}
+
+struct LoopOf {
+  names: Option[Pattern]
+  over: Option[Expr]
+  decreases: List[Expr]
+  body: List[Stmt]
+  pos: Pos
+}
+
+struct LambdaArg {
+  pattern: Pattern
+  type: Option[Type]
+}
+
+struct Lambda {
+  args: List[LambdaArg]
+  result: Option[Type]
+  body: List[Stmt]
+  pos: Pos
+}
+
+enum Pattern {
+  bind: Name
+  mutable: Name
+  variant: CasePattern
+  tuple: List[Pattern]
+  literal: Name
+  string: List[Piece]
+  list: List[Pattern]
+}
+
+struct CasePattern {
+  name: Name
+  inner: Option[Pattern]
+}
+
+enum Stmt {
+  define: Define
+  declare: VarDef
+  assign: Assign
+  bracket: With
+  stop: Pos
+  leave: Return
+  expr: Expr
+}
+
+struct Define {
+  pattern: Pattern
+  type: Option[Type]
+  value: Expr
+}
+
+struct VarDef {
+  name: Name
+  type: Option[Type]
+  value: Expr
+}
+
+struct Assign {
+  place: Expr
+  op: Nat
+  value: Expr
+}
+
+struct With {
+  pattern: Option[Pattern]
+  value: Expr
+}
+
+struct Return {
+  value: Option[Expr]
+  pos: Pos
+}
+
+// ---- reading with a cursor ----
+
+// What a parse function gives: the cursor after what it read, and what it read.
+// The cursor is given and given back by every function, as a value that is
+// lent cannot be stored in the result.
+struct Parsed[T] {
+  at: Cursor
+  value: T
+}
+
+fn is_name(t: Tok) -> bool {
+  match t {
+    .ident(b) { true }
+    other { false }
+  }
+}
+
+// Whether the token after this one is the punctuation `k`: the one token of
+// lookahead the grammar allows.
+fn next_is_punct(c: Cursor, k: Nat) -> bool {
+  after = saturating_add(c.at, 1)
+  if after < c.tokens.size { is_punct(c.tokens[after].tok, k) } else { false }
+}
+
+fn punct_is(c: Cursor, k: Nat) -> bool { is_punct(tok(c), k) }
+
+fn word_is(c: Cursor, k: Nat) -> bool { is_keyword(tok(c), k) }
+
+// Steps over the punctuation `k`, or says that `what` was wanted.
+fn expect_punct(c: take Cursor, k: Nat, what: u64) -> Result[Cursor, Failed] {
+  if punct_is(c, k) { .ok(step(c)) } else { .err(fail(c, what)) }
+}
+
+// ---- types ----
+
+fn ty(c: take Cursor) -> Result[Parsed[Type], Failed] ! alloc {
+  if punct_is(c, 10) {
+    got = try types_between(step(c), 11)
+    .ok(Parsed(at: got.at, value: .tuple(got.value)))
+  } else if word_is(c, 8) {
+    function_type(c)
+  } else if punct_is(c, 12) {
+    array_type(c)
+  } else {
+    named_or_bounds(c)
+  }
+}
+
+fn types_between(c: take Cursor, close: Nat) -> Result[Parsed[List[Type]], Failed] ! alloc {
+  var at = c
+  var all: List[Type] = []
+  loop round in 0..at.tokens.size {
+    at = skip_breaks(at)
+    if punct_is(at, close) { break }
+    got = try ty(at)
+    all = push(all, got.value)
+    at = got.at
+    if punct_is(at, p_comma()) { at = step(at) }
+  }
+  .ok(Parsed(at: step(at), value: all))
+}
+
+fn named_or_bounds(c: take Cursor) -> Result[Parsed[Type], Failed] ! alloc {
+  got = try ident(c, 20)
+  if punct_is(got.at, 0) {
+    high = try ident(step(got.at), 21)
+    .ok(Parsed(at: high.at, value: .bounds(Bounds(low: .name(got.name), high: .name(high.name)))))
+  } else if punct_is(got.at, 12) {
+    args = try type_args(step(got.at))
+    .ok(Parsed(at: args.at, value: .named(Named(name: got.name, args: args.value))))
+  } else {
+    .ok(Parsed(at: got.at, value: .named(Named(name: got.name, args: []))))
+  }
+}
+
+fn type_args(c: take Cursor) -> Result[Parsed[List[TypeArg]], Failed] ! alloc {
+  var at = c
+  var all: List[TypeArg] = []
+  loop round in 0..at.tokens.size {
+    at = skip_breaks(at)
+    if punct_is(at, 13) { break }
+    got = try ty(at)
+    all = push(all, .type(got.value))
+    at = got.at
+    if punct_is(at, p_comma()) { at = step(at) }
+  }
+  .ok(Parsed(at: step(at), value: all))
+}
+
+fn array_type(c: take Cursor) -> Result[Parsed[Type], Failed] ! alloc {
+  var at = step(c)
+  var sizes: List[Expr] = []
+  loop round in 0..at.tokens.size {
+    if punct_is(at, 13) { break }
+    got = try expr(at)
+    sizes = push(sizes, got.value)
+    at = got.at
+    if punct_is(at, p_comma()) { at = step(at) }
+  }
+  item = try ty(step(at))
+  .ok(Parsed(at: item.at, value: .array(ArrayOf(sizes: sizes, item: item.value))))
+}
+
+fn function_type(c: take Cursor) -> Result[Parsed[Type], Failed] ! alloc {
+  open = try expect_punct(step(c), 10, 22)
+  params = try types_between(open, 11)
+  var at = params.at
+  var result: Option[Type] = .none
+  if punct_is(at, 1) {
+    got = try ty(step(at))
+    result = .some(got.value)
+    at = got.at
+  }
+  .ok(Parsed(at: at, value: .function(FnType(params: params.value, result: result, effects: []))))
+}
+
+// ---- expressions ----
+
+// The binding power of a binary operator, from `or` at 1 to `*` at 6, and
+// 0 for a token that is no binary operator.
+fn power(t: Tok) -> Nat {
+  match t {
+    .keyword(k) { if k == 17 { 1 } else if k == 0 { 2 } else { 0 } }
+    .punct(k) {
+      if k == 6 or k == 7 or k == 8 or k == 9 or k == 20 or k == 21 {
+        3
+      } else if k == 0 {
+        4
+      } else if k == 22 or k == 23 {
+        5
+      } else if k == 24 or k == 25 or k == 26 {
+        6
+      } else {
+        0
+      }
+    }
+    other { 0 }
+  }
+}
+
+fn expr(c: take Cursor) -> Result[Parsed[Expr], Failed] ! alloc {
+  first = try binary(c, 1)
+  var at = first.at
+  var value = first.value
+  loop round in 0..at.tokens.size {
+    if punct_is(at, 29) {
+      here = pos(at)
+      next = step(at)
+      tried = word_is(next, 25)
+      after = if tried { step(next) } else { next }
+      call = try postfix(after)
+      value = .pipe(Pipe(value: value, call: call.value, tried: tried, pos: here))
+      at = call.at
+    } else {
+      break
+    }
+  }
+  .ok(Parsed(at: at, value: value))
+}
+
+// Operators of binding power `least` and above, each grouping to the left.
+fn binary(c: take Cursor, least: Nat) -> Result[Parsed[Expr], Failed] ! alloc {
+  first = try operand(c)
+  var at = first.at
+  var left = first.value
+  loop round in 0..at.tokens.size {
+    p = power(tok(at))
+    if p >= least and p > 0 {
+      here = pos(at)
+      op = operator_number(tok(at))
+      right = try binary(step(at), saturating_add(p, 1))
+      left = .binary(Binary(op: op, left: left, right: right.value, pos: here))
+      at = right.at
+    } else {
+      break
+    }
+  }
+  .ok(Parsed(at: at, value: left))
+}
+
+fn operator_number(t: Tok) -> Nat {
+  match t {
+    .keyword(k) { k }
+    .punct(k) { saturating_add(k, 100) }
+    other { 0 }
+  }
+}
+
+// `not` covers the whole comparison that follows it.
+fn operand(c: take Cursor) -> Result[Parsed[Expr], Failed] ! alloc {
+  if word_is(c, 16) {
+    here = pos(c)
+    got = try binary(step(c), 3)
+    .ok(Parsed(at: got.at, value: .prefix(Prefix(op: 16, operand: got.value, pos: here))))
+  } else {
+    unary(c)
+  }
+}
+
+fn unary(c: take Cursor) -> Result[Parsed[Expr], Failed] ! alloc {
+  here = pos(c)
+  if punct_is(c, 23) or word_is(c, 25) {
+    op = operator_number(tok(c))
+    got = try power_of(step(c))
+    .ok(Parsed(at: got.at, value: .prefix(Prefix(op: op, operand: got.value, pos: here))))
+  } else {
+    power_of(c)
+  }
+}
+
+// `^` groups to the right, and binds tighter than a prefix.
+fn power_of(c: take Cursor) -> Result[Parsed[Expr], Failed] ! alloc {
+  base = try postfix(c)
+  if punct_is(base.at, 27) {
+    here = pos(base.at)
+    exponent = try unary(step(base.at))
+    .ok(Parsed(at: exponent.at, value: .binary(Binary(op: 127, left: base.value, right: exponent.value, pos: here))))
+  } else {
+    .ok(base)
+  }
+}
+
+fn postfix(c: take Cursor) -> Result[Parsed[Expr], Failed] ! alloc {
+  first = try primary(c)
+  var at = first.at
+  var value = first.value
+  loop round in 0..at.tokens.size {
+    here = pos(at)
+    if punct_is(at, 10) {
+      args = try arguments(step(at))
+      value = .call(Call(callee: value, args: args.value, lambda: .none, pos: here))
+      at = args.at
+    } else if punct_is(at, 12) {
+      inside = try expressions_between(step(at), 13)
+      value = .index(Index(of: value, at: inside.value, pos: here))
+      at = inside.at
+    } else if punct_is(at, 18) {
+      name = try ident(step(at), 2)
+      value = .field(Field(of: value, name: name.name))
+      at = name.at
+    } else {
+      break
+    }
+  }
+  .ok(Parsed(at: at, value: value))
+}
+
+fn expressions_between(c: take Cursor, close: Nat) -> Result[Parsed[List[Expr]], Failed] ! alloc {
+  var at = c
+  var all: List[Expr] = []
+  loop round in 0..at.tokens.size {
+    at = skip_breaks(at)
+    if punct_is(at, close) { break }
+    got = try expr(at)
+    all = push(all, got.value)
+    at = got.at
+    if punct_is(at, p_comma()) { at = step(at) }
+  }
+  .ok(Parsed(at: step(at), value: all))
+}
+
+// The arguments of a call, after its `(`: each may be named.
+fn arguments(c: take Cursor) -> Result[Parsed[List[Arg]], Failed] ! alloc {
+  var at = c
+  var all: List[Arg] = []
+  loop round in 0..at.tokens.size {
+    at = skip_breaks(at)
+    if punct_is(at, 11) { break }
+    var label: Option[Name] = .none
+    if is_name(tok(at)) and next_is_punct(at, 17) {
+      named = try ident(at, 23)
+      label = .some(named.name)
+      at = step(named.at)
+    }
+    got = try expr(at)
+    all = push(all, Arg(label: label, value: got.value))
+    at = got.at
+    if punct_is(at, p_comma()) { at = step(at) }
+  }
+  .ok(Parsed(at: step(at), value: all))
+}
+
+fn primary(c: take Cursor) -> Result[Parsed[Expr], Failed] ! alloc {
+  here = token_here(c)
+  match here.tok {
+    .ident(b) { .ok(Parsed(at: step(c), value: .name(Name(text: b, pos: here.pos)))) }
+    .number(b) { .ok(Parsed(at: step(c), value: .number(Name(text: b, pos: here.pos)))) }
+    .string(b) { .ok(Parsed(at: step(c), value: .string([.text(b)]))) }
+    .punct(k) {
+      if k == 10 {
+        inside = try expressions_between(step(c), 11)
+        .ok(Parsed(at: inside.at, value: .tuple(inside.value)))
+      } else if k == 12 {
+        inside = try expressions_between(step(c), 13)
+        .ok(Parsed(at: inside.at, value: .array(inside.value)))
+      } else if k == 18 {
+        case_of(c)
+      } else if k == 14 {
+        lambda(c)
+      } else {
+        .err(fail(c, 24))
+      }
+    }
+    .keyword(k) {
+      if k == 11 { if_of(c) } else if k == 15 { match_of(c) } else { .err(fail(c, 24)) }
+    }
+    other { .err(fail(c, 24)) }
+  }
+}
+
+fn case_of(c: take Cursor) -> Result[Parsed[Expr], Failed] ! alloc {
+  name = try ident(step(c), 25)
+  if punct_is(name.at, 10) {
+    args = try arguments(step(name.at))
+    .ok(Parsed(at: args.at, value: .variant(CaseOf(name: name.name, args: .some(args.value)))))
+  } else {
+    .ok(Parsed(at: name.at, value: .variant(CaseOf(name: name.name, args: .none))))
+  }
+}
+
+fn if_of(c: take Cursor) -> Result[Parsed[Expr], Failed] ! alloc {
+  here = pos(c)
+  cond = try expr(step(c))
+  body = try block(cond.at)
+  var at = body.at
+  var otherwise: Option[Expr] = .none
+  if word_is(at, 5) {
+    after = step(at)
+    if word_is(after, 11) {
+      chained = try if_of(after)
+      otherwise = .some(chained.value)
+      at = chained.at
+    } else {
+      rest = try block(after)
+      otherwise = .some(.lambda(Lambda(args: [], result: .none, body: rest.value, pos: pos(after))))
+      at = rest.at
+    }
+  }
+  .ok(Parsed(at: at, value: .conditional(IfOf(cond: cond.value, then: body.value, otherwise: otherwise, pos: here))))
+}
+
+fn match_of(c: take Cursor) -> Result[Parsed[Expr], Failed] ! alloc {
+  here = pos(c)
+  of = try expr(step(c))
+  open = try expect_punct(of.at, 14, 26)
+  var at = open
+  var arms: List[Arm] = []
+  loop round in 0..at.tokens.size {
+    at = skip_breaks(at)
+    if punct_is(at, 15) { break }
+    pattern = try pattern(at)
+    body = try block(pattern.at)
+    arms = push(arms, Arm(pattern: pattern.value, body: body.value))
+    at = body.at
+  }
+  .ok(Parsed(at: step(at), value: .selection(MatchOf(of: of.value, arms: arms, pos: here))))
+}
+
+fn lambda(c: take Cursor) -> Result[Parsed[Expr], Failed] ! alloc {
+  here = pos(c)
+  body = try block(c)
+  .ok(Parsed(at: body.at, value: .lambda(Lambda(args: [], result: .none, body: body.value, pos: here))))
+}
+
+// ---- patterns ----
+
+fn pattern(c: take Cursor) -> Result[Parsed[Pattern], Failed] ! alloc {
+  here = token_here(c)
+  match here.tok {
+    .number(b) { .ok(Parsed(at: step(c), value: .literal(Name(text: b, pos: here.pos)))) }
+    .ident(b) { .ok(Parsed(at: step(c), value: .bind(Name(text: b, pos: here.pos)))) }
+    .keyword(k) {
+      if k == 27 {
+        name = try ident(step(c), 27)
+        .ok(Parsed(at: name.at, value: .mutable(name.name)))
+      } else {
+        .err(fail(c, 28))
+      }
+    }
+    .punct(k) {
+      if k == 18 {
+        name = try ident(step(c), 25)
+        if punct_is(name.at, 10) {
+          inner = try pattern(step(name.at))
+          close = try expect_punct(inner.at, 11, 29)
+          .ok(Parsed(at: close, value: .variant(CasePattern(name: name.name, inner: .some(inner.value)))))
+        } else {
+          .ok(Parsed(at: name.at, value: .variant(CasePattern(name: name.name, inner: .none))))
+        }
+      } else {
+        .err(fail(c, 28))
+      }
+    }
+    other { .err(fail(c, 28)) }
+  }
+}
+
+// ---- blocks and statements ----
+
+fn block(c: take Cursor) -> Result[Parsed[List[Stmt]], Failed] ! alloc {
+  open = try expect_punct(c, 14, 30)
+  var at = open
+  var all: List[Stmt] = []
+  loop round in 0..at.tokens.size {
+    at = skip_breaks(at)
+    if punct_is(at, 15) { break }
+    got = try statement(at)
+    all = push(all, got.value)
+    at = got.at
+  }
+  .ok(Parsed(at: step(at), value: all))
+}
+
+fn statement(c: take Cursor) -> Result[Parsed[Stmt], Failed] ! alloc {
+  here = pos(c)
+  if word_is(c, 2) {
+    .ok(Parsed(at: step(c), value: .stop(here)))
+  } else if word_is(c, 21) {
+    after = step(c)
+    if is_newline_tok(tok(after)) or punct_is(after, 15) {
+      .ok(Parsed(at: after, value: .leave(Return(value: .none, pos: here))))
+    } else {
+      value = try expr(after)
+      .ok(Parsed(at: value.at, value: .leave(Return(value: .some(value.value), pos: here))))
+    }
+  } else if word_is(c, 27) {
+    name = try ident(step(c), 27)
+    equals = try expect_punct(name.at, 19, 31)
+    value = try expr(equals)
+    .ok(Parsed(at: value.at, value: .declare(VarDef(name: name.name, type: .none, value: value.value))))
+  } else {
+    first = try expr(c)
+    if punct_is(first.at, 19) {
+      value = try expr(step(first.at))
+      .ok(Parsed(at: value.at, value: .assign(Assign(place: first.value, op: 19, value: value.value))))
+    } else {
+      .ok(Parsed(at: first.at, value: .expr(first.value)))
+    }
+  }
+}
+
+// ---- items ----
+
+struct Param {
+  name: Name
+  type: Type
+}
+
+struct Function {
+  name: Name
+  params: List[Param]
+  result: Option[Type]
+  effects: List[Name]
+  body: List[Stmt]
+}
+
+struct Definition {
+  name: Name
+  fields: List[Param]
+}
+
+struct File {
+  uses: List[Use]
+  functions: List[Function]
+  structs: List[Definition]
+}
+
+fn params(c: take Cursor) -> Result[Parsed[List[Param]], Failed] ! alloc {
+  var at = c
+  var all: List[Param] = []
+  loop round in 0..at.tokens.size {
+    at = skip_breaks(at)
+    if punct_is(at, 11) { break }
+    name = try ident(at, 32)
+    colon = try expect_punct(name.at, 17, 33)
+    kind = try ty(colon)
+    all = push(all, Param(name: name.name, type: kind.value))
+    at = kind.at
+    if punct_is(at, p_comma()) { at = step(at) }
+  }
+  .ok(Parsed(at: step(at), value: all))
+}
+
+fn function(c: take Cursor) -> Result[Parsed[Function], Failed] ! alloc {
+  name = try ident(step(c), 34)
+  open = try expect_punct(name.at, 10, 35)
+  list = try params(open)
+  var at = list.at
+  var result: Option[Type] = .none
+  if punct_is(at, 1) {
+    got = try ty(step(at))
+    result = .some(got.value)
+    at = got.at
+  }
+  body = try block(at)
+  .ok(Parsed(at: body.at, value: Function(name: name.name, params: list.value, result: result,
+                                          effects: [], body: body.value)))
+}
+
+fn structure(c: take Cursor) -> Result[Parsed[Definition], Failed] ! alloc {
+  name = try ident(step(c), 36)
+  open = try expect_punct(name.at, 14, 37)
+  var at = open
+  var fields: List[Param] = []
+  loop round in 0..at.tokens.size {
+    at = skip_breaks(at)
+    if punct_is(at, 15) { break }
+    field = try ident(at, 38)
+    colon = try expect_punct(field.at, 17, 39)
+    kind = try ty(colon)
+    fields = push(fields, Param(name: field.name, type: kind.value))
+    at = kind.at
+  }
+  .ok(Parsed(at: step(at), value: Definition(name: name.name, fields: fields)))
+}
+
+// A file: its `use` lines, then its definitions, each read on its own, so that
+// a mistake in one does not hide a mistake in another.
+fn parse(tokens: take List[Token]) -> Result[File, List[ParseError]] ! alloc {
+  rounds = tokens.size
+  var uses: List[Use] = []
+  var errors: List[ParseError] = []
+  var functions: List[Function] = []
+  var structs: List[Definition] = []
+  var items = false
+  var at = Cursor(tokens: tokens, at: 0)
+  loop round in 0..rounds {
+    at = skip_breaks(at)
+    start = at.at
+    t = tok(at)
+    if is_eof(t) {
+      break
+    } else if is_keyword(t, kw_use()) {
+      late = items
+      here = pos(at)
+      match use_line(at) {
+        .ok(got) {
+          if late { errors = push(errors, ParseError(pos: here, wanted: 9, found: t)) }
+          uses = push(uses, got.line)
+          at = got.at
+        }
+        .err(f) {
+          errors = push(errors, f.error)
+          at = skip_item(f.at, start)
+        }
+      }
+    } else if is_keyword(t, 8) {
+      items = true
+      match function(at) {
+        .ok(got) {
+          functions = push(functions, got.value)
+          at = got.at
+        }
+        .err(f) {
+          errors = push(errors, f.error)
+          at = skip_item(f.at, start)
+        }
+      }
+    } else if is_keyword(t, 22) {
+      items = true
+      match structure(at) {
+        .ok(got) {
+          structs = push(structs, got.value)
+          at = got.at
+        }
+        .err(f) {
+          errors = push(errors, f.error)
+          at = skip_item(f.at, start)
+        }
+      }
+    } else {
+      items = true
+      errors = push(errors, expected(at, 40))
+      at = skip_item(step(at), start)
+    }
+  }
+  if errors.size == 0 {
+    .ok(File(uses: uses, functions: functions, structs: structs))
+  } else {
+    .err(errors)
+  }
+}
