@@ -51,6 +51,22 @@ pub const ONCE: &[Test] = &[
         a_function_built_in_place_keeps_its_own_name_on_the_at_lines_of_its_code,
     ),
     (
+        "the_map_of_a_loop_that_writes_a_number_names_the_loop_the_runtime_and_the_entry_for_what_they_are",
+        the_map_of_a_loop_that_writes_a_number_names_the_loop_the_runtime_and_the_entry_for_what_they_are,
+    ),
+    (
+        "every_instruction_lowering_makes_holds_a_place_or_the_name_of_what_it_is",
+        every_instruction_lowering_makes_holds_a_place_or_the_name_of_what_it_is,
+    ),
+    (
+        "every_function_of_the_source_that_runs_is_the_name_of_an_at_line",
+        every_function_of_the_source_that_runs_is_the_name_of_an_at_line,
+    ),
+    (
+        "the_bytes_of_a_function_built_in_place_in_a_loop_are_no_more_than_it_compiled_alone",
+        the_bytes_of_a_function_built_in_place_in_a_loop_are_no_more_than_it_compiled_alone,
+    ),
+    (
         "no_pass_makes_a_place_the_program_did_not_have",
         no_pass_makes_a_place_the_program_did_not_have,
     ),
@@ -287,6 +303,10 @@ fn parse_at(line: &str) -> (u64, u64, &str, usize, usize, &str) {
     assert_eq!(words.len(), 5, "{line}");
     assert_eq!(words[0], "at", "{line}");
     let address = u64::from_str_radix(words[1].strip_prefix("0x").expect("hex"), 16).unwrap();
+    // Code that no line of the source wrote has a dash for its place.
+    if words[3] == "-" {
+        return (address, words[2].parse().unwrap(), "-", 0, 0, words[4]);
+    }
     let mut place = words[3].rsplitn(3, ':');
     let col = place.next().unwrap().parse().unwrap();
     let row = place.next().unwrap().parse().unwrap();
@@ -320,6 +340,8 @@ fn the_at_lines_of_hello_name_its_file_and_the_line_of_the_print_call() {
             .iter()
             .find(|(line, at)| !at.is_empty() && parse(line).3 == "hello.main")
             .unwrap_or_else(|| panic!("{}: main has no at lines\n{map}", target.name()));
+        // The code no line wrote is the function's own, and has a dash.
+        let at: Vec<&&str> = at.iter().filter(|l| parse_at(l).2 != "-").collect();
         let lines: Vec<usize> = at.iter().map(|l| parse_at(l).3).collect();
         assert!(at.iter().all(|l| parse_at(l).2 == "hello.smith"), "{}", target.name());
         assert!(at.iter().all(|l| parse_at(l).5 == "hello.main"), "{}", target.name());
@@ -348,6 +370,12 @@ fn the_at_lines_of_a_function_follow_its_line_in_order_and_cover_it_for_every_ta
                     assert_eq!(from, next, "a gap or an overlap in {line} for {}", target.name());
                     assert!(length > 0, "{run}");
                     next = from + length;
+                    if file == "-" {
+                        // The code of the function itself, or of a piece, which no
+                        // line of the source wrote.
+                        assert!(!name.is_empty(), "{run}");
+                        continue;
+                    }
                     assert!(row >= 1 && col >= 1, "{run}");
                     assert!(file.ends_with(".smith"), "{run}");
                     if file == "main.smith" {
@@ -470,4 +498,158 @@ fn an_instruction_a_pass_makes_in_place_of_others_holds_the_place_of_the_first()
         .find(|i| matches!(i.op, Op::FloatFused { op: Fused::MulAdd, .. }))
         .expect("a fused instruction");
     assert_eq!(found.at.line, 3);
+}
+
+const TOTAL: &str = r#"use std.console (console, print)
+use std.int (wrapping_add)
+use std.list (push)
+
+fn same[T](x: take T) -> T { x }
+
+fn total(xs: List[Nat]) -> Nat {
+  var t: Nat = 0
+  loop x in xs { t = wrapping(t, x) }
+  t
+}
+
+fn wrapping(a: Nat, b: Nat) -> Nat { if a > 1000 { b } else { wrapping_add(a, b) } }
+
+fn main() ! console, alloc {
+  var xs: List[Nat] = []
+  loop i in 0..50 { xs = push(xs, i) }
+  print("hello {same(total(xs))} {same("s")}")
+}
+"#;
+
+/// Each `at` line under the functions of a map, as the function the line is
+/// under and the line.
+/// An `at` line: the address, the size, the file, the line, the column, and the name.
+type Run = (u64, u64, String, usize, usize, String);
+
+fn runs_of(map: &str) -> Vec<(String, Run)> {
+    let mut found = Vec::new();
+    for (line, at) in functions(map) {
+        for run in at {
+            let (a, s, f, r, c, n) = parse_at(run);
+            found.push((parse(line).3.to_string(), (a, s, f.to_string(), r, c, n.to_string())));
+        }
+    }
+    found
+}
+
+fn the_map_of_a_loop_that_writes_a_number_names_the_loop_the_runtime_and_the_entry_for_what_they_are()
+{
+    let program = passed(TOTAL.as_bytes());
+    let names: Vec<String> = program.functions.iter().map(|f| f.name.clone()).collect();
+    for target in buildable() {
+        let (_, parts) = target.emit_parts(&program);
+        let map = smith::target::map(&names, &parts);
+        let runs = runs_of(&map);
+        let on = |name: &str| runs.iter().filter(|(_, r)| r.5 == name).collect::<Vec<_>>();
+        // The loop of `total`, on its line, and not under `wrapping`.
+        assert!(
+            on("main.total").iter().any(|(_, r)| r.2 == "main.smith" && r.3 == 9),
+            "{}\n{map}",
+            target.name()
+        );
+        // What no line wrote has a dash and the name of the piece.
+        for piece in ["<stack_entry>", "<digits>", "<join>"] {
+            assert!(on(piece).iter().all(|(_, r)| r.2 == "-"), "{piece}: {map}");
+        }
+        assert!(!on("<stack_entry>").is_empty() && !on("<digits>").is_empty(), "{map}");
+        // The one add of `wrapping_add(a, b)` on line 13 takes a few bytes, not the
+        // loop, the digits, and the joining of the text.
+        let add: u64 = on("main.wrapping")
+            .iter()
+            .filter(|(_, r)| r.3 == 13 && r.4 == 63)
+            .map(|(_, r)| r.1)
+            .sum();
+        assert!(add < 40, "{} takes {add} bytes\n{map}", target.name());
+        // The entry holds nothing of `main` that main did not write: the lines of
+        // `main` are those of its statements, 16 to 18.
+        assert!(on("main.main").iter().all(|(_, r)| (15..=19).contains(&r.3)), "{map}");
+    }
+}
+
+fn every_instruction_lowering_makes_holds_a_place_or_the_name_of_what_it_is() {
+    generate::check(9205, 10, programs::program, |case| {
+        if case.mistake.is_some() {
+            return;
+        }
+        let program = smith::lower(&case.source).expect("a program that builds");
+        for f in &program.functions {
+            for i in f.blocks.iter().flat_map(|b| &b.instructions) {
+                assert!(!i.at.is_none(), "an instruction of {} has no place: {:?}", f.name, i.op);
+            }
+        }
+    });
+}
+
+fn every_function_of_the_source_that_runs_is_the_name_of_an_at_line() {
+    generate::check(9206, 10, programs::program, |case| {
+        if case.mistake.is_some() {
+            return;
+        }
+        let lowered = smith::lower(&case.source).expect("a program that builds");
+        // The functions of the file, which have a line of it in their code.
+        let written: Vec<&str> = (lowered.functions.iter())
+            .filter(|f| f.name.starts_with("main.") && !f.name.starts_with("main.main"))
+            .filter(|f| f.blocks.iter().flat_map(|b| &b.instructions).any(|i| i.at.is_source()))
+            .map(|f| f.name.as_str())
+            .collect();
+        let program = scalar::passes(&lowered);
+        let kept: std::collections::HashSet<&str> = (program.functions.iter())
+            .flat_map(|f| &f.blocks)
+            .flat_map(|b| &b.instructions)
+            .filter(|i| i.at.is_source())
+            .map(|i| scalar::names::name(i.at.function))
+            .collect();
+        for name in written {
+            // A function whose code a pass took away whole is not in the map,
+            // and there is none that the passes keep a line of and that the map
+            // does not name.
+            let present = kept.contains(name);
+            let called = program.functions.iter().any(|f| f.name == name);
+            assert!(present || !called, "{name} is kept and no at line names it");
+        }
+    });
+}
+
+fn the_bytes_of_a_function_built_in_place_in_a_loop_are_no_more_than_it_compiled_alone() {
+    let source = "use std.console (console, print)\nuse std.int (wrapping_add)\n\nfn step(a: Nat, b: Nat) -> Nat { wrapping_add(a, b) }\n\nfn main() ! console, alloc {\n  var t: Nat = 0\n  loop i in 0..40 { t = step(t, i) }\n  print(\"{t}\")\n}\n";
+    let alone = {
+        let mut program = smith::lower(source.as_bytes()).expect("builds");
+        // A function that is cold is never built in place of its call.
+        for f in &mut program.functions {
+            f.cold |= f.name == "main.step";
+        }
+        scalar::passes(&program)
+    };
+    let in_place = passed(source.as_bytes());
+    for target in buildable() {
+        let size_of = |program: &Program| {
+            let names: Vec<String> = program.functions.iter().map(|f| f.name.clone()).collect();
+            let (_, parts) = target.emit_parts(program);
+            let map = smith::target::map(&names, &parts);
+            let by_name = |name: &str| -> (u64, u64) {
+                let own: u64 = functions(&map)
+                    .iter()
+                    .filter(|(l, _)| parse(l).3 == name)
+                    .map(|(l, _)| parse(l).1)
+                    .sum();
+                let held: u64 = runs_of(&map)
+                    .iter()
+                    .filter(|(_, r)| r.5 == name)
+                    .map(|(_, r)| r.1)
+                    .sum();
+                (own, held)
+            };
+            by_name("main.step")
+        };
+        let (own, _) = size_of(&alone);
+        let (none, held) = size_of(&in_place);
+        assert!(own > 0, "{}: a function that is not built in place has a line", target.name());
+        assert_eq!(none, 0, "{}", target.name());
+        assert!(held > 0 && held <= own, "{}: {held} bytes in place, {own} alone", target.name());
+    }
 }

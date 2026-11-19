@@ -837,7 +837,10 @@ pub fn code<S: System>(program: &Program) -> super::Laid<'_, Asm> {
         ));
     }
     let offsets: Vec<usize> = functions.iter().map(|&l| asm.label_offset(l)).collect();
-    let parts = super::parts(&offsets, &frames, asm.code_len(), &asm.places);
+    let pieces: Vec<Written> = (program.functions.iter())
+        .map(|f| Written::of(&f.name))
+        .collect();
+    let parts = super::parts(&offsets, &frames, asm.code_len(), &asm.places, &pieces);
     let data = texts
         .into_iter()
         .zip(program.data.iter().map(Vec::as_slice))

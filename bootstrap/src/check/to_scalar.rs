@@ -845,6 +845,7 @@ impl<'a> Lowering<'a> {
         let name = self.name_of(instance);
         let mut out = Out::new();
         out.written = form::names::intern(&name);
+        out.place = form::Place::of(&name);
         for (name, ty) in &view.params {
             let ty = ty.subst(&instance.args);
             let types = self.scalars(&ty);
@@ -1120,6 +1121,15 @@ impl<'a> Lowering<'a> {
     fn block(&mut self, out: &mut Out<'a>, stmts: &'a [Stmt], env: &[Ty]) -> Vec<form::Value> {
         let mut result = Vec::new();
         for stmt in stmts {
+            let outer = out.place;
+            out.place = self.place_of(
+                out,
+                match stmt {
+                    Stmt::Define { pos, .. } | Stmt::Assign { pos, .. } => *pos,
+                    Stmt::Destructure { pattern, .. } => pattern.pos(),
+                    Stmt::Expr(value) => value.pos(),
+                },
+            );
             result = match stmt {
                 Stmt::Define { name, value, .. } => {
                     // A name stands for the values it is bound to, so a
@@ -1155,6 +1165,7 @@ impl<'a> Lowering<'a> {
                 }
                 Stmt::Expr(value) => self.expr(out, value, env).1,
             };
+            out.place = outer;
         }
         result
     }
@@ -1183,8 +1194,10 @@ impl<'a> Lowering<'a> {
     /// The place in the source a position is, in the function being lowered.
     /// The code of the prelude has none.
     fn place_of(&mut self, out: &Out<'a>, pos: Pos) -> form::Place {
+        // The code of the prelude has no line to name: what it makes is placed
+        // where the call or the loop that it is lowered for is.
         if of_prelude(pos) {
-            return form::Place::NONE;
+            return out.place;
         }
         let module = module_of(pos);
         let defs = self.typed.defs;
@@ -1641,7 +1654,9 @@ impl<'a> Lowering<'a> {
         out.frames.push(frame);
         let caller = std::mem::replace(&mut out.at, out.frames.len() - 1);
         let written = out.written;
-        out.written = form::names::intern(&self.name_of(&instance));
+        if !of_prelude(view.f.pos) {
+            out.written = form::names::intern(&self.name_of(&instance));
+        }
         let code = Code::Stmts(&view.f.body);
         let mut result = self.leaving(out, code, &instance.args, (&gives, false), limits);
         out.written = written;
@@ -1694,7 +1709,9 @@ impl<'a> Lowering<'a> {
         out.frames.push(vec![walked, body]);
         let caller = std::mem::replace(&mut out.at, out.frames.len() - 1);
         let written = out.written;
-        out.written = form::names::intern(&self.name_of(&instance));
+        if !of_prelude(view.f.pos) {
+            out.written = form::names::intern(&self.name_of(&instance));
+        }
         let code = Code::Stmts(&view.f.body);
         let result = self.leaving(out, code, &instance.args, (&flow, false), limits);
         out.written = written;

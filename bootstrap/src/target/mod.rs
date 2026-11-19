@@ -68,14 +68,21 @@ type Laid<'a, A> = (A, Vec<(usize, &'a [u8])>, Vec<Part>);
 
 /// The runs of the code from `from` to `to`, given where the code of each
 /// instruction that has a new place begins. A run is the code of the
-/// instructions that have one place, and the code of those that have none is
-/// part of the run before it, or of the first run when none comes before. A
-/// function none of whose instructions has a place has no runs.
-fn runs(marks: &[(usize, Place)], from: usize, to: usize) -> Vec<Run> {
+/// instructions that have one place: a line of the source, or the piece of the
+/// runtime or the function that no line wrote, as the code before the first
+/// instruction is, which is the function's own, named `piece`. The code of an instruction whose
+/// place says nothing, as a constant that a pass makes, is part of the run before
+/// it. A function none of whose instructions has a line of the source, as the
+/// runtime's own, has no runs.
+fn runs(marks: &[(usize, Place)], from: usize, to: usize, piece: Place) -> Vec<Run> {
     let first = marks.partition_point(|(at, _)| *at < from);
     let last = marks.partition_point(|(at, _)| *at < to);
+    let marks = &marks[first..last];
+    if !marks.iter().any(|(_, place)| place.is_source()) {
+        return Vec::new();
+    }
     let mut runs: Vec<(usize, Place)> = Vec::new();
-    for &(at, place) in &marks[first..last] {
+    for &(at, place) in marks {
         if place.is_none() || runs.last().is_some_and(|(_, p)| *p == place) {
             continue;
         }
@@ -84,11 +91,18 @@ fn runs(marks: &[(usize, Place)], from: usize, to: usize) -> Vec<Run> {
         }
         runs.push((at, place));
     }
-    let Some(&(_, head)) = runs.first() else {
-        return Vec::new();
-    };
-    // The first run begins where the function does.
-    runs[0] = (from, head);
+    // The code before the first instruction, which no line wrote, is the
+    // function's own, and a function with no name has it in its first run.
+    if runs[0].0 > from && !piece.is_none() {
+        runs.insert(0, (from, piece));
+        // The code before the first instruction is one run with that of the
+        // instructions that are the function's own.
+        if runs.get(1).is_some_and(|(_, p)| *p == piece) {
+            runs.remove(1);
+        }
+    } else {
+        runs[0].0 = from;
+    }
     (0..runs.len())
         .map(|k| {
             let end = runs.get(k + 1).map_or(to, |(at, _)| *at);
@@ -105,7 +119,13 @@ fn runs(marks: &[(usize, Place)], from: usize, to: usize) -> Vec<Run> {
 /// from where each function begins, how large its frame is, where the code
 /// ends, and where the code of each instruction that has a new place begins.
 /// What comes before the first function is the start of the executable.
-fn parts(offsets: &[usize], frames: &[u32], end: usize, marks: &[(usize, Place)]) -> Vec<Part> {
+fn parts(
+    offsets: &[usize],
+    frames: &[u32],
+    end: usize,
+    marks: &[(usize, Place)],
+    pieces: &[Place],
+) -> Vec<Part> {
     let first = offsets.first().copied().unwrap_or(end);
     let mut parts = vec![Part {
         named: Named::Piece("<start>"),
@@ -121,7 +141,7 @@ fn parts(offsets: &[usize], frames: &[u32], end: usize, marks: &[(usize, Place)]
             address: at as u64,
             size: (to - at) as u64,
             frame,
-            at: runs(marks, at, to),
+            at: runs(marks, at, to, pieces[k]),
         });
     }
     parts
@@ -160,13 +180,20 @@ pub fn map(names: &[String], parts: &[Part]) -> String {
         ));
         for run in &part.at {
             let place = run.place;
+            // Code that no line of the source wrote has a dash for its place.
+            let at = match place.is_source() {
+                true => format!(
+                    "{}:{}:{}",
+                    crate::scalar::names::name(place.file),
+                    place.line,
+                    place.col
+                ),
+                false => "-".to_string(),
+            };
             text.push_str(&format!(
-                "at {:#x} {} {}:{}:{} {}\n",
+                "at {:#x} {} {at} {}\n",
                 run.address,
                 run.size,
-                crate::scalar::names::name(place.file),
-                place.line,
-                place.col,
                 crate::scalar::names::name(place.function),
             ));
         }
