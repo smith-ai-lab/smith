@@ -315,6 +315,8 @@ struct Model {
     lacking: BTreeSet<usize>,
     /// The statements that bind a value that nothing uses.
     unused: BTreeSet<usize>,
+    /// The statements that make a struct, which is only lent, and dropped.
+    stored: BTreeSet<usize>,
     discard: bool,
 }
 
@@ -339,6 +341,9 @@ impl Model {
                     if a.form == Form::Pass && !self.discard {
                         self.unused.insert(a.id);
                     }
+                    if a.form == Form::Store && !self.discard {
+                        self.stored.insert(a.id);
+                    }
                     if asked {
                         self.lacking.insert(a.id);
                     }
@@ -359,9 +364,15 @@ impl Model {
                     st = after;
                 }
                 Item::Loop(body) => {
+                    let reused = !self.again.is_empty();
                     let first = self.run(body, st);
                     let second = self.run(body, join(st, first));
                     st = join(st, join(first, second));
+                    // A value the loop gives away again in each round is
+                    // reported there, and not also as dropped before the first.
+                    if !reused && !self.again.is_empty() {
+                        st.unused = false;
+                    }
                 }
             }
         }
@@ -516,6 +527,7 @@ fn a_value_of_a_type_parameter_is_refused_exactly_where_it_is_used_again_or_drop
             again: BTreeSet::new(),
             lacking: BTreeSet::new(),
             unused: BTreeSet::new(),
+            stored: BTreeSet::new(),
             discard: c.asks.discard,
         };
         let end = model.run(
@@ -529,6 +541,14 @@ fn a_value_of_a_type_parameter_is_refused_exactly_where_it_is_used_again_or_drop
         let mut wanted: Vec<Pos> = model.again.iter().map(|id| w.reads[id - 1]).collect();
         wanted.extend(model.lacking.iter().map(|id| w.calls[id - 1]));
         wanted.extend(model.unused.iter().map(|id| w.names[id - 1]));
+        // The struct is made where its call has `Box(`, after `size_box(`.
+        wanted.extend(model.stored.iter().map(|id| {
+            let at = w.calls[id - 1];
+            Pos {
+                line: at.line,
+                col: at.col + "size_box(".len(),
+            }
+        }));
         if end.unused && !c.asks.discard {
             wanted.push(w.param);
         }
@@ -625,13 +645,19 @@ fn a_call_that_gives_a_type_without_what_a_bound_asks_is_one_error_at_the_call()
         let mut source = format!(
             "{TYPES}fn use_it[T: {bound}](a: T) -> u64 {{ 1 }}
 
-fn main() {{
+fn end[T](x: take T) ! diverge {{
+  loop {{
+    n = 1
+  }}
+}}
+
+fn main() ! diverge {{
   {}
   n = ",
             given.define()
         );
         let at = pos_after(&source);
-        source.push_str("use_it(v)\n  m = n\n}\n");
+        source.push_str("use_it(v)\n  m = n\n  end(v)\n}\n");
         let found = errors(&source);
         assert_eq!(found.len(), 1, "{found:?}\n{source}");
         assert_eq!(found[0].pos, at, "{source}");
@@ -691,10 +717,18 @@ impl{head} Named[Box[T]] {{
   fn name_of(x: Box[T]) -> u64 {{ 1 }}
 }}
 
-fn main() {{
+fn end[T](x: take T) ! diverge {{
+  loop {{
+    n = 1
+  }}
+}}
+
+fn main() ! diverge {{
   {}
-  n = name_of(Box(item: v))
+  b = Box(item: v)
+  n = name_of(b)
   m = n
+  end(b)
 }}
 ",
             given.define()
