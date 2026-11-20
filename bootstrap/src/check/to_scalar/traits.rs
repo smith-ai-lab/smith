@@ -213,11 +213,12 @@ impl<'a> Lowering<'a> {
                 for t in of {
                     to = self.described_part(out, t, to, d);
                 }
-                to
+                call(self, out, "end_tuple", to, Vec::new())
             }
             Ty::List(of) => {
                 let to = call(self, out, "sequence", to, Vec::new());
-                self.described_part(out, &of[0], to, d)
+                let to = self.described_part(out, &of[0], to, d);
+                call(self, out, "end_sequence", to, Vec::new())
             }
             Ty::Struct(s, args) => {
                 let def = &defs.file.structs[*s];
@@ -244,7 +245,8 @@ impl<'a> Lowering<'a> {
                 }
                 if *e == defs.option {
                     let to = call(self, out, "optional", to, Vec::new());
-                    return self.described_part(out, &args[0], to, d);
+                    let to = self.described_part(out, &args[0], to, d);
+                    return call(self, out, "end_optional", to, Vec::new());
                 }
                 let def = &defs.file.enums[*e];
                 let name = self.text(out, crate::check::written_name(&def.name).as_bytes());
@@ -260,6 +262,7 @@ impl<'a> Lowering<'a> {
                     if let Some(t) = holds {
                         to = self.described_part(out, &t.subst(args), to, d);
                     }
+                    to = call(self, out, "end_case", to, Vec::new());
                 }
                 call(self, out, "end_enumeration", to, Vec::new())
             }

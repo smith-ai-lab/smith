@@ -1011,12 +1011,12 @@ impl<'a> Defs<'a> {
             Ty::Int(_) => &["unsigned"],
             Ty::Text => &["text"],
             Ty::Nothing => &["nothing"],
-            Ty::Tuple(_) => &["tuple"],
+            Ty::Tuple(_) => &["tuple", "end_tuple"],
             Ty::Struct(..) => &["structure", "field", "end_structure"],
-            Ty::List(_) => &["sequence"],
+            Ty::List(_) => &["sequence", "end_sequence"],
             Ty::Enum(e, _) if *e == self.boolean => &["boolean"],
-            Ty::Enum(e, _) if *e == self.option => &["optional"],
-            _ => &["enumeration", "case", "end_enumeration"],
+            Ty::Enum(e, _) if *e == self.option => &["optional", "end_optional"],
+            _ => &["enumeration", "case", "end_case", "end_enumeration"],
         };
         let mut out: Vec<Instance> = names
             .iter()

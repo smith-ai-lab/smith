@@ -48,19 +48,23 @@ trait Describer[D] {
   fn text(d: take D) -> D ! alloc
   fn nothing(d: take D) -> D ! alloc
   fn optional(d: take D) -> D ! alloc
+  fn end_optional(d: take D) -> D ! alloc
   fn sequence(d: take D) -> D ! alloc
+  fn end_sequence(d: take D) -> D ! alloc
   fn tuple(d: take D, size: Nat) -> D ! alloc
+  fn end_tuple(d: take D) -> D ! alloc
   fn structure(d: take D, name: str, about: str, fields: Nat) -> D ! alloc
   fn field(d: take D, name: str, about: str, optional: bool) -> D ! alloc
   fn end_structure(d: take D) -> D ! alloc
   fn enumeration(d: take D, name: str, about: str, cases: Nat) -> D ! alloc
   fn case(d: take D, name: str, about: str, holds: bool) -> D ! alloc
+  fn end_case(d: take D) -> D ! alloc
   fn end_enumeration(d: take D) -> D ! alloc
   fn map(d: take D) -> D ! alloc
 }
 ```
 
-`signed` tells the least and the greatest value of a range when both are in `Int`, and `unsigned` when they are not. `optional`, `sequence`, and `map` are each followed by what it holds, `tuple` by its parts, `field` by what the field is, and `case` by what the case holds when `holds` is true. `structure` and `enumeration` are ended by `end_structure` and `end_enumeration`.
+`signed` tells the least and the greatest value of a range when both are in `Int`, and `unsigned` when they are not. `optional`, `sequence`, and `map` are each followed by what it holds, `tuple` by its parts, `field` by what the field is, and `case` by what the case holds when `holds` is true. Each is ended by its own `end_`, as `end_optional`, `end_sequence`, `end_tuple`, `end_structure`, `end_case` after each case, and `end_enumeration`, so a format whose output wraps what a shape holds knows where it ends.
 
 ## The shapes
 
