@@ -288,7 +288,7 @@ fn a_fingerprint_that_cannot_be_made_fails_and_says_why_and_one_that_can_is_prin
     if !cfg!(unix) {
         return;
     }
-    let line = format!("linux_x64 {}", "ab".repeat(32));
+    let line = format!("{} {}", Target::ALL[0].name(), "ab".repeat(32));
     let (ok, out, err) = fingerprint_script(&format!("echo '{line}'"));
     assert!((ok, out.as_str()) == (true, format!("{line}\n").as_str()), "{err}");
     // A run that ends in failure, as one that panics does.
