@@ -216,46 +216,55 @@ pub(super) fn own_final<S: std::hash::BuildHasher>(
     }
 }
 
-/// What one module of the file calls what: the module's name, the names it
-/// writes as they are, the names the file that is built gives its names with
-/// `as`, and what it lists from other modules. The module that is read whole
-/// and the one that is read item by item both answer from it, so that a name
-/// is written one way only.
-pub(super) struct ModuleScope<'s, 'k> {
+/// What one module of the file calls what, kept for the checker to ask: the
+/// module's name, whether it is of the standard library, the names it writes
+/// as they are, the names the file that is built gives its names with `as`,
+/// what it lists from other modules, and which of the names it writes are
+/// types. The module that is read whole and the one that is read item by item
+/// both answer from it, so that a name is written one way only.
+pub(super) struct Naming {
     /// The module's name.
-    pub(super) name: &'s str,
+    pub(super) name: String,
+    /// The module's number, which its places are at.
+    pub(super) number: usize,
     /// Whether the module is of the standard library, whose names that start
     /// with `__` are the compiler's and are not renamed.
     pub(super) standard: bool,
-    /// Whether the module writes a name as it is.
-    pub(super) kept: &'k dyn Fn(&str) -> bool,
+    /// The names the module writes as they are.
+    pub(super) kept: super::Set<String>,
     /// The names the file that is built gives the module's names with `as`.
-    pub(super) aliased: &'s [(String, String)],
+    pub(super) aliased: Vec<(String, String)>,
     /// What the module lists from other modules, as it writes each and as the
     /// file writes it.
-    pub(super) imports: &'s [(String, String)],
+    pub(super) imports: Vec<(String, String)>,
+    /// The names the module lists that are the names of structs, enums, or
+    /// traits, and, when the module is read whole, those it defines. A type is
+    /// written as the module wrote it, and found by what the module calls it.
+    pub(super) types: super::Set<String>,
 }
 
-impl<'s, 'k> ModuleScope<'s, 'k> {
+impl Naming {
     /// What a name the module defines is written as in the file: as the file
     /// that is built names it with `as`, as it is when the module writes it so
     /// or the compiler builds it, or with the module after it.
     pub(super) fn final_name(&self, name: &str) -> String {
         match self.aliased.iter().find(|(from, _)| from == name) {
             Some((_, alias)) => alias.clone(),
-            None if (self.kept)(name) => name.to_string(),
+            None if self.kept.contains(name) => name.to_string(),
             None => format!("{name}@{}", self.name),
         }
     }
 
     /// What the name the module writes is written as in the file, when it is
-    /// not as the module writes it. `defined` says whether the module defines
-    /// the name.
-    pub(super) fn rename(&self, name: &str, defined: bool) -> Option<String> {
+    /// not as the module writes it. `own` says whether the module defines the
+    /// name, and whether it defines it as a struct, an enum, or a trait, which
+    /// is not rewritten: it is found by the name the module wrote.
+    pub(super) fn rename(&self, name: &str, own: impl FnOnce() -> (bool, bool)) -> Option<String> {
         if let Some((_, to)) = self.imports.iter().find(|(from, _)| from == name) {
-            return Some(to.clone());
+            return (!self.types.contains(name)).then(|| to.clone());
         }
-        if !defined || (self.standard && name.starts_with("__")) {
+        let (defined, own_type) = own();
+        if !defined || own_type || (self.standard && name.starts_with("__")) {
             return None;
         }
         let to = self.final_name(name);
@@ -265,16 +274,13 @@ impl<'s, 'k> ModuleScope<'s, 'k> {
     /// The names, as the module writes them, that the name as the file writes
     /// it may be, among those the module defines, and among those it lists
     /// from other modules when `listed` says so.
-    pub(super) fn originals<'n>(&self, written: &'n str, listed: bool) -> Vec<&'n str>
-    where
-        's: 'n,
-    {
+    pub(super) fn originals<'n>(&'n self, written: &'n str, listed: bool) -> Vec<&'n str> {
         let mut found: Vec<&str> = Vec::new();
         if let Some((name, module)) = written.split_once('@') {
             if module == self.name {
                 found.push(name);
             }
-        } else if (self.kept)(written) {
+        } else if self.kept.contains(written) {
             found.push(written);
         }
         found.extend(
@@ -291,31 +297,32 @@ impl<'s, 'k> ModuleScope<'s, 'k> {
         }
         found
     }
-}
 
-/// What one module of the file calls what, kept for the checker to ask: the
-/// module's name, whether it is of the standard library, the names it writes
-/// as they are, the names the file that is built gives its names with `as`,
-/// and what it lists from other modules.
-pub(super) struct Naming {
-    pub(super) name: String,
-    pub(super) standard: bool,
-    pub(super) kept: HashSet<String>,
-    pub(super) aliased: Vec<(String, String)>,
-    pub(super) imports: Vec<(String, String)>,
+    /// What the name of a struct, an enum, or a trait the module defines, as
+    /// the module wrote it, is called in the file.
+    pub(super) fn own_key<'n>(&self, name: &'n str) -> std::borrow::Cow<'n, str> {
+        use std::borrow::Cow;
+        if self.standard && name.starts_with("__") {
+            return Cow::Borrowed(name);
+        }
+        match self.aliased.iter().find(|(from, _)| from == name) {
+            Some((_, alias)) => Cow::Owned(alias.clone()),
+            None if self.kept.contains(name) => Cow::Borrowed(name),
+            None => Cow::Owned(format!("{name}@{}", self.name)),
+        }
+    }
 }
 
 /// How each name of each module was written, and what each module calls what,
-/// so that the name a place means is told from what the module wrote there,
-/// and not from the tokens that were rewritten.
+/// so that the name a place means is told from what the module wrote there.
 #[derive(Default)]
 pub(super) struct Resolution {
     /// The name each rewritten token was written as, by its place and the name
     /// it was rewritten to, since a name the parser makes up may share the place
-    /// of a token.
+    /// of a token. Only a debug build keeps it.
     pub(super) written: HashMap<(crate::diag::Pos, String), String>,
     /// What each module calls what, by the module's number.
-    pub(super) modules: HashMap<usize, Naming>,
+    pub(super) modules: super::Map<usize, std::rc::Rc<Naming>>,
 }
 
 impl Resolution {
@@ -327,11 +334,28 @@ impl Resolution {
             .map_or(text, String::as_str)
     }
 
+    /// What the name of a struct, an enum, or a trait that is defined at `pos`
+    /// is called in the file that holds every module.
+    pub(super) fn def_key<'n>(
+        &self,
+        pos: crate::diag::Pos,
+        name: &'n str,
+    ) -> std::borrow::Cow<'n, str> {
+        // The file and the prelude write every name as it is.
+        if pos.line < super::STEP {
+            return std::borrow::Cow::Borrowed(name);
+        }
+        match self.modules.get(&(pos.line / super::STEP)) {
+            Some(module) => module.own_key(name),
+            None => std::borrow::Cow::Borrowed(name),
+        }
+    }
+
     /// What the name `text` at `pos` is called in the file that holds every
-    /// module, from what the module that wrote it calls what. `exists` says
-    /// whether the file has an item of a kind that is wanted with the name
-    /// it is asked about, which tells a name the module defines from one it
-    /// does not.
+    /// module, from what the module that wrote it calls what, where it names
+    /// what is not a type. `exists` says whether the file has an item of a
+    /// kind that is wanted with the name it is asked about, which tells a name
+    /// the module defines from one it does not.
     pub(super) fn key(
         &self,
         pos: crate::diag::Pos,
@@ -348,15 +372,7 @@ impl Resolution {
         if module.standard && written.starts_with("__") {
             return written.to_string();
         }
-        let kept = |n: &str| module.kept.contains(n);
-        let scope = ModuleScope {
-            name: &module.name,
-            standard: module.standard,
-            kept: &kept,
-            aliased: &module.aliased,
-            imports: &module.imports,
-        };
-        let own = scope.final_name(written);
+        let own = module.final_name(written);
         if exists(&own) {
             own
         } else {
