@@ -190,6 +190,23 @@ fn standard_library(root: &Path, numeric: &[Vec<String>]) {
         writeln!(out, "    &{users:?},").unwrap();
     }
     out.push_str("];\n");
+    // The modules that write the name of the trait `Function`, which ask that
+    // a function of the program be given one.
+    let users: Vec<&str> = files
+        .iter()
+        .zip(&texts)
+        .filter(|(_, text)| {
+            text.split(|c: char| !(c.is_alphanumeric() || c == '_'))
+                .any(|word| word == "Function")
+        })
+        .map(|(f, _)| f.file_stem().unwrap().to_str().unwrap())
+        .collect();
+    writeln!(
+        out,
+        "\n/// The modules of the standard library that write `Function`.\n\
+         const FUNCTION_USERS: &[&str] = &{users:?};"
+    )
+    .unwrap();
     let dest = PathBuf::from(std::env::var_os("OUT_DIR").unwrap()).join("std_modules.rs");
     std::fs::write(dest, out).unwrap();
 }
