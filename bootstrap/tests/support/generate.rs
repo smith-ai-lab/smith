@@ -142,7 +142,28 @@ pub fn check<T: Debug>(
     generate: impl Fn(&mut Gen) -> T,
     property: impl Fn(&T),
 ) {
-    if let Some(failure) = find_failure(seed, cases, &generate, &property) {
+    check_cases(seed, 0, cases, generate, property);
+}
+
+/// `check` over the `cases` inputs that start at the case `from` of the seed,
+/// so that a property over a hundred inputs is as many tests of a part of them
+/// each, `check_cases(seed, 20 * part, 20, ..)`, and no two of those tests draw
+/// the same input. The input of a case is the same whichever part it is in.
+pub fn check_cases<T: Debug>(
+    seed: u64,
+    from: u64,
+    cases: u64,
+    generate: impl Fn(&mut Gen) -> T,
+    property: impl Fn(&T),
+) {
+    let run = run_seed();
+    let failing = (from..from + cases).find_map(|case| {
+        let mut g = Gen::random(run, seed, case);
+        let input = generate(&mut g);
+        failure(&input, &property)?;
+        Some(shrink_for(SHRINKING, g.used, &generate, &property))
+    });
+    if let Some(failure) = failing {
         panic!(
             "the property fails for {:?}\n{}\n(the smallest of its failing inputs; its choices are {:?}; run again with SMITH_SEED={})",
             failure.input,
@@ -153,18 +174,7 @@ pub fn check<T: Debug>(
     }
 }
 
-/// The first input of `cases` that fails the property, shrunk, if any
-/// fails.
-pub fn find_failure<T>(
-    seed: u64,
-    cases: u64,
-    generate: &impl Fn(&mut Gen) -> T,
-    property: &impl Fn(&T),
-) -> Option<Failure<T>> {
-    find_failure_in_run(run_seed(), seed, cases, generate, property)
-}
-
-/// `find_failure` for the run with the seed `run`, which a test of the
+/// The failing input of `check` for the run with the seed `run`, which a test of the
 /// shrinker gives so that the failing input it starts from is the same in
 /// every run.
 pub fn find_failure_in_run<T>(
