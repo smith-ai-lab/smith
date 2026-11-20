@@ -42,7 +42,7 @@ fn entity(b: Byte) -> str {
 // What a page is written through, as it runs. A tag is left open until
 // something that is not an attribute is written, so that `attribute` may
 // follow `start`. A handler writes what it is given as it is: the texts are
-// escaped by `text` and `attr`, before they reach it.
+// escaped by `text` and by the elements, before they reach it.
 pub effect markup {
   fn start(tag: str)
   fn attribute(name: str, value: str)
@@ -70,10 +70,4 @@ pub fn escape(s: str) -> str ! alloc {
 // A text among other elements, written so that it is text and nothing else.
 pub fn text(s: str) ! markup, alloc {
   emit(escape(s))
-}
-
-// An attribute the library has no parameter for, on the tag that is open, with
-// its value written so that it is a value and nothing else.
-pub fn attr(name: str, value: str) ! markup, alloc {
-  attribute(name, escape(value))
 }
