@@ -10,6 +10,14 @@ pub fn wrapping_mul[T](a: T, b: T) -> T {
   __wrapping_mul(a, b)
 }
 
+pub fn wrapping_div[T](a: T, b: T) -> T {
+  __wrapping_div(a, b)
+}
+
+pub fn wrapping_rem[T](a: T, b: T) -> T {
+  __wrapping_rem(a, b)
+}
+
 pub fn saturating_add[T](a: T, b: T) -> T {
   __saturating_add(a, b)
 }
