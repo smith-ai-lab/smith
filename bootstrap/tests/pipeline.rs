@@ -16,8 +16,16 @@ pub const ONCE: &[Test] = &[
         a_pipeline_builds_to_the_bytes_of_the_call_it_stands_for_on_every_target,
     ),
     (
-        "a_line_that_starts_with_a_pipe_goes_on_from_the_line_before_at_any_depth",
-        a_line_that_starts_with_a_pipe_goes_on_from_the_line_before_at_any_depth,
+        "a_line_that_starts_with_a_pipe_goes_on_from_the_line_before_at_any_depth_part_1_of_3",
+        || a_line_that_starts_with_a_pipe_goes_on_from_the_line_before_at_any_depth(0),
+    ),
+    (
+        "a_line_that_starts_with_a_pipe_goes_on_from_the_line_before_at_any_depth_part_2_of_3",
+        || a_line_that_starts_with_a_pipe_goes_on_from_the_line_before_at_any_depth(1),
+    ),
+    (
+        "a_line_that_starts_with_a_pipe_goes_on_from_the_line_before_at_any_depth_part_3_of_3",
+        || a_line_that_starts_with_a_pipe_goes_on_from_the_line_before_at_any_depth(2),
     ),
     (
         "a_pipeline_binds_more_loosely_than_every_operator_and_groups_from_the_left",
@@ -159,10 +167,12 @@ fn a_pipeline_builds_to_the_bytes_of_the_call_it_stands_for_on_every_target() {
     );
 }
 
-fn a_line_that_starts_with_a_pipe_goes_on_from_the_line_before_at_any_depth() {
-    generate::check(
+fn a_line_that_starts_with_a_pipe_goes_on_from_the_line_before_at_any_depth(part: u64) {
+    generate::check_part(
         470_002,
         10,
+        part,
+        3,
         |g| {
             let count = 2 + g.below(3);
             let steps: Vec<Step> = (0..count).map(|_| step(g)).collect();
