@@ -1192,6 +1192,35 @@ impl<'a> Lowering<'a> {
                 let name = if signed { "signed" } else { "unsigned" };
                 let (reader, value) = self.reader_step(out, c, name, reader, Vec::new(), &wide);
                 let bits = bits_of(*t);
+                // A range that is not the whole of the size it is kept at holds
+                // the numbers from its least to its greatest, and a number
+                // outside them is not read, whatever the size holds.
+                if *t != t.holder() {
+                    let less = if signed {
+                        form::Compare::LessS
+                    } else {
+                        form::Compare::LessU
+                    };
+                    let least = out.int(form::Bits::B64, t.min());
+                    let greatest = out.int(form::Bits::B64, t.max());
+                    let below = out.compare(less, value[0], least);
+                    let arms = out.switch(below, 2);
+                    out.current = arms[1];
+                    let name = self.text(out, t.name().as_bytes());
+                    self.failure(out, c, reader.clone(), "range", name);
+                    out.current = arms[0];
+                    let above = out.compare(less, greatest, value[0]);
+                    let arms = out.switch(above, 2);
+                    out.current = arms[1];
+                    let name = self.text(out, t.name().as_bytes());
+                    self.failure(out, c, reader.clone(), "range", name);
+                    out.current = arms[0];
+                    if bits == form::Bits::B64 {
+                        return (reader, value);
+                    }
+                    let narrow = out.narrow(value[0], bits);
+                    return (reader, vec![narrow]);
+                }
                 if bits == form::Bits::B64 {
                     return (reader, value);
                 }
