@@ -1,4 +1,4 @@
-type_holds_itself.smith:2:9: `Node` holds itself, directly or through others with no `List` between, which is not built yet, and a `List` of it is
+type_holds_itself.smith:2:9: a type that holds itself with no `List` between, as `Node` does, is not supported yet, and a `List` of it is built
   2 |   next: Node
     |         ^
   fix: hold it in a `List`, as `List[Node]`

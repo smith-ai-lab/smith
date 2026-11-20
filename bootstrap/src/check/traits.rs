@@ -1030,7 +1030,7 @@ impl<'a> Defs<'a> {
     pub(super) fn because(&self, k: usize, t: &Ty, scope: &Scope) -> String {
         if let Some(own) = self.containing_itself(t) {
             return format!(
-                ", as `{}` contains itself, and a type that does is given no `{}` until a function may call itself, which is not built yet",
+                ", as `{}` contains itself, and a type that does is given no `{}` until a function may call itself, which is not supported yet",
                 self.text(&own, scope),
                 self.file.traits[k].name
             );
