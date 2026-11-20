@@ -13,6 +13,8 @@
 //! The generator works out what the program prints from the values it
 //! built, as `knowledge/language/repr.md` says each is written.
 
+use std::cell::Cell;
+
 use crate::generate::Gen;
 use crate::programs::{Expected, PIECES, pos_after};
 
@@ -73,6 +75,33 @@ const FIELDS: &[&str] = &["name", "left", "right"];
 const CASES: &[&str] = &["cat", "dog", "none"];
 const PARAMS: &[&str] = &["T", "U"];
 
+thread_local! {
+    /// Whether the types the generator builds may be a `List`, which the
+    /// programs of `program_with_lists` have and the others, whose tests ask
+    /// what a program of texts and structs does, do not.
+    static LISTS: Cell<bool> = const { Cell::new(false) };
+}
+
+/// Lets the generator build lists until it is dropped.
+struct WithLists;
+
+impl WithLists {
+    fn new() -> Self {
+        LISTS.with(|l| l.set(true));
+        WithLists
+    }
+}
+
+impl Drop for WithLists {
+    fn drop(&mut self) {
+        LISTS.with(|l| l.set(false));
+    }
+}
+
+fn lists() -> bool {
+    LISTS.with(Cell::get)
+}
+
 /// How deep a type of a field, a case, or a value is built.
 const DEPTH: usize = 2;
 /// The longest text a value is written as, so that a run stays short.
@@ -94,6 +123,8 @@ enum Ty {
     Def(usize, Vec<Ty>),
     Option(Box<Ty>),
     Tuple(Vec<Ty>),
+    /// A `List` of a type.
+    List(Box<Ty>),
     /// `Hidden`, a struct from which a mistake takes `Fmt` or `Repr` away.
     Hidden,
 }
@@ -104,6 +135,7 @@ impl Ty {
             Ty::Param(p) => args[*p].clone(),
             Ty::Def(d, of) => Ty::Def(*d, of.iter().map(|t| t.subst(args)).collect()),
             Ty::Option(t) => Ty::Option(Box::new(t.subst(args))),
+            Ty::List(t) => Ty::List(Box::new(t.subst(args))),
             Ty::Tuple(of) => Ty::Tuple(of.iter().map(|t| t.subst(args)).collect()),
             t => t.clone(),
         }
@@ -123,7 +155,7 @@ impl Ty {
                     .sum();
                 1 + held
             }
-            Ty::Option(t) => 1 + t.size(defs),
+            Ty::Option(t) | Ty::List(t) => 1 + t.size(defs),
             Ty::Tuple(of) => 1 + of.iter().map(|t| t.size(defs)).sum::<usize>(),
             Ty::Str | Ty::Param(_) | Ty::Hidden => 1,
         }
@@ -133,7 +165,7 @@ impl Ty {
         match self {
             Ty::Param(q) => *q == p,
             Ty::Def(_, of) | Ty::Tuple(of) => of.iter().any(|t| t.mentions(p)),
-            Ty::Option(t) => t.mentions(p),
+            Ty::Option(t) | Ty::List(t) => t.mentions(p),
             Ty::Str | Ty::Hidden => false,
         }
     }
@@ -150,6 +182,7 @@ impl Ty {
             Ty::Def(d, of) if of.is_empty() => defs[*d].name.clone(),
             Ty::Def(d, of) => format!("{}[{}]", defs[*d].name, list(of)),
             Ty::Option(t) => format!("Option[{}]", t.written(defs)),
+            Ty::List(t) => format!("List[{}]", t.written(defs)),
             Ty::Tuple(of) => format!("({})", list(of)),
             Ty::Hidden => "Hidden".to_string(),
         }
@@ -180,6 +213,8 @@ enum Val {
     Some(Box<Val>),
     None,
     Tuple(Vec<Val>),
+    /// The items of a list.
+    List(Vec<Val>),
     /// A value of `Hidden`.
     Hidden,
 }
@@ -221,6 +256,9 @@ fn ty(g: &mut Gen, defs: &[Def], params: usize, depth: usize) -> Ty {
     }
     if depth > 0 {
         choices.extend([2, 3]);
+        if lists() {
+            choices.push(5);
+        }
         if !defs.is_empty() {
             choices.extend([4, 4]);
         }
@@ -234,6 +272,7 @@ fn ty(g: &mut Gen, defs: &[Def], params: usize, depth: usize) -> Ty {
                 .map(|_| ty(g, defs, params, depth - 1))
                 .collect(),
         ),
+        5 => Ty::List(Box::new(ty(g, defs, params, depth - 1))),
         _ => {
             let d = g.below(defs.len());
             let args = (0..defs[d].params)
@@ -303,6 +342,7 @@ fn value(g: &mut Gen, defs: &[Def], t: &Ty) -> Val {
         Ty::Option(inner) if g.one_in(2) => Val::Some(Box::new(value(g, defs, inner))),
         Ty::Option(_) => Val::None,
         Ty::Tuple(of) => Val::Tuple(of.iter().map(|t| value(g, defs, t)).collect()),
+        Ty::List(of) => Val::List((0..g.below(4)).map(|_| value(g, defs, of)).collect()),
         Ty::Def(d, args) => {
             let def = &defs[*d];
             let holds = |t: &Option<Ty>| t.as_ref().map(|t| t.subst(args));
@@ -347,6 +387,7 @@ fn expr(defs: &[Def], v: &Val) -> String {
         Val::Some(v) => format!(".some({})", expr(defs, v)),
         Val::None => ".none".to_string(),
         Val::Tuple(of) => format!("({})", list(of)),
+        Val::List(of) => format!("[{}]", list(of)),
         Val::Hidden => "Hidden(key: \"k\")".to_string(),
     }
 }
@@ -390,6 +431,7 @@ fn repr(defs: &[Def], v: &Val) -> Vec<u8> {
             let labels = vec![String::new(); of.len()];
             [b"(".to_vec(), list(of, labels), b")".to_vec()].concat()
         }
+        Val::List(of) => [b"[".to_vec(), list(of, vec![String::new(); of.len()]), b"]".to_vec()].concat(),
         Val::Hidden => unreachable!("a mistake is not run"),
     }
 }
@@ -541,6 +583,18 @@ pub fn program(g: &mut Gen) -> ReprCase {
     }
 }
 
+/// `program`, where a type may be a `List` too.
+pub fn program_with_lists(g: &mut Gen) -> ReprCase {
+    let _lists = WithLists::new();
+    program(g)
+}
+
+/// `program_with_mistake`, where a type may be a `List` too.
+pub fn program_with_lists_and_mistake(g: &mut Gen) -> ReprCase {
+    let _lists = WithLists::new();
+    program_with_mistake(g)
+}
+
 /// A valid program in which no type implements `Fmt` or `Repr` itself, and
 /// which prints the `Repr` of each value it binds, first, and then the
 /// value in other ways, each on one line. Each value can be put in its
@@ -586,8 +640,9 @@ fn holding(g: &mut Gen, defs: &[Def], depth: usize) -> Ty {
             holding(g, defs, depth - 1)
         }
     };
-    match g.below(4) {
+    match g.below(if lists() { 5 } else { 4 }) {
         0 => Ty::Hidden,
+        4 => Ty::List(Box::new(inner(g))),
         1 => Ty::Option(Box::new(inner(g))),
         2 => {
             let mut items: Vec<Ty> = (0..1 + g.below(2)).map(|_| ty(g, defs, 0, 1)).collect();

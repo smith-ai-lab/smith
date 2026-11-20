@@ -8,6 +8,7 @@ built:
   - "a list may be held inside a struct, a tuple, an enum, or another list, and be a function's parameter and result, and a list is held by one name, so no name sees another's `push`, and `copy` of `std.list` gives a new list of the same elements"
   - "a function with a type parameter, bounded by `Eq` or `Ord` or by nothing, takes and gives a `List[T]`, reads its size and elements, compares them, loops over them, and pushes, and is specialised for each element type as any generic function is; a list written out where `T` is settled by no other argument is refused with one error, as is `[]`, and one where another argument settles it takes that type"
   - "`loop v in xs` over a `List` of any type, which is built as [`loop`](../language/loop.md) says"
+  - "`==` of two lists of one type, and `Fmt` and `Repr` of a list, each as its element has them, alone and inside a struct, a tuple, an `Option`, or another list; the same for a `Slice`"
   - "not `items`, slicing, summing, or a pattern in brackets"
 ---
 

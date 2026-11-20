@@ -5,6 +5,7 @@ description: The Repr trait, which writes a value as Smith source, and the Fmt a
 status: partial
 built:
   - "`repr` and the `Repr` of a `str`, and the `Fmt` and `Repr` every struct, enum, tuple, `bool`, `()`, and integer type is given, which `without` takes away"
+  - "the `Fmt` and `Repr` of a `List` or a `Slice`, written `[1, 2, 3]` with the `Repr` of each element, which is `[]` for none, and which a list has when its element has it"
 ---
 
 # Repr

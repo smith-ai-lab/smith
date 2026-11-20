@@ -520,6 +520,7 @@ impl<'a> Lowering<'a> {
                 let kind = Runtime::Equal;
                 return self.call_runtime(out, kind, args, vec![BYTE])[0];
             }
+            Ty::List(of) | Ty::Slice(of) => return self.equal_elements(out, &of[0], a, b),
             Ty::Enum(e, args) => {
                 let layout = self.layout(*e, args);
                 let bool_types = self.scalars(&defs.bool_ty());
@@ -567,6 +568,69 @@ impl<'a> Lowering<'a> {
         self.all_equal(out, &pairs)
     }
 
+    /// Whether two lists or slices, whose addresses and sizes are the first
+    /// two of `a` and of `b`, have the same size and equal elements in order,
+    /// each by its type's `Eq`, stopping at the first that differ.
+    fn equal_elements(
+        &mut self,
+        out: &mut Out<'a>,
+        element: &Ty,
+        a: &[form::Value],
+        b: &[form::Value],
+    ) -> form::Value {
+        let defs = self.typed.defs;
+        let bool_types = self.scalars(&defs.bool_ty());
+        let scalars = self.scalars(element);
+        let (places, stride) = form::element(&scalars);
+        let places: Vec<(form::Type, u64)> = scalars.into_iter().zip(places).collect();
+        let stride = out.int(form::Bits::B64, i128::from(stride));
+        let zero = out.int(form::Bits::B64, 0);
+        let mut ends = Vec::new();
+        let same_size = out.compare(form::Compare::Equal, a[1], b[1]);
+        let arms = out.switch(same_size, 2);
+        out.current = arms[0];
+        let no = self.truth(out, false);
+        ends.push((out.current, vec![no]));
+        out.current = arms[1];
+        let header = out.new_block();
+        let i = out.fresh(WORD);
+        out.blocks[header].params = vec![i];
+        out.blocks[out.current].end = form::End::Jump(form::Jump {
+            block: header,
+            args: vec![zero],
+        });
+        out.current = header;
+        let more = out.compare(form::Compare::LessU, i, a[1]);
+        let arms = out.switch(more, 2);
+        out.current = arms[0];
+        let yes = self.truth(out, true);
+        ends.push((out.current, vec![yes]));
+        out.current = arms[1];
+        let offset = out.binary(form::Binary::Mul, i, stride);
+        let (p, q) = (
+            out.binary(form::Binary::Add, a[0], offset),
+            out.binary(form::Binary::Add, b[0], offset),
+        );
+        let (x, y) = (self.load(out, p, &places), self.load(out, q, &places));
+        let same = self.run(out, defs.eq, element, [x, y].concat())[0];
+        let arms = out.switch(same, 2);
+        let (no_at, yes_at) = (
+            defs.case_of(defs.boolean, "false").expect("a case"),
+            defs.case_of(defs.boolean, "true").expect("a case"),
+        );
+        out.current = arms[no_at];
+        let no = self.truth(out, false);
+        ends.push((out.current, vec![no]));
+        out.current = arms[yes_at];
+        let one = out.int(form::Bits::B64, 1);
+        let next = out.binary(form::Binary::Add, i, one);
+        out.blocks[out.current].end = form::End::Jump(form::Jump {
+            block: header,
+            args: vec![next],
+        });
+        out.join(&bool_types, ends)[0]
+    }
+
     /// Whether every pair is equal, each by its type's `Eq`, where the pairs
     /// after one run only when it is equal.
     fn all_equal(
@@ -603,6 +667,7 @@ impl<'a> Lowering<'a> {
         let defs = self.typed.defs;
         match ty {
             Ty::Nothing => self.text(out, b"()"),
+            Ty::List(of) | Ty::Slice(of) => self.repr_elements(out, &of[0], values),
             Ty::Text => self.call_runtime(out, Runtime::Escape, values.to_vec(), TEXT.to_vec()),
             Ty::Struct(s, args) => {
                 let def = &defs.file.structs[*s];
@@ -651,6 +716,72 @@ impl<'a> Lowering<'a> {
             }
             _ => unreachable!("a type given `Repr`"),
         }
+    }
+
+    /// The text `Repr` gives for a list or a slice, whose address and size are
+    /// the first two of `values`: `[`, the `Repr` of each element with `, `
+    /// after it, which the last loses, and `]`. The text is built in one list
+    /// of bytes that grows as `push` does, and not joined again for each
+    /// element.
+    fn repr_elements(
+        &mut self,
+        out: &mut Out<'a>,
+        element: &Ty,
+        values: &[form::Value],
+    ) -> Vec<form::Value> {
+        let defs = self.typed.defs;
+        let scalars = self.scalars(element);
+        let (places, stride) = form::element(&scalars);
+        let places: Vec<(form::Type, u64)> = scalars.into_iter().zip(places).collect();
+        let stride = out.int(form::Bits::B64, i128::from(stride));
+        let zero = out.int(form::Bits::B64, 0);
+        let (address, size) = (values[0], values[1]);
+        let bytes = self.scalars(&Ty::List(vec![Ty::Int(Int::U8)]));
+        let kind = Runtime::Append(vec![BYTE]);
+        let none = out.constant(form::Constant::Null, form::Type::Address);
+        let open = self.text(out, b"[");
+        let empty = vec![none, zero, zero];
+        let start = self.call_runtime(out, kind.clone(), [empty, open].concat(), bytes.clone());
+        let header = out.new_block();
+        let i = out.fresh(WORD);
+        let carried: Vec<form::Value> = bytes.iter().map(|&t| out.fresh(t)).collect();
+        out.blocks[header].params = std::iter::once(i).chain(carried.iter().copied()).collect();
+        out.blocks[out.current].end = form::End::Jump(form::Jump {
+            block: header,
+            args: std::iter::once(zero).chain(start).collect(),
+        });
+        out.current = header;
+        let more = out.compare(form::Compare::LessU, i, size);
+        let arms = out.switch(more, 2);
+        out.current = arms[1];
+        let offset = out.binary(form::Binary::Mul, i, stride);
+        let at = out.binary(form::Binary::Add, address, offset);
+        let part = self.load(out, at, &places);
+        let text = self.run(out, defs.repr, element, part);
+        let grown = self.call_runtime(
+            out,
+            kind.clone(),
+            [carried.clone(), text].concat(),
+            bytes.clone(),
+        );
+        let comma = self.text(out, b", ");
+        let next = self.call_runtime(out, kind.clone(), [grown, comma].concat(), bytes.clone());
+        let one = out.int(form::Bits::B64, 1);
+        let after = out.binary(form::Binary::Add, i, one);
+        out.blocks[out.current].end = form::End::Jump(form::Jump {
+            block: header,
+            args: std::iter::once(after).chain(next).collect(),
+        });
+        out.current = arms[0];
+        // A list that has elements has a `, ` too many at its end.
+        let none_in = out.compare(form::Compare::Equal, size, zero);
+        let two = out.int(form::Bits::B64, 2);
+        let cut = out.choose(none_in, zero, two);
+        let kept = out.binary(form::Binary::Sub, carried[1], cut);
+        let close = self.text(out, b"]");
+        let list = vec![carried[0], kept, carried[2]];
+        let done = self.call_runtime(out, kind, [list, close].concat(), bytes);
+        done[..2].to_vec()
     }
 
     /// The text `open`, then the label of each item and the text its value's

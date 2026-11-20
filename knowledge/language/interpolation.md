@@ -5,6 +5,7 @@ description: A string that holds expressions in braces, which the Fmt trait turn
 status: partial
 built:
   - "strings that hold expressions of any type that implements `Fmt`, an `impl` of `Fmt`, and every escape"
+  - "a `List` or a `Slice` in the braces, written as [Repr](repr.md) says"
 ---
 
 # Strings that hold expressions
