@@ -33,6 +33,7 @@ use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, OnceLock};
 
 mod arith;
+mod effects_with_and_try;
 mod functions_calls_and_lambdas;
 mod lists_and_text;
 mod names;
@@ -50,6 +51,7 @@ use crate::parser::{
     Arg, ArithOp, Arm, Bound, Call, Enum, Expr, File, Form, Function, Generic, Impl, Lambda, Loop,
     Match, Over, Part, Pattern, Qualified, Range, Stmt, Struct, Trait, Type, Use,
 };
+use effects_with_and_try::{BUILT, BUILT_IN_EFFECTS, LIBRARY_EFFECTS};
 use lists_and_text::{as_read, is_freeze, is_push, is_utf8};
 use names::{ModuleScope, own_final, renamed_tokens};
 use numbers_and_operators::{Int, Narrowing, Numbers, flexible, literal_blocks, narrowing};
@@ -130,15 +132,6 @@ const PRELUDE_LISTED: &[&str] = &[
     "foreign",
     "exec",
 ];
-
-/// The effects the standard library declares, other than `console`.
-const LIBRARY_EFFECTS: &[&str] = &["fs", "net", "time", "ui"];
-
-/// The effects the compiler builds.
-const BUILT: &[&str] = &["console", "alloc", "diverge"];
-
-/// The effects built into the compiler.
-const BUILT_IN_EFFECTS: &[&str] = &["alloc", "spawn", "gpu", "diverge", "foreign", "exec"];
 
 /// The one type the prelude defines that the compiler builds so far.
 const TEXT: &str = "str";
@@ -5887,34 +5880,6 @@ impl<'a> Checker<'a> {
         }
     }
 
-    /// Checks a list of effects: each named once, each one there is.
-    fn effects(&mut self, effects: &[(String, Pos)]) {
-        let mut listed: Vec<&str> = Vec::new();
-        for (effect, pos) in effects {
-            let effect = effect.as_str();
-            if listed.contains(&effect) {
-                self.errors.push(Error::new(
-                    *pos,
-                    format!("the `{effect}` effect is already listed"),
-                ));
-                continue;
-            }
-            listed.push(effect);
-            if BUILT.contains(&effect) {
-                continue;
-            }
-            if LIBRARY_EFFECTS.contains(&effect) || BUILT_IN_EFFECTS.contains(&effect) {
-                self.errors
-                    .push(Error::unsupported(*pos, &format!("the `{effect}` effect")));
-            } else {
-                self.errors.push(Error::new(
-                    *pos,
-                    format!("there is no effect named `{effect}`"),
-                ));
-            }
-        }
-    }
-
     /// Reports a value that gives `given` where `needed` is needed.
     fn expect(&mut self, body: &mut Body<'a>, value: &Expr, given: &Ty, needed: &Ty) {
         let defs = self.defs;
@@ -7563,22 +7528,6 @@ impl<'a> Checker<'a> {
         self.case(body, Some(e), callee, pos, at, payload, want)
     }
 
-    /// Reports a call in a default of a function with this signature, if it
-    /// carries an effect, and gives whether it does.
-    fn effect_in_default(&mut self, body: &Body, call: &Call, signature: &Signature) -> bool {
-        let (Some(_), Some(effect)) = (&body.default, signature.effects.first()) else {
-            return false;
-        };
-        self.errors.push(Error::new(
-            call.pos,
-            format!(
-                "a default carries no effect, and `{}` needs the `{effect}` effect",
-                call.callee
-            ),
-        ));
-        true
-    }
-
     /// Checks the construction of struct `s`, which gives each of its
     /// fields once by name, in any order, except those it leaves to their
     /// defaults.
@@ -7705,38 +7654,5 @@ impl<'a> Checker<'a> {
         }
         let args = sol.into_iter().map(|t| t.unwrap_or(Ty::Unknown)).collect();
         Ty::structure(s, args)
-    }
-
-    /// Reports that what is at `pos`, which an error names as `what`, needs
-    /// an effect the body does not list, unless that is already reported or
-    /// a listed effect with no such name may be it misspelt. A default lists
-    /// none, so each thing in it that needs one is reported.
-    fn needs(&mut self, body: &mut Body, effect: &str, pos: Pos, what: &str) {
-        if body.listed.contains(&effect) || body.unknown_effect {
-            return;
-        }
-        if body.default.is_some() {
-            self.errors.push(Error::new(
-                pos,
-                format!("a default carries no effect, and {what} needs the `{effect}` effect"),
-            ));
-            return;
-        }
-        if body.missing.iter().any(|m| m == effect) {
-            return;
-        }
-        body.missing.push(effect.to_string());
-        let mut effects = body.listed.clone();
-        effects.extend(body.missing.iter().map(String::as_str));
-        self.errors.push(
-            Error::new(
-                pos,
-                format!(
-                    "{what} needs the `{effect}` effect, which `{}` does not declare",
-                    body.owner().name
-                ),
-            )
-            .with_fix(format!("write `{}`", written(body.owner(), &effects))),
-        );
     }
 }
