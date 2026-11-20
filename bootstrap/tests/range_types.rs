@@ -82,6 +82,10 @@ pub const ONCE: &[Test] = &[
         a_name_is_a_bound_in_a_result_and_in_a_binding_and_what_it_says_is_known,
     ),
     (
+        "a_range_has_every_trait_a_whole_number_has_in_every_place_and_what_the_number_gives",
+        a_range_has_every_trait_a_whole_number_has_in_every_place_and_what_the_number_gives,
+    ),
+    (
         "a_sum_a_difference_and_a_product_give_the_exact_range_and_no_narrower_one",
         a_sum_a_difference_and_a_product_give_the_exact_range_and_no_narrower_one,
     ),
@@ -763,6 +767,77 @@ fn a_name_is_a_bound_in_a_result_and_in_a_binding_and_what_it_says_is_known() {
             let past = binding.replace("i: 0..n = n - 1", "i: 0..n = n");
             let errors = check(past.as_bytes()).expect_err("a binding that may not be below n");
             assert!(errors.iter().any(|e| e.message.contains("`n < n`")), "{errors:?}");
+        },
+    );
+}
+
+/// A range has each trait a whole number has, and gives what the same number
+/// gives as an `Int`: alone, as a field, an item, the item of a case, inside
+/// `Option` and `Result`, as the element of a list, and for a type parameter
+/// bounded by the trait. A trait that the `Int` is not given in a place, such
+/// as the order of a struct, is not asked of the range.
+fn a_range_has_every_trait_a_whole_number_has_in_every_place_and_what_the_number_gives() {
+    // The declarations, the type of the place with `N` for the number's type,
+    // and how it is made of `x`.
+    const PLACES: [(&str, &str, &str); 8] = [
+        ("", "N", "x"),
+        ("struct Wrap {\n  at: N\n}\n\n", "Wrap", "Wrap(at: x)"),
+        ("", "(N, N)", "(x, x)"),
+        ("enum Pick {\n  one: N\n  none\n}\n\n", "Pick", "Pick.one(x)"),
+        ("", "Option[N]", "Option.some(x)"),
+        ("", "Result[N, str]", "Result.ok(x)"),
+        ("", "List[N]", "[x]"),
+        ("struct Box[T] {\n  item: T\n}\n\n", "Box[N]", "Box(item: x)"),
+    ];
+    // Each trait: a bounded function that asks for it, and what it prints of `p`.
+    const TRAITS: [(&str, &str); 9] = [
+        ("fn ask[T: Fmt](p: T) -> str ! alloc { \"{p}\" }", "print(ask(p))\n  print(\"{p}\")"),
+        ("fn ask[T: Repr](p: T) -> str ! alloc { repr(p) }", "print(ask(p))\n  print(repr(p))"),
+        ("fn ask[T: Eq](p: T) -> bool { p == p }", "print(\"{ask(p)}\")\n  print(\"{p == p}\")"),
+        ("fn ask[T: Ord](p: T) -> bool { p < p }", "print(\"{ask(p)}\")\n  print(\"{p <= p}\")"),
+        ("fn ask[T: Hash](p: T) -> u64 { hash(p) }", "print(\"{ask(p)}\")\n  print(\"{hash(p)}\")"),
+        ("fn ask[T: Copy](p: T) -> (T, T) { (p, p) }", "match ask(p) {\n    (a, b) { print(\"{a == b}\") }\n  }"),
+        ("fn ask[T: Discard](p: T) -> bool { true }", "print(\"{ask(p)}\")"),
+        (
+            "use std.serialize (Serialize)\n\nfn ask[T: Serialize](p: T) -> bool { true }",
+            "print(\"{ask(p)}\")",
+        ),
+        (
+            "use std.deserialize (Deserialize)\n\nfn ask[T: Deserialize](p: T) -> bool { true }",
+            "print(\"{ask(p)}\")",
+        ),
+    ];
+    generate::check(
+        4012,
+        3,
+        |g: &mut Gen| {
+            let (low, high) = range(g);
+            (low, high, g.below(3))
+        },
+        |&(low, high, at)| {
+            let value = [low, low + (high - low) / 2, high][at];
+            let ours = format!("{low}..{}", high + 1);
+            for (decls, place, make) in PLACES {
+                for (ask, uses) in TRAITS {
+                    let (imports, func) = match ask.split_once("\n\n") {
+                        Some((uses, rest)) if ask.starts_with("use ") => (format!("{uses}\n\n"), rest),
+                        _ => (String::new(), ask),
+                    };
+                    let program = |number: &str| {
+                        let ty = place.replace('N', number);
+                        with_header(format!(
+                            "{imports}{}{func}\n\nfn main() ! console, alloc {{\n  x: {number} = {value}\n  p: {ty} = {make}\n  {uses}\n}}\n",
+                            decls.replace('N', number)
+                        ))
+                    };
+                    let whole = program("Int");
+                    if !compiles(&whole) {
+                        continue;
+                    }
+                    let ranged = program(&ours);
+                    assert_eq!(stdout(&ranged), stdout(&whole), "for\n{ranged}");
+                }
+            }
         },
     );
 }
