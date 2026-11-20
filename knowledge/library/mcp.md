@@ -108,7 +108,7 @@ fn main() ! messages, store, alloc {
 }
 ```
 
-A client that lists the prompts is told of `summarise`, with its comment and its two blanks, of which `sentences` may be left out. A client that asks for it with `id` as 7 is given the text, as one message from the user. The parameters are read as a tool's are, and the comment on each describes its blank.
+A client that lists the prompts is told of `summarise`, with its comment and its two blanks, of which `sentences` may be left out. A client that asks for it with `id` as 7 is given the text, as one message from the user. The protocol sends each blank as text, so a client that fills `id` with 7 sends `"7"`, and each is read as its parameter's type from that text, as a part of a path is for a [route](http.md#where-a-parameter-comes-from). A parameter is a text, a number, a `bool`, or an `Option` of one, which a client may leave out, and one with a default may be left out too. A parameter of a type that has no reading from a text, as a struct or a list has none, is refused when the program is built: "a prompt's blanks are texts, and `Note` is not read from one". A blank that does not read as its type is answered by the library as an input that does not fit, and never reaches the function. The comment on each parameter describes its blank.
 
 `resource` and `prompt` are lines beside `tool`, are bounded by [`Function`](../language/traits.md#an-impl-for-a-function) as it is, and read no code. A server offers what its lines say, so one with no `resource` line tells a client it has no resources, and a request to list or read one is answered that the method is not found, -32601.
 
