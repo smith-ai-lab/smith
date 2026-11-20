@@ -119,8 +119,9 @@ fn library() -> &'static [Module] {
                 let mut names = Vec::new();
                 let mut in_effect = false;
                 for line in std::fs::read_to_string(file).unwrap().lines() {
-                    // An operation of a public effect is imported by its own name.
-                    if in_effect && let Some(rest) = line.trim_start().strip_prefix("fn ") {
+                    // An operation of a public effect that is written `pub` is
+                    // imported by its own name.
+                    if in_effect && let Some(rest) = line.trim_start().strip_prefix("pub fn ") {
                         let written: String = rest
                             .chars()
                             .take_while(|c| c.is_alphanumeric() || *c == '_')
