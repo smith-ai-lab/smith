@@ -146,9 +146,22 @@ jobs:
             # once break each other, so it is installed here, once, first.
             (cd bootstrap && cargo --version)
             (cd "$RUNNER_TEMP/base/bootstrap" && cargo --version)
-            sh .github/fingerprint.sh "$PWD" > head.fingerprint &
-            sh .github/fingerprint.sh "$RUNNER_TEMP/base" > base.fingerprint &
-            wait
+            # The fingerprint of this change must be made, or the job fails with
+            # what the run said. The fingerprint of the base need not be: the
+            # base may be a commit that cannot make one, and then nothing is
+            # known of it and every machine is named, with the reason said.
+            sh .github/fingerprint.sh "$PWD" > head.fingerprint 2> head.error &
+            head=$!
+            sh .github/fingerprint.sh "$RUNNER_TEMP/base" > base.fingerprint 2> base.error &
+            base=$!
+            made=true
+            wait "$head" || made=false
+            wait "$base" || { echo "::warning::the fingerprint of the base cannot be made, so every machine is named; see the log"; cat base.error; : > base.fingerprint; }
+            if [ "$made" != true ]; then
+              cat head.error
+              echo "::error::the fingerprint of this change cannot be made"
+              exit 1
+            fi
             echo "BASE_SMITH=$RUNNER_TEMP/base/bootstrap/target/debug/smith" >> "$GITHUB_ENV"
           fi
           echo "== the base"; cat base.fingerprint
@@ -172,9 +185,12 @@ jobs:
             (cd bootstrap && cargo build --locked) &
             (cd "$RUNNER_TEMP/base/bootstrap" && cargo build --locked) &
             wait
-            mkdir -p "$RUNNER_TEMP/base-results"
-            cp base.fingerprint "$RUNNER_TEMP/base-results/fingerprint"
-            cp "$BASE_SMITH" "$RUNNER_TEMP/base-results/smith"
+            # What could not be made is not kept.
+            if [ -s base.fingerprint ]; then
+              mkdir -p "$RUNNER_TEMP/base-results"
+              cp base.fingerprint "$RUNNER_TEMP/base-results/fingerprint"
+              cp "$BASE_SMITH" "$RUNNER_TEMP/base-results/smith"
+            fi
           fi
           sh .github/hash-cases.sh bootstrap/target/debug/smith bootstrap/tests/cases > case-hashes
           sh .github/hash-cases.sh "$BASE_SMITH" bootstrap/tests/cases > "$RUNNER_TEMP/base-case-hashes"
