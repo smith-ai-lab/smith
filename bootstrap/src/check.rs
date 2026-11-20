@@ -1831,6 +1831,9 @@ fn check_reading(
     prelude: &Prelude,
     whole: Option<&str>,
 ) -> Result<Checked, Vec<Error>> {
+    // Whether a function of a module is given a struct of arguments, which the
+    // file that is built asks for by writing `Function`.
+    let asks_function = crate::function_args::asks(&file);
     let mut resolver = Resolver::new(library);
     resolver.whole = whole.is_some();
     let defined: HashSet<String> = defined_names(&file).into_iter().map(String::from).collect();
@@ -1880,7 +1883,7 @@ fn check_reading(
         .map(|(name, _)| name)
         .collect();
     written.extend((file.qualified.iter()).map(|q| format!("{}@{}", q.name.0, q.module)));
-    let (mut file, items, mut lazy) = splice(file, read, &mut errors);
+    let (mut file, items, mut lazy) = splice(file, read, &mut errors, asks_function);
     lazy.written = written;
     file.modules = module_names(&labels, library);
     let checked = check_file(
@@ -2701,10 +2704,9 @@ fn reach(file: &File, names: &Names, roots: &[Item], contracts: bool) -> Reached
                 function(&file.functions[f], &mut found);
                 // The struct of its arguments is reached with a function
                 // that has one, which `Function` is given to.
-                if let Some((_, made)) =
-                    (file.args.iter()).find(|(function, _)| *function == file.functions[f].name)
-                {
-                    built(made, &mut found);
+                let pos = file.functions[f].pos;
+                if let Some((_, made, _)) = (file.args.iter()).find(|(at, ..)| *at == pos) {
+                    found.extend(names.type_item(pos, made));
                 }
             }
             Item::Struct(si) => {
@@ -2881,7 +2883,7 @@ pub fn library_text(module: &str) -> &'static str {
 /// told from one in the file or the prelude, and from one in another module,
 /// by its line alone. The prelude is at line 0, the file below the first step,
 /// and the module numbered `n` is at `n * STEP` and the lines after it.
-const STEP: usize = 1 << 32;
+pub(crate) const STEP: usize = 1 << 32;
 
 /// The number of the first module of a project. Those of the standard library
 /// are numbered below it, so that a place says which kind of module it is in.
@@ -4059,6 +4061,7 @@ fn splice<'a>(
     mut file: File,
     mut modules: Vec<Module<'a>>,
     errors: &mut Vec<Error>,
+    asks_function: bool,
 ) -> (File, Items, Lazy<'a>) {
     // The names each module writes as they are, since the file lists them, or
     // since the compiler builds them.
@@ -4228,13 +4231,16 @@ fn splice<'a>(
                     }
                 },
             );
-            let found = match crate::parser::parse_library(&tokens) {
+            let mut found = match crate::parser::parse_library(&tokens) {
                 Ok(found) => found,
                 Err(found) => {
                     errors.extend(found);
                     continue;
                 }
             };
+            if asks_function {
+                crate::function_args::add(&mut found, &modules[i].source, modules[i].number);
+            }
             let held = if standard {
                 modules[i].held.clone()
             } else {
@@ -4254,6 +4260,7 @@ fn splice<'a>(
             through,
             parsed: Vec::new(),
             written: HashMap::new(),
+            asks_function,
         };
         lazy.parsed = (0..lazy.pieces.list.len()).map(|_| None).collect();
         // The traits, and what the compiler leans on, are read at once.
@@ -4335,6 +4342,7 @@ fn add_items(file: &mut File, found: File, held: &HashSet<String>) {
     file.effects.extend(found.effects);
     file.impls.extend(found.impls);
     file.withouts.extend(found.withouts);
+    file.args.extend(found.args);
 }
 
 /// The modules of the standard library whose items are read as the program
@@ -4398,6 +4406,9 @@ struct LazyModule<'a> {
     /// The name each token of the items read was written as, by its place,
     /// where the tokens were rewritten.
     written: HashMap<(Pos, String), String>,
+    /// Whether the file that is built writes `Function`, which a function of
+    /// the module read is made a struct of arguments for.
+    asks_function: bool,
 }
 
 impl LazyModule<'_> {
@@ -4479,7 +4490,12 @@ impl LazyModule<'_> {
         );
         self.written.extend(renamed);
         match crate::parser::parse_library(&tokens) {
-            Ok(found) => Some(found),
+            Ok(mut found) => {
+                if self.asks_function {
+                    crate::function_args::add(&mut found, &self.source, self.number);
+                }
+                Some(found)
+            }
             Err(found) => {
                 errors.extend(found);
                 None
@@ -4913,6 +4929,7 @@ impl<'a> Lazy<'a> {
                 file.structs.extend(found.structs.iter().cloned());
                 file.enums.extend(found.enums.iter().cloned());
                 file.impls.extend(found.impls.iter().cloned());
+                file.args.extend(found.args.iter().cloned());
             }
         }
     }

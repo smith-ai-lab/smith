@@ -774,13 +774,12 @@ impl<'a> Defs<'a> {
     /// The struct that holds the arguments of function `f`, if one was made
     /// for it.
     pub(super) fn args_of(&self, f: usize) -> Option<usize> {
-        let name = &self.file.functions[f].name;
-        let (_, made) = self
-            .file
-            .args
+        let pos = self.file.functions[f].pos;
+        let (_, made, _) = self.file.args.iter().find(|(at, ..)| *at == pos)?;
+        self.file
+            .structs
             .iter()
-            .find(|(function, _)| function == name)?;
-        self.file.structs.iter().position(|s| s.name == *made)
+            .position(|s| s.name == *made && module_of(s.pos) == module_of(pos))
     }
 
     /// The comment noted for the item called `key`, which is the empty text
@@ -793,10 +792,10 @@ impl<'a> Defs<'a> {
 
     /// The comment on function `f`, if it was noted.
     pub(super) fn about_of(&self, f: usize) -> &str {
-        let name = &self.file.functions[f].name;
-        (self.file.abouts.iter())
-            .find(|(function, _)| function == name)
-            .map_or("", |(_, about)| about.as_str())
+        let pos = self.file.functions[f].pos;
+        (self.file.args.iter())
+            .find(|(at, ..)| *at == pos)
+            .map_or("", |(.., about)| about.as_str())
     }
 
     /// The parts of the type of trait `k` whose implementations a given one
