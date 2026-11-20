@@ -38,12 +38,16 @@ pub const ONCE: &[Test] = &[
         || spaces_line_breaks_escapes_and_signs_do_not_change_the_value_that_is_read(1),
     ),
     (
-        "a_text_broken_in_one_place_is_the_error_of_that_place_with_its_line_column_and_path_part_1_of_2",
+        "a_text_broken_in_one_place_is_the_error_of_that_place_with_its_line_column_and_path_part_1_of_3",
         || a_text_broken_in_one_place_is_the_error_of_that_place_with_its_line_column_and_path(0),
     ),
     (
-        "a_text_broken_in_one_place_is_the_error_of_that_place_with_its_line_column_and_path_part_2_of_2",
+        "a_text_broken_in_one_place_is_the_error_of_that_place_with_its_line_column_and_path_part_2_of_3",
         || a_text_broken_in_one_place_is_the_error_of_that_place_with_its_line_column_and_path(1),
+    ),
+    (
+        "a_text_broken_in_one_place_is_the_error_of_that_place_with_its_line_column_and_path_part_3_of_3",
+        || a_text_broken_in_one_place_is_the_error_of_that_place_with_its_line_column_and_path(2),
     ),
     (
         "cases_in_the_values_of_cases_are_read_to_any_depth_part_1_of_2",
@@ -106,12 +110,16 @@ pub const ONCE: &[Test] = &[
         a_rawjson_built_by_hand_from_text_that_is_not_json_is_refused,
     ),
     (
-        "a_rawjson_that_is_read_and_written_is_the_bytes_it_was_less_the_space_round_it_part_1_of_2",
+        "a_rawjson_that_is_read_and_written_is_the_bytes_it_was_less_the_space_round_it_part_1_of_3",
         || a_rawjson_that_is_read_and_written_is_the_bytes_it_was_less_the_space_round_it(0),
     ),
     (
-        "a_rawjson_that_is_read_and_written_is_the_bytes_it_was_less_the_space_round_it_part_2_of_2",
+        "a_rawjson_that_is_read_and_written_is_the_bytes_it_was_less_the_space_round_it_part_2_of_3",
         || a_rawjson_that_is_read_and_written_is_the_bytes_it_was_less_the_space_round_it(1),
+    ),
+    (
+        "a_rawjson_that_is_read_and_written_is_the_bytes_it_was_less_the_space_round_it_part_3_of_3",
+        || a_rawjson_that_is_read_and_written_is_the_bytes_it_was_less_the_space_round_it(2),
     ),
 ];
 
@@ -1180,8 +1188,9 @@ fn broken(g: &mut Gen, w: &Written, settings: Settings) -> Vec<Case> {
     cases
 }
 
-fn a_text_broken_in_one_place_is_the_error_of_that_place_with_its_line_column_and_path(part: u64) {
-    generate::check_cases(6003, 4 * part, 4, |g: &mut Gen| {
+fn a_text_broken_in_one_place_is_the_error_of_that_place_with_its_line_column_and_path(part: usize) {
+    let (from, cases) = [(0, 3), (3, 3), (6, 2)][part];
+    generate::check_cases(6003, from, cases, |g: &mut Gen| {
         let (defs, t, v, settings) = made(g);
         let w = write(&defs, &t, &v, settings, COMPACT);
         let mut cases = vec![Case { text: w.bytes.clone(), refuse: false, expected: "ok true".into() }];
@@ -1789,8 +1798,9 @@ fn reading_asks_for_memory_for_the_texts_of_the_value_and_for_nothing_else() {
     assert!(moved > 0 && moved <= 8 * 1_000, "{moved} bytes moved for 1000 escapes");
 }
 
-fn a_rawjson_that_is_read_and_written_is_the_bytes_it_was_less_the_space_round_it(part: u64) {
-    generate::check_cases(6008, 4 * part, 4, |g: &mut Gen| {
+fn a_rawjson_that_is_read_and_written_is_the_bytes_it_was_less_the_space_round_it(part: usize) {
+    let (from, cases) = [(0, 3), (3, 3), (6, 2)][part];
+    generate::check_cases(6008, from, cases, |g: &mut Gen| {
         let mut texts = Vec::new();
         for _ in 0..6 {
             let value = tree(g, 3);
