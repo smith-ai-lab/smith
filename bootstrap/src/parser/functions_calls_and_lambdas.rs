@@ -188,16 +188,7 @@ impl Parser<'_> {
             self.name_bound_ok = false;
             result = Some(ty?);
         }
-        let mut effects = Vec::new();
-        if self.tok() == &Tok::Punct("!") {
-            self.bump();
-            effects.push(self.ident("an effect")?);
-            while self.tok() == &Tok::Punct(",") {
-                self.bump();
-                self.skip_newlines();
-                effects.push(self.ident("an effect")?);
-            }
-        }
+        let effects = self.effects()?;
         if self.tok() == &Tok::Newline
             && matches!(
                 self.tokens.get(self.at + 1).map(|t| &t.tok),
