@@ -5,7 +5,7 @@ description: The functions that and, or, xor, and shift the bits of a whole numb
 status: partial
 built:
   - "`bit_and`, `bit_or`, `bit_xor`, `bit_not`, `shift_left`, and `shift_right` on `u8` to `u64` and `i8` to `i64`, a shift compiling when `arith` proves that its amount is below the number of bits"
-  - "not a range as a type, or a range that fills a size written as a range"
+  - "not a range that does not fill a size given to a bit function, the exact range as the type of what one gives, a `shift_left` that drops no bit, or `wrapping_shift_left`: today each takes and gives a range that fills a size, what `arith` knows of the result is a fact and not its type, and `shift_left` drops the bits that leave the top"
 ---
 
 # Bit operations
