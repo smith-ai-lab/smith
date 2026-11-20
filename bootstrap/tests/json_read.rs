@@ -22,20 +22,40 @@ pub const ONCE: &[Test] = &[
         every_example_of_the_reading_part_of_the_page_gives_what_the_page_says,
     ),
     (
-        "a_value_written_by_to_json_as_is_read_back_as_the_value_for_each_setting",
-        a_value_written_by_to_json_as_is_read_back_as_the_value_for_each_setting,
+        "a_value_written_by_to_json_as_is_read_back_as_the_value_for_each_setting_part_1_of_2",
+        || a_value_written_by_to_json_as_is_read_back_as_the_value_for_each_setting(0),
     ),
     (
-        "spaces_line_breaks_escapes_and_signs_do_not_change_the_value_that_is_read",
-        spaces_line_breaks_escapes_and_signs_do_not_change_the_value_that_is_read,
+        "a_value_written_by_to_json_as_is_read_back_as_the_value_for_each_setting_part_2_of_2",
+        || a_value_written_by_to_json_as_is_read_back_as_the_value_for_each_setting(1),
     ),
     (
-        "a_text_broken_in_one_place_is_the_error_of_that_place_with_its_line_column_and_path",
-        a_text_broken_in_one_place_is_the_error_of_that_place_with_its_line_column_and_path,
+        "spaces_line_breaks_escapes_and_signs_do_not_change_the_value_that_is_read_part_1_of_2",
+        || spaces_line_breaks_escapes_and_signs_do_not_change_the_value_that_is_read(0),
     ),
     (
-        "cases_in_the_values_of_cases_are_read_to_any_depth",
-        cases_in_the_values_of_cases_are_read_to_any_depth,
+        "spaces_line_breaks_escapes_and_signs_do_not_change_the_value_that_is_read_part_2_of_2",
+        || spaces_line_breaks_escapes_and_signs_do_not_change_the_value_that_is_read(1),
+    ),
+    (
+        "a_text_broken_in_one_place_is_the_error_of_that_place_with_its_line_column_and_path_part_1_of_3",
+        || a_text_broken_in_one_place_is_the_error_of_that_place_with_its_line_column_and_path(0),
+    ),
+    (
+        "a_text_broken_in_one_place_is_the_error_of_that_place_with_its_line_column_and_path_part_2_of_3",
+        || a_text_broken_in_one_place_is_the_error_of_that_place_with_its_line_column_and_path(1),
+    ),
+    (
+        "a_text_broken_in_one_place_is_the_error_of_that_place_with_its_line_column_and_path_part_3_of_3",
+        || a_text_broken_in_one_place_is_the_error_of_that_place_with_its_line_column_and_path(2),
+    ),
+    (
+        "cases_in_the_values_of_cases_are_read_to_any_depth_part_1_of_2",
+        || cases_in_the_values_of_cases_are_read_to_any_depth(&[3, 5]),
+    ),
+    (
+        "cases_in_the_values_of_cases_are_read_to_any_depth_part_2_of_2",
+        || cases_in_the_values_of_cases_are_read_to_any_depth(&[50]),
     ),
     (
         "the_members_of_an_object_are_read_in_any_order_with_the_tag_wherever_it_is",
@@ -46,32 +66,60 @@ pub const ONCE: &[Test] = &[
         a_member_that_is_added_is_ignored_or_refused_as_the_setting_says,
     ),
     (
-        "text_the_reader_of_the_test_refuses_is_refused_where_it_refuses_it",
-        text_the_reader_of_the_test_refuses_is_refused_where_it_refuses_it,
+        "text_the_reader_of_the_test_refuses_is_refused_where_it_refuses_it_part_1_of_2",
+        || text_the_reader_of_the_test_refuses_is_refused_where_it_refuses_it(0),
     ),
     (
-        "a_rawjson_holds_the_bytes_of_its_value_and_reads_later_to_the_value_a_direct_read_gives",
-        a_rawjson_holds_the_bytes_of_its_value_and_reads_later_to_the_value_a_direct_read_gives,
+        "text_the_reader_of_the_test_refuses_is_refused_where_it_refuses_it_part_2_of_2",
+        || text_the_reader_of_the_test_refuses_is_refused_where_it_refuses_it(1),
+    ),
+    (
+        "a_rawjson_holds_the_bytes_of_its_value_and_reads_later_to_the_value_a_direct_read_gives_part_1_of_2",
+        || a_rawjson_holds_the_bytes_of_its_value_and_reads_later_to_the_value_a_direct_read_gives(0),
+    ),
+    (
+        "a_rawjson_holds_the_bytes_of_its_value_and_reads_later_to_the_value_a_direct_read_gives_part_2_of_2",
+        || a_rawjson_holds_the_bytes_of_its_value_and_reads_later_to_the_value_a_direct_read_gives(1),
     ),
     (
         "a_rawjson_shares_the_memory_of_the_input",
         a_rawjson_shares_the_memory_of_the_input,
     ),
     (
-        "reading_asks_for_memory_for_the_texts_and_lists_of_the_value_and_for_nothing_else",
-        reading_asks_for_memory_for_the_texts_and_lists_of_the_value_and_for_nothing_else,
+        "reading_asks_for_memory_for_the_lists_of_the_value_and_for_nothing_else",
+        reading_asks_for_memory_for_the_lists_of_the_value_and_for_nothing_else,
     ),
     (
-        "raw_json_is_ok_exactly_when_reading_a_rawjson_is_and_what_a_rawjson_writes_is_json",
-        raw_json_is_ok_exactly_when_reading_a_rawjson_is_and_what_a_rawjson_writes_is_json,
+        "reading_a_struct_of_numbers_asks_for_no_memory_of_its_own",
+        reading_a_struct_of_numbers_asks_for_no_memory_of_its_own,
+    ),
+    (
+        "reading_asks_for_memory_for_the_texts_of_the_value_and_for_nothing_else",
+        reading_asks_for_memory_for_the_texts_of_the_value_and_for_nothing_else,
+    ),
+    (
+        "raw_json_is_ok_exactly_when_reading_a_rawjson_is_and_what_a_rawjson_writes_is_json_part_1_of_2",
+        || raw_json_is_ok_exactly_when_reading_a_rawjson_is_and_what_a_rawjson_writes_is_json(0),
+    ),
+    (
+        "raw_json_is_ok_exactly_when_reading_a_rawjson_is_and_what_a_rawjson_writes_is_json_part_2_of_2",
+        || raw_json_is_ok_exactly_when_reading_a_rawjson_is_and_what_a_rawjson_writes_is_json(1),
     ),
     (
         "a_rawjson_built_by_hand_from_text_that_is_not_json_is_refused",
         a_rawjson_built_by_hand_from_text_that_is_not_json_is_refused,
     ),
     (
-        "a_rawjson_that_is_read_and_written_is_the_bytes_it_was_less_the_space_round_it",
-        a_rawjson_that_is_read_and_written_is_the_bytes_it_was_less_the_space_round_it,
+        "a_rawjson_that_is_read_and_written_is_the_bytes_it_was_less_the_space_round_it_part_1_of_3",
+        || a_rawjson_that_is_read_and_written_is_the_bytes_it_was_less_the_space_round_it(0),
+    ),
+    (
+        "a_rawjson_that_is_read_and_written_is_the_bytes_it_was_less_the_space_round_it_part_2_of_3",
+        || a_rawjson_that_is_read_and_written_is_the_bytes_it_was_less_the_space_round_it(1),
+    ),
+    (
+        "a_rawjson_that_is_read_and_written_is_the_bytes_it_was_less_the_space_round_it_part_3_of_3",
+        || a_rawjson_that_is_read_and_written_is_the_bytes_it_was_less_the_space_round_it(2),
     ),
 ];
 
@@ -894,8 +942,8 @@ fn main() ! console, alloc {{
 
 // A value is read back from what was written.
 
-fn a_value_written_by_to_json_as_is_read_back_as_the_value_for_each_setting() {
-    generate::check(6001, 6, made_with_defs, |(defs, t, v, _)| {
+fn a_value_written_by_to_json_as_is_read_back_as_the_value_for_each_setting(part: u64) {
+    generate::check_cases(6001, 3 * part, 3, made_with_defs, |(defs, t, v, _)| {
         let name = defs.name(t);
         let mut source = format!(
             "{TEXT}{}fn main() ! console, alloc {{\n  v: {name} = {}\n",
@@ -920,14 +968,14 @@ fn made_with_defs(g: &mut Gen) -> (Defs, Ty, Val, Settings) {
     made(g)
 }
 
-fn spaces_line_breaks_escapes_and_signs_do_not_change_the_value_that_is_read() {
+fn spaces_line_breaks_escapes_and_signs_do_not_change_the_value_that_is_read(part: u64) {
     let styles = [
         Style { pad: " ", escape: false, negative_zero: false },
         Style { pad: "\n  ", escape: false, negative_zero: false },
         Style { pad: "", escape: true, negative_zero: true },
         Style { pad: "\r\n\t ", escape: true, negative_zero: true },
     ];
-    generate::check(6002, 6, made_with_defs, |(defs, t, v, settings)| {
+    generate::check_cases(6002, 3 * part, 3, made_with_defs, |(defs, t, v, settings)| {
         let cases: Vec<Case> = styles
             .iter()
             .map(|style| Case {
@@ -969,11 +1017,11 @@ fn the_members_of_an_object_are_read_in_any_order_with_the_tag_wherever_it_is() 
 
 // Cases in the values of cases.
 
-fn cases_in_the_values_of_cases_are_read_to_any_depth() {
+fn cases_in_the_values_of_cases_are_read_to_any_depth(depths: &[usize]) {
     // A type of `depth` enums, each of which holds the next in a case and ends
     // in a case that holds nothing, and the text of the value that goes to the
     // end, for each setting, with the tag before the value and after it by turns.
-    for depth in [3usize, 5, 70] {
+    for &depth in depths {
         let mut types = String::new();
         for d in 0..depth {
             let held = if d + 1 < depth { format!("c0: E{}\n  c1", d + 1) } else { "c0\n  c1".to_string() };
@@ -1140,8 +1188,9 @@ fn broken(g: &mut Gen, w: &Written, settings: Settings) -> Vec<Case> {
     cases
 }
 
-fn a_text_broken_in_one_place_is_the_error_of_that_place_with_its_line_column_and_path() {
-    generate::check(6003, 8, |g: &mut Gen| {
+fn a_text_broken_in_one_place_is_the_error_of_that_place_with_its_line_column_and_path(part: usize) {
+    let (from, cases) = [(0, 3), (3, 3), (6, 2)][part];
+    generate::check_cases(6003, from, cases, |g: &mut Gen| {
         let (defs, t, v, settings) = made(g);
         let w = write(&defs, &t, &v, settings, COMPACT);
         let mut cases = vec![Case { text: w.bytes.clone(), refuse: false, expected: "ok true".into() }];
@@ -1555,8 +1604,8 @@ fn drawn_texts(g: &mut Gen) -> Vec<Vec<u8>> {
     texts
 }
 
-fn text_the_reader_of_the_test_refuses_is_refused_where_it_refuses_it() {
-    generate::check(6005, 8, drawn_texts, |texts| {
+fn text_the_reader_of_the_test_refuses_is_refused_where_it_refuses_it(part: u64) {
+    generate::check_cases(6005, 4 * part, 4, drawn_texts, |texts| {
         let mut source = format!(
             "{TEXT}fn main() ! console, alloc {{\n"
         );
@@ -1594,8 +1643,8 @@ const WRAP: &str = "struct Wrap {
 
 ";
 
-fn a_rawjson_holds_the_bytes_of_its_value_and_reads_later_to_the_value_a_direct_read_gives() {
-    generate::check(6006, 6, |g: &mut Gen| {
+fn a_rawjson_holds_the_bytes_of_its_value_and_reads_later_to_the_value_a_direct_read_gives(part: u64) {
+    generate::check_cases(6006, 3 * part, 3, |g: &mut Gen| {
         let (defs, t, v, settings) = made(g);
         let pad = *g.pick(&["", " ", "\n "]);
         (defs, t, v, settings, pad)
@@ -1672,34 +1721,57 @@ fn pushes(text: &str) -> String {
     text.bytes().map(|b| format!("  l = push(l, {b})\n")).collect()
 }
 
-fn reading_asks_for_memory_for_the_texts_and_lists_of_the_value_and_for_nothing_else() {
-    // What reading `ty` from the text that `build` pushes asks the system for,
-    // beyond what building the text asks for, which is the same program that
-    // does not read it.
-    let extra = |decls: &str, ty: &str, build: &str, check: &str| {
-        let program = |read: bool| {
-            let tail = if read {
-                format!(
-                    "  r: Result[{ty}, ReadError] = from_json(t)\n  match r {{\n    .ok(w) {{ print(if {check} {{ \"ok\" }} else {{ \"wrong\" }}) }}\n    .err(e) {{ print(say(e)) }}\n  }}\n"
-                )
-            } else {
-                "  print(\"ok\")\n".to_string()
-            };
-            with_import(
-                &["from_json"],
-                format!("{TEXT}{decls}fn main() ! console, alloc {{\n  var l: List[Byte] = []\n{build}  t = s(l)\n{tail}}}\n"),
+/// What reading `ty` from the text that `build` pushes asks the system for,
+/// beyond what building the text asks for, which is the same program that does
+/// not read it: the bytes asked for and the bytes moved.
+fn asked_by_reading(decls: &str, ty: &str, build: &str, check: &str) -> (usize, usize) {
+    let program = |read: bool| {
+        let tail = if read {
+            format!(
+                "  r: Result[{ty}, ReadError] = from_json(t)\n  match r {{\n    .ok(w) {{ print(if {check} {{ \"ok\" }} else {{ \"wrong\" }}) }}\n    .err(e) {{ print(say(e)) }}\n  }}\n"
             )
+        } else {
+            "  print(\"ok\")\n".to_string()
         };
-        let (stdout, with, copied) = asked(&program(true));
-        let (_, without, copying) = asked(&program(false));
-        assert_eq!(String::from_utf8(stdout).unwrap(), "ok\n", "{}", program(true));
-        (with - without, copied - copying)
+        with_import(
+            &["from_json"],
+            format!("{TEXT}{decls}fn main() ! console, alloc {{\n  var l: List[Byte] = []\n{build}  t = s(l)\n{tail}}}\n"),
+        )
     };
-    // A value that holds no text and no list asks for what a value of `()`
-    // does, whatever it holds.
-    let nothing = extra("", "()", &pushes("null"), "true");
-    let few = extra("struct N {\n  a: Byte\n}\n\n", "N", &pushes(r#"{"a":1}"#), "w.a == 1");
-    let many = extra(
+    let (stdout, with, copied) = asked(&program(true));
+    let (_, without, copying) = asked(&program(false));
+    assert_eq!(String::from_utf8(stdout).unwrap(), "ok\n", "{}", program(true));
+    (with - without, copied - copying)
+}
+
+/// What a value that holds no text and no list asks for: what a value of `()`
+/// does, whatever it holds.
+fn asked_by_reading_nothing() -> (usize, usize) {
+    asked_by_reading("", "()", &pushes("null"), "true")
+}
+
+// A list asks for memory in proportion to it. The struct of numbers and the
+// texts are the two tests after it, so that none builds and runs a program
+// twice for more than three of the cases.
+fn reading_asks_for_memory_for_the_lists_of_the_value_and_for_nothing_else() {
+    let nothing = asked_by_reading_nothing();
+    let list = |n: usize| {
+        let build = format!(
+            "  l = push(l, '[')\n  loop i in 0..{n} {{\n    if i > 0 {{ l = push(l, ',') }}\n    l = push(l, '0')\n  }}\n  l = push(l, ']')\n"
+        );
+        asked_by_reading("", "List[u64]", &build, &format!("w.size == {n}"))
+    };
+    let (moved_small, moved_large) = (list(500).1 - nothing.1, list(1_000).1 - nothing.1);
+    // What the list moves as it grows doubles with it.
+    assert!(moved_small > 0 && moved_small <= 64 * 500, "{moved_small} bytes moved for 500 elements");
+    assert!(moved_large >= moved_small && moved_large <= 3 * moved_small, "{moved_large} bytes moved for 1000, {moved_small} for 500");
+}
+
+// A struct of numbers asks for what a value of `()` does, whatever it holds.
+fn reading_a_struct_of_numbers_asks_for_no_memory_of_its_own() {
+    let nothing = asked_by_reading_nothing();
+    let few = asked_by_reading("struct N {\n  a: Byte\n}\n\n", "N", &pushes(r#"{"a":1}"#), "w.a == 1");
+    let many = asked_by_reading(
         "struct N {\n  a: Byte\n  b: bool\n  c: Option[Byte]\n  d: (Byte, i8)\n  e: Mode\n  f: Int\n}\n\nenum Mode {\n  c1\n  c2: Byte\n}\n\n",
         "N",
         &pushes(r#"{"a":1,"b":true,"c":null,"d":[7,-8],"e":"c1","f":-9223372036854775808}"#),
@@ -1707,24 +1779,17 @@ fn reading_asks_for_memory_for_the_texts_and_lists_of_the_value_and_for_nothing_
     );
     assert_eq!(few, nothing, "memory asked for a struct of one number");
     assert_eq!(many, nothing, "memory asked for a struct of numbers");
+}
 
-    // A list asks for memory in proportion to it, a text in proportion to what
-    // it holds when it has an escape, and a text with none asks for nothing.
-    let list = |n: usize| {
-        let build = format!(
-            "  l = push(l, '[')\n  loop i in 0..{n} {{\n    if i > 0 {{ l = push(l, ',') }}\n    l = push(l, '0')\n  }}\n  l = push(l, ']')\n"
-        );
-        extra("", "List[u64]", &build, &format!("w.size == {n}"))
-    };
-    let (moved_small, moved_large) = (list(500).1 - nothing.1, list(1_000).1 - nothing.1);
-    // What the list moves as it grows doubles with it.
-    assert!(moved_small > 0 && moved_small <= 64 * 500, "{moved_small} bytes moved for 500 elements");
-    assert!(moved_large >= moved_small && moved_large <= 3 * moved_small, "{moved_large} bytes moved for 1000, {moved_small} for 500");
+// A text asks for memory in proportion to what it holds when it has an escape,
+// and a text with none asks for nothing.
+fn reading_asks_for_memory_for_the_texts_of_the_value_and_for_nothing_else() {
+    let nothing = asked_by_reading_nothing();
     let text = |escape: &str, n: usize| {
         let build = format!(
             "  l = push(l, '\"')\n  loop i in 0..{n} {{\n{escape}  }}\n  l = push(l, '\"')\n"
         );
-        extra("", "str", &build, &format!("w.size == {n}"))
+        asked_by_reading("", "str", &build, &format!("w.size == {n}"))
     };
     let plain = text("    l = push(l, 'a')\n", 1_000);
     assert_eq!(plain, nothing, "a text with no escape is a piece of the input");
@@ -1733,8 +1798,9 @@ fn reading_asks_for_memory_for_the_texts_and_lists_of_the_value_and_for_nothing_
     assert!(moved > 0 && moved <= 8 * 1_000, "{moved} bytes moved for 1000 escapes");
 }
 
-fn a_rawjson_that_is_read_and_written_is_the_bytes_it_was_less_the_space_round_it() {
-    generate::check(6008, 8, |g: &mut Gen| {
+fn a_rawjson_that_is_read_and_written_is_the_bytes_it_was_less_the_space_round_it(part: usize) {
+    let (from, cases) = [(0, 3), (3, 3), (6, 2)][part];
+    generate::check_cases(6008, from, cases, |g: &mut Gen| {
         let mut texts = Vec::new();
         for _ in 0..6 {
             let value = tree(g, 3);
@@ -1769,8 +1835,8 @@ fn a_rawjson_that_is_read_and_written_is_the_bytes_it_was_less_the_space_round_i
     });
 }
 
-fn raw_json_is_ok_exactly_when_reading_a_rawjson_is_and_what_a_rawjson_writes_is_json() {
-    generate::check(6009, 6, drawn_texts, |texts| {
+fn raw_json_is_ok_exactly_when_reading_a_rawjson_is_and_what_a_rawjson_writes_is_json(part: u64) {
+    generate::check_cases(6009, 3 * part, 3, drawn_texts, |texts| {
         let mut source = format!(
             "{TEXT}fn show(t: str) ! console, alloc {{
   a: Result[RawJson, ReadError] = from_json(t)
