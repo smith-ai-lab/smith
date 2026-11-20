@@ -6,6 +6,7 @@ status: partial
 built:
   - "a handler is resolved at build time: the handler in force at each call of an operation is the one `with` or a call of the effect's name installed, found while the code is lowered, and the call is the lambda that answers it lowered in place"
   - "a handler's state is passed and never global: a copy of a function that runs under a handler takes the values of the names its functions use after its own parameters, and gives back those they assign after its results, and a call sets them where it is made"
+  - "an operation of an effect the target provides, with no handler in force, is answered by the target: a table of the library's operations says what a call becomes, as `print` of `console` writes to standard output, and the executable of a program that handles nothing is as it was before effects were declared"
 ---
 
 # The Smith compiler
