@@ -7,13 +7,17 @@ pub trait Describer[D] {
   fn text(d: take D) -> D ! alloc
   fn nothing(d: take D) -> D ! alloc
   fn optional(d: take D) -> D ! alloc
+  fn end_optional(d: take D) -> D ! alloc
   fn sequence(d: take D) -> D ! alloc
+  fn end_sequence(d: take D) -> D ! alloc
   fn tuple(d: take D, size: Nat) -> D ! alloc
+  fn end_tuple(d: take D) -> D ! alloc
   fn structure(d: take D, name: str, about: str, fields: Nat) -> D ! alloc
   fn field(d: take D, name: str, about: str, optional: bool) -> D ! alloc
   fn end_structure(d: take D) -> D ! alloc
   fn enumeration(d: take D, name: str, about: str, cases: Nat) -> D ! alloc
   fn case(d: take D, name: str, about: str, holds: bool) -> D ! alloc
+  fn end_case(d: take D) -> D ! alloc
   fn end_enumeration(d: take D) -> D ! alloc
   fn map(d: take D) -> D ! alloc
 }
