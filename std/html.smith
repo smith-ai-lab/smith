@@ -92,8 +92,11 @@ fn closed(t: take Text, open: bool) -> Text ! alloc {
   }
 }
 
-// The handler of `markup`: it runs `body`, gathers what it writes into one
-// text, and gives it as an `Html`.
+// The handler of `markup`: it runs `writes`, gathers what it writes into one
+// text, and gives it as an `Html`. The parameter is not called `body`, which is
+// the name of an element: a name is found among the module's functions before
+// the function's own bindings, so `body: body` below is the element in a file
+// that does not import it (#642).
 pub fn render(writes: fn() ! markup) -> Html ! alloc {
   var acc = new_text()
   var open = false
