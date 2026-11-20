@@ -32,8 +32,12 @@ pub const ONCE: &[Test] = &[
         every_name_of_a_module_can_be_imported_at_once,
     ),
     (
-        "a_file_that_imports_the_names_it_uses_builds_what_it_built_without_the_use",
-        a_file_that_imports_the_names_it_uses_builds_what_it_built_without_the_use,
+        "a_file_that_imports_the_names_it_uses_builds_what_it_built_without_the_use_part_1_of_2",
+        || a_file_that_imports_the_names_it_uses_builds_what_it_built_without_the_use(0),
+    ),
+    (
+        "a_file_that_imports_the_names_it_uses_builds_what_it_built_without_the_use_part_2_of_2",
+        || a_file_that_imports_the_names_it_uses_builds_what_it_built_without_the_use(1),
     ),
     (
         "a_name_that_is_imported_and_not_used_is_a_warning_at_its_name_and_changes_nothing",
@@ -330,8 +334,8 @@ fn some_program(g: &mut Gen) -> String {
 /// that this test works out from what the file writes. The same file with no
 /// `use` is refused, with one error for each name of the library that it
 /// writes, which says the module the name is in and the `use` to add.
-fn a_file_that_imports_the_names_it_uses_builds_what_it_built_without_the_use() {
-    generate::check(300, 50, some_program, |source| {
+fn a_file_that_imports_the_names_it_uses_builds_what_it_built_without_the_use(part: u64) {
+    generate::check_part(300, 50, part, 2, some_program, |source| {
         let bare = without_uses(source);
         let with = with_imports(&bare);
         assert_eq!(

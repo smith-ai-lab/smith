@@ -18,8 +18,12 @@ pub const ONCE: &[Test] = &[
         library_fields_a_private_field_is_refused_when_built_or_read_at_its_place,
     ),
     (
-        "library_fields_a_program_that_only_holds_the_struct_is_accepted",
-        library_fields_a_program_that_only_holds_the_struct_is_accepted,
+        "library_fields_a_program_that_only_holds_the_struct_is_accepted_part_1_of_2",
+        || library_fields_a_program_that_only_holds_the_struct_is_accepted(0),
+    ),
+    (
+        "library_fields_a_program_that_only_holds_the_struct_is_accepted_part_2_of_2",
+        || library_fields_a_program_that_only_holds_the_struct_is_accepted(1),
     ),
     (
         "library_fields_the_fix_for_a_private_field_names_what_the_module_gives_in_its_place",
@@ -198,8 +202,8 @@ fn library_fields_a_private_field_is_refused_when_built_or_read_at_its_place() {
     });
 }
 
-fn library_fields_a_program_that_only_holds_the_struct_is_accepted() {
-    generate::check(2, 20, case, |c| {
+fn library_fields_a_program_that_only_holds_the_struct_is_accepted(part: u64) {
+    generate::check_part(2, 20, part, 2, case, |c| {
         let h = &hidden()[c.which];
         let (uses, main) = around(h, true);
         let source = format!(

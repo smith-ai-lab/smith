@@ -35,8 +35,12 @@ pub const ONCE: &[Test] = &[
         folding_gives_the_bits_the_evaluator_gives,
     ),
     (
-        "the_passes_rewrite_no_float_that_is_not_known",
-        the_passes_rewrite_no_float_that_is_not_known,
+        "the_passes_rewrite_no_float_that_is_not_known_part_1_of_2",
+        || the_passes_rewrite_no_float_that_is_not_known(0),
+    ),
+    (
+        "the_passes_rewrite_no_float_that_is_not_known_part_2_of_2",
+        || the_passes_rewrite_no_float_that_is_not_known(1),
     ),
     (
         "every_pass_keeps_what_a_generated_function_of_floats_and_whole_numbers_gives",
@@ -301,7 +305,7 @@ fn of_three(make: impl Fn(&mut Builder, &[scalar::Value]) -> scalar::Value) -> F
     b.finish(&[F64])
 }
 
-fn the_passes_rewrite_no_float_that_is_not_known() {
+fn the_passes_rewrite_no_float_that_is_not_known(part: u64) {
     // Each of these is written so that a rewrite that looks harmless changes
     // the bits for some input: `x + 0.0` is not `x` when `x` is `-0.0`,
     // `x * 0.0` is not `0.0` when `x` is infinite or not a number, `x / x` is
@@ -357,7 +361,7 @@ fn the_passes_rewrite_no_float_that_is_not_known() {
         }),
     ];
     let inputs = edges(FloatBits::F64);
-    for f in functions {
+    for f in functions.into_iter().skip(part as usize).step_by(2) {
         let before = f.blocks[0].instructions.len();
         let mut worst = 0;
         for x in &inputs {
