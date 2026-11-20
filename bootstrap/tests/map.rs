@@ -63,6 +63,10 @@ pub const ONCE: &[Test] = &[
         every_function_of_the_source_that_runs_is_the_name_of_an_at_line,
     ),
     (
+        "a_function_the_passes_fold_to_constants_has_a_line_and_no_at_line",
+        a_function_the_passes_fold_to_constants_has_a_line_and_no_at_line,
+    ),
+    (
         "the_exit_of_a_function_is_a_run_of_its_own_named_for_the_function",
         the_exit_of_a_function_is_a_run_of_its_own_named_for_the_function,
     ),
@@ -598,36 +602,71 @@ fn every_function_of_the_source_that_runs_is_the_name_of_an_at_line() {
         if case.mistake.is_some() {
             return;
         }
-        let lowered = smith::lower(&case.source).expect("a program that builds");
-        // The functions of the file, which have a line of it in their code.
-        let written: Vec<&str> = (lowered.functions.iter())
-            .filter(|f| f.name.starts_with("main.") && !f.name.starts_with("main.main"))
-            .filter(|f| f.blocks.iter().flat_map(|b| &b.instructions).any(|i| i.at.is_source()))
-            .map(|f| f.name.as_str())
-            .collect();
-        let program = scalar::passes(&lowered);
-        let names: Vec<String> = program.functions.iter().map(|f| f.name.clone()).collect();
-        for target in buildable() {
-            let (_, parts) = target.emit_parts(&program);
-            let map = smith::target::map(&names, &parts);
-            let named: std::collections::HashSet<String> =
-                runs_of(&map).into_iter().map(|(_, r)| r.5).collect();
-            let lines: std::collections::HashSet<String> =
-                map.lines().filter(|l| l.starts_with("fn ")).map(|l| parse(l).3.to_string()).collect();
-            for name in &written {
-                // A function that has a line of its own is named by an `at` line,
-                // even when every instruction in it was built from what it calls
-                // or from defaults, as its own entry is the run that names it.
-                // One built in place everywhere has no line, and is named only
-                // where some code of it was written.
-                assert!(
-                    named.contains(*name) || !lines.contains(*name),
-                    "{name} has a line and no at line names it for {}\n{map}",
-                    target.name()
-                );
-            }
-        }
+        let (map, written) = map_and_written(&case.source);
+        assert_written_functions_are_named(&map, &written);
     });
+}
+
+/// The map of each target, with the functions of the file that hold a line of
+/// it once the passes are done.
+fn map_and_written(source: &[u8]) -> (Vec<(&'static str, String)>, Vec<String>) {
+    let lowered = smith::lower(source).expect("a program that builds");
+    let program = scalar::passes(&lowered);
+    // The functions of the file that the passes leave a line of it in, which
+    // have a line of it in their code. A function the passes fold to constants
+    // holds none, and its code is all its own, which has no `at` line.
+    let written: Vec<String> = (program.functions.iter())
+        .filter(|f| f.name.starts_with("main.") && !f.name.starts_with("main.main"))
+        .filter(|f| f.blocks.iter().flat_map(|b| &b.instructions).any(|i| i.at.is_source()))
+        .map(|f| f.name.clone())
+        .collect();
+    let names: Vec<String> = program.functions.iter().map(|f| f.name.clone()).collect();
+    let maps = buildable()
+        .into_iter()
+        .map(|target| {
+            let (_, parts) = target.emit_parts(&program);
+            (target.name(), smith::target::map(&names, &parts))
+        })
+        .collect();
+    (maps, written)
+}
+
+fn assert_written_functions_are_named(maps: &[(&'static str, String)], written: &[String]) {
+    for (target, map) in maps {
+        let named: std::collections::HashSet<String> =
+            runs_of(map).into_iter().map(|(_, r)| r.5).collect();
+        let lines: std::collections::HashSet<String> =
+            map.lines().filter(|l| l.starts_with("fn ")).map(|l| parse(l).3.to_string()).collect();
+        for name in written {
+            // A function that has a line of its own is named by an `at` line,
+            // even when every instruction in it was built from what it calls
+            // or from defaults, as its own entry is the run that names it.
+            // One built in place everywhere has no line, and is named only
+            // where some code of it was written.
+            assert!(
+                named.contains(name) || !lines.contains(name),
+                "{name} has a line and no at line names it for {target}\n{map}"
+            );
+        }
+    }
+}
+
+/// `f2` is called from two places and holds three calls of `f3`, which the
+/// passes fold to the constant `f3` gives, so that no instruction of it holds a
+/// line of the file, and its code is all its own: it has a `fn` line and no `at`
+/// line, as a function all of whose code is its own has none.
+const FOLDED: &str = "use std.console (console, print)\n\nstruct Name {\n  first: str\n  inner: str\n  last: str\n}\n\nfn main() ! console {\n  print(f1(\"\"))\n  var x1: Name = Name(inner: \"hello\", first: \"a\", last: f2())\n}\n\nfn f1(first: str) -> str ! console {\n  print(first)\n  var x2: str = Name(last: \"\", inner: first, first: \"//\").inner\n  x2 = f2()\n  x2\n}\n\nfn f2() -> str {\n  f3()\n  x2: str = f3()\n  f3()\n}\n\nfn f3() -> str {\n  Name(last: \"aa\", inner: Name(last: \"b\", inner: \"\", first: \"\").first, first: Name(first: \"\", inner: \"\", last: \"\").first).last\n}\n";
+
+fn a_function_the_passes_fold_to_constants_has_a_line_and_no_at_line() {
+    let (maps, written) = map_and_written(FOLDED.as_bytes());
+    assert_written_functions_are_named(&maps, &written);
+    for (target, map) in &maps {
+        let has_line = map.lines().any(|l| l.starts_with("fn ") && parse(l).3 == "main.f2");
+        let named = runs_of(map).into_iter().any(|(_, r)| r.5 == "main.f2");
+        assert!(has_line, "the case is no case when f2 has no line for {target}\n{map}");
+        assert!(!named, "the case is no case when an at line names f2 for {target}\n{map}");
+        assert!(!written.iter().any(|w| w == "main.f2"));
+    }
 }
 
 /// What the map says of a function it gives no `at` line is that all of its
