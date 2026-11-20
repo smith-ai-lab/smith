@@ -2,7 +2,10 @@
 type: specification
 title: MCP
 description: std.mcp, with which a program is a Model Context Protocol server whose tools, resources, and prompts are plain functions, each described by its own comment and its parameters.
-status: planned
+status: partial
+built:
+  - "`Incoming`, `Reply`, the effect `messages`, `Server` with `name`, `version`, `instructions`, `ttl`, and `origins`, and `reply_to(server, incoming)`, which answers one message of the protocol with one `Reply`: `server/discover`, the checks of the version, of `_meta`, of the headers, and of the origin, and the failures with the statuses the protocol gives them, and -32601 with 404 for every other method"
+  - "not `mcp`, `tool`, `resource`, `prompt`, `stdio`, or `at`, which wait on `Function`, `Describe`, `std.http`, and handlers whose body is a function that is passed by name; `reply_to` is what `mcp` will call for each message"
 ---
 
 # MCP
@@ -150,7 +153,9 @@ effect messages {
 - `message` gives the message being answered, with what carried it knows of it: the headers of the request it came in, each name in small letters, and none for a message that came by the standard input.
 - `answer` takes what `mcp` says of it: the text of one message, or none for a message that needs no answer, and a status. Whoever carries messages over HTTP sends that status, and whoever carries them another way has no use for it.
 
-The protocol asks a server to hold the headers of a request to the message inside it, and to choose the status by how the message fails, so `mcp` does both and what carries the message knows nothing of the protocol. `mcp` refuses with status 400 a message whose `Mcp-Method` header is not its method, whose `Mcp-Name` header is not the tool, the prompt, or the address it names, or whose `MCP-Protocol-Version` header is not the version it says inside, each only where there are headers. It answers 404 for a method it has not, 202 with no text for a message that needs no answer, and 200 for every other answer.
+The protocol asks a server to hold the headers of a request to the message inside it, and to choose the status by how the message fails, so `mcp` does both and what carries the message knows nothing of the protocol. `mcp` refuses with status 400 a message whose `Mcp-Method` header is not its method, whose `Mcp-Name` header is not the tool, the prompt, or the address it names, or whose `MCP-Protocol-Version` header is not the version it says inside, each only where there are headers. It answers 404 for a method it has not, 202 with no text for a message that needs no answer, 400 for a request that names a version the server does not speak or leaves out the `_meta` the protocol requires, as the protocol gives each of those failures, and 200 for every other answer.
+
+One message is answered by `reply_to(server, incoming)`, which takes a `Server` holding the arguments of `mcp` and gives the `Reply`, with no effect but `alloc`, so that what carries the messages, and a test, need no handler to try it.
 
 `mcp` asks for each message and gives each answer through the effect `messages`, and does not know where they come from. What answers `messages` is the deployment and not the program:
 

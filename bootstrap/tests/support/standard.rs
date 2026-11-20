@@ -438,6 +438,194 @@ fn drop_links(line: &str) -> String {
     out
 }
 
+/// A value of JSON, as far as the examples of the schema need to be read.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Json {
+    Null,
+    Bool(bool),
+    Number(String),
+    Text(String),
+    Array(Vec<Json>),
+    Object(Vec<(String, Json)>),
+}
+
+impl Json {
+    pub fn get(&self, key: &str) -> Option<&Json> {
+        match self {
+            Json::Object(members) => members.iter().find(|(k, _)| k == key).map(|(_, v)| v),
+            _ => None,
+        }
+    }
+
+    pub fn text(&self) -> Option<&str> {
+        match self {
+            Json::Text(t) => Some(t),
+            _ => None,
+        }
+    }
+
+    pub fn members(&self) -> Vec<&str> {
+        match self {
+            Json::Object(members) => members.iter().map(|(k, _)| k.as_str()).collect(),
+            _ => Vec::new(),
+        }
+    }
+}
+
+struct Reader<'a> {
+    bytes: &'a [u8],
+    at: usize,
+}
+
+pub fn parse(text: &str) -> Json {
+    let mut reader = Reader { bytes: text.as_bytes(), at: 0 };
+    let value = reader.value();
+    reader.space();
+    assert_eq!(reader.at, reader.bytes.len(), "text after the value");
+    value
+}
+
+impl Reader<'_> {
+    fn space(&mut self) {
+        while self.bytes.get(self.at).is_some_and(|b| b.is_ascii_whitespace()) {
+            self.at += 1;
+        }
+    }
+
+    fn eat(&mut self, byte: u8) {
+        self.space();
+        assert_eq!(self.bytes.get(self.at), Some(&byte), "expected {} at {}", byte as char, self.at);
+        self.at += 1;
+    }
+
+    fn word(&mut self, word: &str, value: Json) -> Json {
+        assert!(self.bytes[self.at..].starts_with(word.as_bytes()), "expected {word} at {}", self.at);
+        self.at += word.len();
+        value
+    }
+
+    fn value(&mut self) -> Json {
+        self.space();
+        match self.bytes[self.at] {
+            b'{' => {
+                self.at += 1;
+                let mut members = Vec::new();
+                self.space();
+                if self.bytes[self.at] == b'}' {
+                    self.at += 1;
+                    return Json::Object(members);
+                }
+                loop {
+                    self.space();
+                    let key = self.string();
+                    self.eat(b':');
+                    members.push((key, self.value()));
+                    self.space();
+                    match self.bytes[self.at] {
+                        b',' => self.at += 1,
+                        b'}' => {
+                            self.at += 1;
+                            return Json::Object(members);
+                        }
+                        b => panic!("expected , or }} and not {} at {}", b as char, self.at),
+                    }
+                }
+            }
+            b'[' => {
+                self.at += 1;
+                let mut items = Vec::new();
+                self.space();
+                if self.bytes[self.at] == b']' {
+                    self.at += 1;
+                    return Json::Array(items);
+                }
+                loop {
+                    items.push(self.value());
+                    self.space();
+                    match self.bytes[self.at] {
+                        b',' => self.at += 1,
+                        b']' => {
+                            self.at += 1;
+                            return Json::Array(items);
+                        }
+                        b => panic!("expected , or ] and not {} at {}", b as char, self.at),
+                    }
+                }
+            }
+            b'"' => Json::Text(self.string()),
+            b't' => self.word("true", Json::Bool(true)),
+            b'f' => self.word("false", Json::Bool(false)),
+            b'n' => self.word("null", Json::Null),
+            _ => {
+                let from = self.at;
+                while self
+                    .bytes
+                    .get(self.at)
+                    .is_some_and(|b| b.is_ascii_digit() || matches!(b, b'-' | b'+' | b'.' | b'e' | b'E'))
+                {
+                    self.at += 1;
+                }
+                assert!(self.at > from, "a value at {from}");
+                Json::Number(String::from_utf8(self.bytes[from..self.at].to_vec()).unwrap())
+            }
+        }
+    }
+
+    fn string(&mut self) -> String {
+        assert_eq!(self.bytes[self.at], b'"', "a string at {}", self.at);
+        self.at += 1;
+        let mut out: Vec<u8> = Vec::new();
+        loop {
+            let b = self.bytes[self.at];
+            self.at += 1;
+            match b {
+                b'"' => return String::from_utf8(out).unwrap(),
+                b'\\' => {
+                    let e = self.bytes[self.at];
+                    self.at += 1;
+                    let c = match e {
+                        b'"' => '"',
+                        b'\\' => '\\',
+                        b'/' => '/',
+                        b'b' => '\u{8}',
+                        b'f' => '\u{c}',
+                        b'n' => '\n',
+                        b'r' => '\r',
+                        b't' => '\t',
+                        b'u' => {
+                            let hex = std::str::from_utf8(&self.bytes[self.at..self.at + 4]).unwrap();
+                            self.at += 4;
+                            let unit = u32::from_str_radix(hex, 16).unwrap();
+                            char::from_u32(unit).expect("an escape that is a character, not half of a pair")
+                        }
+                        e => panic!("an escape {} at {}", e as char, self.at),
+                    };
+                    let mut buffer = [0u8; 4];
+                    out.extend_from_slice(c.encode_utf8(&mut buffer).as_bytes());
+                }
+                b => out.push(b),
+            }
+        }
+    }
+}
+
+/// The text of a string in a Smith program: the characters that the lexer
+/// reads as more than themselves are escaped.
+pub fn lit(s: &str) -> String {
+    let mut out = String::from("\"");
+    for c in s.chars() {
+        match c {
+            '\\' => out += "\\\\",
+            '"' => out += "\\\"",
+            '{' => out += "\\{",
+            '}' => out += "\\}",
+            '\n' => out += "\\n",
+            c => out.push(c),
+        }
+    }
+    out + "\""
+}
+
 /// What the ledger gives for each sentence of `wanted` sections of `rfc`: the
 /// errors, none when every sentence is in a line that says what holds it. A
 /// line that names a test names one of `tests`, and a line that names no
