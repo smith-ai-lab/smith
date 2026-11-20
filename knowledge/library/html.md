@@ -181,6 +181,22 @@ So a page is whole or is not made: no call inside `render` leaves it half writte
 
 An `Html` is given to whatever wants a page. A route of an [HTTP server](http.md#what-a-function-gives) that gives one answers with it as a page.
 
+An `Html` has [`Fmt`](fmt.md), which writes the page as its text. So a program prints a page, writes it to a file, or compares it in a test, as it does any value that has `Fmt`.
+
+```
+use std.console (console, print)
+use std.html (render, p)
+
+fn main() ! console, alloc {
+  page = render() {
+    p("a < b")
+  }
+  print("{page}")
+}
+```
+
+This prints `<p>a &lt; b</p>`. `Fmt` reads a page and makes none: the text it gives is a `str`, and a `str` given to an element or to `text` is escaped as any text is. What is inside an `Html` stays private, so `render` remains the only thing that makes one.
+
 ## Names
 
 A file imports each element it uses, as any name, or imports the module and writes `html.h1`, as [Qualified names](../language/qualified-names.md) says. An element whose name the file already uses, as `main` in the file that holds the program's `main`, is imported under another name with `as`.
