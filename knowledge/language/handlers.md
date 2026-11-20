@@ -122,7 +122,7 @@ fn main() ! console {
 
 ## How a handler is chosen
 
-The handler in force at every call is known when the program is built, because `with` is part of the source and a lambda cannot escape. The compiler builds a copy of a function for each handler it runs under, as it does for each type a generic function is used with. `report` below is built twice.
+The handler in force at every call is known when the program is built, because `with` is part of the source and a lambda cannot escape. The compiler builds a copy of a function for each handler it runs under, as it does for each type a generic function is used with. A handler is the function that handles the effect and not each `with` that installs it, and what the handler holds, as `tick` below, is given to the copy as a call gives arguments. `report` below is built once, for `fixed`, and runs under `fixed(1)` and under `fixed(2)`.
 
 ```
 use std.bits (u64)
@@ -144,7 +144,7 @@ fn at_two() -> u64 {
 }
 ```
 
-`at_one()` is `1` and `at_two()` is `2`, and `report` costs what its body costs under each handler.
+`at_one()` is `1` and `at_two()` is `2`, and `report` costs what its body costs under the handler, and the value of `tick` it is given. A function that runs under two different handlers is built twice, once for each.
 
 ## The forms
 
