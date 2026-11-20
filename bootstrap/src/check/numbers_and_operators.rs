@@ -417,7 +417,14 @@ impl<'a> Checker<'a> {
                             );
                             return None;
                         }
-                        Some(Ty::List(_) | Ty::Slice(_) | Ty::Text) => {
+                        Some(Ty::Text) => {
+                            self.errors.push(Error::unsupported(
+                                t.pos,
+                                "the `size` of a `str` as a bound",
+                            ));
+                            return None;
+                        }
+                        Some(Ty::List(_) | Ty::Slice(_)) => {
                             named.push((format!("{name}.size"), is_end));
                             if is_end { i128::from(u64::MAX) } else { 0 }
                         }
