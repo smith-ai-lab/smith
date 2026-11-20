@@ -72,16 +72,14 @@ pub(super) fn choices(f: &mut Function) -> bool {
     let mut reads: HashMap<Value, Vec<(usize, bool)>> = HashMap::new();
     let results: Vec<Value> = found.iter().map(|c| c.1).collect();
     for (b, block) in f.blocks.iter().enumerate() {
-        for (is_end, values) in block
-            .instructions
-            .iter()
-            .map(|i| (false, i.op.operands()))
-            .chain([(true, block.end.operands())])
+        let in_instructions = (block.instructions.iter()).flat_map(|i| i.op.operands());
+        let in_end = block.end.operands();
+        for (is_end, v) in in_instructions
+            .map(|v| (false, v))
+            .chain(in_end.map(|v| (true, v)))
         {
-            for v in values {
-                if results.contains(&v) {
-                    reads.entry(v).or_default().push((b, is_end));
-                }
+            if results.contains(&v) {
+                reads.entry(v).or_default().push((b, is_end));
             }
         }
     }
@@ -128,7 +126,7 @@ pub(super) fn choices(f: &mut Function) -> bool {
         }
         // What the block's own jumps give: each is made for one value.
         let own = jumps_mut(&mut f.blocks[b].end);
-        for (k, j) in own.into_iter().enumerate() {
+        for (k, j) in own.iter_mut().enumerate() {
             j.args.iter_mut().for_each(|v| *v = by(values[k])(*v));
         }
         made = true;

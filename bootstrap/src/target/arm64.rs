@@ -1091,7 +1091,7 @@ fn held(f: &Function, constants: &[Option<u64>], folded: Option<&[Vec<Folded>]>)
                 continue;
             }
             let embedded = immediate(constants, &i.op).is_some();
-            for (k, v) in i.op.operands().into_iter().enumerate() {
+            for (k, v) in i.op.operands().enumerate() {
                 needs_a_home[v.0] |= !match &i.op {
                     Op::Binary { .. } => embedded && k == 1,
                     Op::Store { .. } => k == 1,

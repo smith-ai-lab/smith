@@ -45,7 +45,11 @@ impl Shape {
 /// does not dominate it, so that the blocks are not written as loops.
 pub fn analyze(f: &Function) -> Option<Shape> {
     let n = f.blocks.len();
-    let successors: Vec<Vec<usize>> = f.blocks.iter().map(|b| b.end.successors()).collect();
+    let successors: Vec<Vec<usize>> = f
+        .blocks
+        .iter()
+        .map(|b| b.end.successors().collect())
+        .collect();
 
     // The blocks each before every block it reaches except by a jump back.
     let mut seen = vec![false; n];

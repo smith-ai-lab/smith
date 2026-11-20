@@ -460,7 +460,7 @@ pub(super) fn drop_unused(f: &mut Function, entry_live: bool) -> bool {
                 def[r.0] = Some(Def::Result(b, i));
             }
         }
-        for (ji, j) in jumps(&block.end).into_iter().enumerate() {
+        for (ji, j) in jumps(&block.end).iter().enumerate() {
             into[j.block].push((b, ji));
         }
     }

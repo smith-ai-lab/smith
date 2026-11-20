@@ -6,20 +6,12 @@ use super::inline::renamed;
 use super::{End, Function, Jump, Value};
 
 /// The jumps a block's end makes, in order.
-pub(super) fn jumps(end: &End) -> Vec<&Jump> {
-    match end {
-        End::Jump(j) => vec![j],
-        End::Switch { jumps, .. } => jumps.iter().collect(),
-        End::Return(_) => Vec::new(),
-    }
+pub(super) fn jumps(end: &End) -> &[Jump] {
+    end.jumps()
 }
 
-pub(super) fn jumps_mut(end: &mut End) -> Vec<&mut Jump> {
-    match end {
-        End::Jump(j) => vec![j],
-        End::Switch { jumps, .. } => jumps.iter_mut().collect(),
-        End::Return(_) => Vec::new(),
-    }
+pub(super) fn jumps_mut(end: &mut End) -> &mut [Jump] {
+    end.jumps_mut()
 }
 
 /// The blocks reachable from the first, each before every block it reaches
@@ -31,8 +23,7 @@ pub(super) fn reverse_postorder(f: &Function) -> Vec<usize> {
     let mut stack = vec![(0, 0)];
     while let Some((b, next)) = stack.last_mut() {
         let b = *b;
-        let successors = f.blocks[b].end.successors();
-        if let Some(&to) = successors.get(*next) {
+        if let Some(to) = f.blocks[b].end.successors().nth(*next) {
             *next += 1;
             if !seen[to] {
                 seen[to] = true;

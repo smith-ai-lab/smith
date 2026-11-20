@@ -857,16 +857,15 @@ fn has_a_loop(blocks: &[crate::scalar::Block]) -> bool {
     // 0 not yet reached, 1 inside the walk, 2 left.
     let mut state = vec![0u8; blocks.len()];
     state[0] = 1;
-    let mut stack = vec![(0, blocks[0].end.successors(), 0)];
-    while let Some((b, next, i)) = stack.last_mut() {
-        if let Some(&s) = next.get(*i) {
+    let mut stack = vec![(0, 0)];
+    while let Some((b, i)) = stack.last_mut() {
+        if let Some(s) = blocks[*b].end.successors().nth(*i) {
             *i += 1;
             match state[s] {
                 1 => return true,
                 0 => {
                     state[s] = 1;
-                    let successors = blocks[s].end.successors();
-                    stack.push((s, successors, 0));
+                    stack.push((s, 0));
                 }
                 _ => {}
             }
@@ -893,14 +892,13 @@ fn reverse_postorder(blocks: &[crate::scalar::Block]) -> Vec<usize> {
         }
         let from = post.len();
         seen[root] = true;
-        let mut stack = vec![(root, blocks[root].end.successors(), 0)];
-        while let Some((b, next, i)) = stack.last_mut() {
-            if let Some(&s) = next.get(*i) {
+        let mut stack = vec![(root, 0)];
+        while let Some((b, i)) = stack.last_mut() {
+            if let Some(s) = blocks[*b].end.successors().nth(*i) {
                 *i += 1;
                 if !seen[s] {
                     seen[s] = true;
-                    let successors = blocks[s].end.successors();
-                    stack.push((s, successors, 0));
+                    stack.push((s, 0));
                 }
             } else {
                 post.push(*b);
