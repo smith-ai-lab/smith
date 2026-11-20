@@ -1,4 +1,4 @@
-use std.text (Text, append, finish, text)
+use std.text (Text, append, finish, text as new_text)
 use std.utf8 (utf8)
 
 // The bytes of `s` from `from` up to `end`, which are whole characters, as
@@ -37,8 +37,24 @@ fn entity(b: Byte) -> str {
 // The text as HTML holds it as text and nothing else: `<`, `>`, `&`, `"`, and
 // `'` are written as entities, and every other byte as it is. The bytes between
 // two that are escaped are written together.
+// A page, which only `render` makes.
+pub struct Html {
+  page: str
+}
+
+// What an element writes, as it runs. A tag is left open until something that
+// is not an attribute is written, so that `attr` may follow `start`.
+pub effect markup {
+  fn start(tag: str)
+  fn attr(name: str, value: str)
+  fn text(s: str)
+  fn insert(page: Html)
+  fn void()
+  fn end(tag: str)
+}
+
 pub fn escape(s: str) -> str ! alloc {
-  var t = text()
+  var t = new_text()
   var from: Nat = 0
   loop i in 0..s.size {
     written = entity(s[i])
