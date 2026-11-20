@@ -71,6 +71,8 @@ li() {
 
 This writes `<li data-id="7">First</li>`.
 
+The value is escaped, as every text is. The name cannot be escaped, since a name that holds a space or a `=` is more markup and no name. So the name is a text written in the source, and it is checked when the program is built: letters, digits, `-`, `_`, `:`, and `.`, and nothing else. `attr("data id", "7")` is refused, and so is a name that is not written out, as `attr(key, "7")`. `attr` is a [function over code](../language/code.md), which is how it reads the name where the call is written. No page is built that holds a name the library did not check.
+
 ## Every text is escaped
 
 A text given to an element, to `text`, or to an attribute is written so that it is text and nothing else: `<`, `>`, `&`, and a quote are written as HTML writes them. `h1("{name}")` is safe whatever `name` holds, as the element escapes the finished text.
