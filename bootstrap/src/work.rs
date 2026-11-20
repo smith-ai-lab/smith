@@ -5,12 +5,36 @@
 //! by its hash compares it with one or two, so that the count grows with the
 //! program. The count does not depend on the machine, as a time does, and is
 //! read by `tests/build_scales.rs`.
+//!
+//! Threading counts too, the parameters and instructions of the blocks it goes
+//! through, which `tests/pass_depth.rs` reads.
 
 use std::cell::Cell;
 
 thread_local! {
     static ITEMS: Cell<u64> = const { Cell::new(0) };
     static INSTANCES: Cell<u64> = const { Cell::new(0) };
+    static GONE_THROUGH: Cell<u64> = const { Cell::new(0) };
+}
+
+/// Threading went through a block of this many parameters and instructions.
+pub(crate) fn gone_through(size: usize) {
+    GONE_THROUGH.set(GONE_THROUGH.get() + size as u64);
+}
+
+/// What the scalar passes have looked at so far, in this thread.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Looked {
+    /// The parameters and instructions of the blocks that threading went
+    /// through, one block each time a jump was sent past it.
+    pub gone_through: u64,
+}
+
+/// What the scalar passes have looked at so far, in the thread that asks.
+pub fn looked() -> Looked {
+    Looked {
+        gone_through: GONE_THROUGH.get(),
+    }
 }
 
 /// A definition was compared with another.
