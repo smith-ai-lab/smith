@@ -475,7 +475,7 @@ fn uses(g: &mut Gen) -> Uses {
                 file.push(" (x)\n");
             }
             2 => {
-                let bad = *g.pick(&["Zz", "nope", "input"]);
+                let bad = *g.pick(&["Zz", "nope", "missing"]);
                 file.push(&format!("use {m} ({first}, "));
                 file.mistake(bad, format!("`{m}` has no name `{bad}`"));
                 file.push(")\n");
