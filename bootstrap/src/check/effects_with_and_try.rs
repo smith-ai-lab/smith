@@ -2,7 +2,7 @@
 //! needs, and what a default may carry.
 
 use super::*;
-use crate::parser::is_operation;
+use crate::parser::{EffectDef, is_operation};
 
 /// The effects the standard library declares, other than `console`.
 pub(super) const LIBRARY_EFFECTS: &[&str] = &["fs", "net", "time", "ui"];
@@ -46,9 +46,98 @@ impl<'a> Defs<'a> {
         self.file.effects.iter().any(|e| e.name == effect)
     }
 
+    /// Whether the copy is of an operation of an effect.
+    pub(super) fn is_operation_of(&self, instance: &Instance) -> bool {
+        matches!(instance.template, Template::Free(f) if self.is_operation(f))
+    }
+
+    /// The effect an operation is of, by its place among the file's, and its
+    /// place among the effect's operations.
+    pub(super) fn operation_of(&self, f: usize) -> (usize, usize) {
+        let f = &self.file.functions[f];
+        let effect = self.effect_named(&f.effects[0].0).expect("declared");
+        let at = (self.file.effects[effect].operations.iter())
+            .position(|o| *o == f.name)
+            .expect("listed");
+        (effect, at)
+    }
+
     /// Whether a function of the file is an operation of an effect.
     pub(super) fn is_operation(&self, f: usize) -> bool {
         is_operation(&self.file.functions[f])
+    }
+
+    /// The place among the file's effects of the effect the name is the
+    /// handler of, when it is the name of one.
+    pub(super) fn effect_named(&self, name: &str) -> Option<usize> {
+        self.file.effects.iter().position(|e| e.name == name)
+    }
+
+    /// The signature of a call of an effect's name: a function for each
+    /// operation, which takes all of the operation's parameters, and the body
+    /// to run with them in force, which may carry the effect and gives what
+    /// the call gives.
+    pub(super) fn handler_signature(&self, effect: usize) -> Signature {
+        let def = &self.file.effects[effect];
+        let mut params: Vec<(String, Ty)> = Vec::new();
+        for name in &def.operations {
+            let f = self.function_names[name.as_str()];
+            let sig = &self.signatures[f];
+            let mut items: Vec<Ty> = sig.params.iter().map(|(_, t)| t.clone()).collect();
+            items.push(sig.gives.clone());
+            params.push((written_name(name).to_string(), Ty::Fn(items)));
+        }
+        params.push(("body".to_string(), Ty::Fn(vec![Ty::Param(0)])));
+        let mut fn_effects = vec![Vec::new(); params.len()];
+        fn_effects[params.len() - 1] = vec![def.name.clone()];
+        Signature {
+            scope: Scope {
+                names: vec!["T".to_string()],
+                invalid: vec![false],
+                copy: vec![false],
+                discard: vec![false],
+                ..Scope::default()
+            },
+            defaults: vec![false; params.len()],
+            params,
+            param_defaults: vec![None],
+            gives: Ty::Param(0),
+            effects: Vec::new(),
+            fn_effects,
+        }
+    }
+
+    /// The effect a handler answers that a copy carries, when it is a function
+    /// built as a function of its own, which is not built yet: only a function
+    /// that is given a function, and so is lowered in place, runs under a
+    /// handler.
+    pub(super) fn carries_handled(&self, instance: &Instance) -> Option<&str> {
+        let Template::Free(f) = instance.template else {
+            return None;
+        };
+        let sig = &self.signatures[f];
+        if self.is_operation(f) || sig.params.iter().any(|(_, t)| t.holds_fn()) {
+            return None;
+        }
+        sig.effects
+            .iter()
+            .map(String::as_str)
+            .find(|e| self.handled(e))
+    }
+
+    /// Whether an effect is one a handler answers: it is declared, and the
+    /// target does not answer it.
+    pub(super) fn handled(&self, effect: &str) -> bool {
+        self.file
+            .effects
+            .iter()
+            .any(|e| e.name == effect && !self.provided_effect(e))
+    }
+
+    /// Whether the target answers a declared effect: it is one of the
+    /// library's that a row of the table answers.
+    pub(super) fn provided_effect(&self, effect: &EffectDef) -> bool {
+        answered(effect)
     }
 
     /// What the target provides for a function of the file, when it is the
@@ -71,6 +160,15 @@ impl<'a> Defs<'a> {
     }
 }
 
+/// Whether the target answers a declared effect: it is one of the library's
+/// that a row of the table answers.
+fn answered(effect: &EffectDef) -> bool {
+    of_std(effect.pos)
+        && PROVIDED
+            .iter()
+            .any(|p| p.effect == written_name(&effect.name))
+}
+
 /// The errors of the effects a file declares: an effect named twice, and the
 /// effects `main` carries that nothing answers.
 pub(super) fn declarations(file: &File, main: usize, errors: &mut Vec<Error>) {
@@ -89,9 +187,7 @@ pub(super) fn declarations(file: &File, main: usize, errors: &mut Vec<Error>) {
         let Some(declared) = file.effects.iter().find(|e| e.name == *effect) else {
             continue;
         };
-        let provided =
-            of_std(declared.pos) && PROVIDED.iter().any(|p| p.effect == written_name(effect));
-        if !provided {
+        if !answered(declared) {
             errors.push(Error::new(
                 *pos,
                 format!(
@@ -104,6 +200,35 @@ pub(super) fn declarations(file: &File, main: usize, errors: &mut Vec<Error>) {
 }
 
 impl<'a> Checker<'a> {
+    /// The effects a lambda given for the parameter `param` of a call may
+    /// carry beside those of the function it is written in.
+    pub(super) fn lambda_effects(
+        &self,
+        signature: &Signature,
+        param: Option<usize>,
+        value: &Expr,
+    ) -> Vec<String> {
+        match (param, value) {
+            (Some(i), Expr::Lambda(_)) => signature.fn_effects.get(i).cloned().unwrap_or_default(),
+            _ => Vec::new(),
+        }
+    }
+
+    /// Checks the effects written on the function types of the parameters.
+    pub(super) fn parameter_effects(&mut self, def: &Function) {
+        for p in &def.params {
+            self.effects(&p.effects);
+        }
+    }
+
+    /// Checks a call of the name of an effect, which handles it: the lambdas
+    /// for the operations and the body, which gives what the call gives.
+    pub(super) fn handler_call(&mut self, body: &mut Body<'a>, call: &Call, effect: usize) -> Ty {
+        let signature = self.defs.handler_signature(effect);
+        let sol = self.arguments(body, call, &signature, false, None, None);
+        signature.gives.solved(&sol)
+    }
+
     /// Checks a list of effects: each named once, each one there is.
     pub(super) fn effects(&mut self, effects: &[(String, Pos)]) {
         let mut listed: Vec<&str> = Vec::new();
@@ -158,7 +283,10 @@ impl<'a> Checker<'a> {
     /// a listed effect with no such name may be it misspelt. A default lists
     /// none, so each thing in it that needs one is reported.
     pub(super) fn needs(&mut self, body: &mut Body, effect: &str, pos: Pos, what: &str) {
-        if body.listed.contains(&effect) || body.unknown_effect {
+        if body.listed.contains(&effect)
+            || body.extra.iter().any(|e| e == effect)
+            || body.unknown_effect
+        {
             return;
         }
         if body.default.is_some() {

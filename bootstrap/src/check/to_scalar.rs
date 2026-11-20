@@ -129,6 +129,18 @@ struct Out<'a> {
     /// The number of the name of the function the code being lowered is written
     /// in, and of the name of its file's module, for the places made.
     written: u32,
+    /// The handlers in force at the code being lowered, the innermost last.
+    handlers: Vec<Handler<'a>>,
+}
+
+/// A handler in force: the effect it handles, by its place among the file's,
+/// the function that answers each of its operations, in the order the effect
+/// lists them, and how many handlers were in force outside it, which are
+/// those its own functions run under.
+struct Handler<'a> {
+    effect: usize,
+    operations: Vec<Func<'a>>,
+    below: usize,
 }
 
 /// A `loop` being lowered: the names its body assigns, which each round
@@ -220,6 +232,7 @@ impl<'a> Out<'a> {
             dead: Vec::new(),
             place: form::Place::NONE,
             written: 0,
+            handlers: Vec::new(),
         };
         out.new_block();
         out
@@ -1007,6 +1020,7 @@ impl<'a> Lowering<'a> {
                 Callee::Utf8 => self.utf8(out, expr, call, env),
                 Callee::Narrow(narrowing) => self.narrow_call(out, expr, call, narrowing, env),
                 Callee::Value => self.call_value(out, call, env),
+                Callee::Handle(effect) => self.handle(out, expr, call, effect, env),
                 Callee::Intrinsic => self.intrinsic_call(out, expr, call, env),
                 Callee::Run(instance, _)
                     if !matches!(instance.template, Template::Given(_))
@@ -1020,6 +1034,9 @@ impl<'a> Lowering<'a> {
                     let places =
                         params_of(&defs.params(instance.template), &call.args).expect("checked");
                     self.number_call(out, expr, call, named, &places, env)
+                }
+                Callee::Run(instance, gives) if defs.is_operation_of(&instance) => {
+                    self.operation_call(out, call, instance, gives, env)
                 }
                 Callee::Run(instance, gives)
                     if (defs.params(instance.template).iter())

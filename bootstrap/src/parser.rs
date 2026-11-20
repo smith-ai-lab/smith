@@ -234,6 +234,8 @@ pub struct Param {
     /// For a parameter of a function type, whether each of the function's
     /// own parameters is marked `take`.
     pub takes: Vec<bool>,
+    /// For a parameter of a function type, the effects the function carries.
+    pub effects: Effects,
 }
 
 /// A type: a name, and the types in brackets after it, if any. A tuple
@@ -1562,11 +1564,11 @@ impl Parser<'_> {
 
     /// Parses a type, and for a function type whether each of its parameters
     /// is marked `take`.
-    fn ty_taking(&mut self) -> Result<(Type, Vec<bool>), Error> {
+    fn ty_taking(&mut self) -> Result<(Type, Vec<bool>, Effects), Error> {
         if self.tok() == &Tok::Keyword("fn") {
-            return self.function_type();
+            return self.function_type(true);
         }
-        Ok((self.ty()?, Vec::new()))
+        Ok((self.ty()?, Vec::new(), Vec::new()))
     }
 
     /// Reads past an array type, which is not built, from its `[`: the sizes
@@ -1629,7 +1631,7 @@ impl Parser<'_> {
             }
             Tok::Number(_) | Tok::Punct("-") => self.range_type(pos, names, None),
             Tok::Punct("[") => self.array_type(pos),
-            Tok::Keyword("fn") => Ok(self.function_type()?.0),
+            Tok::Keyword("fn") => Ok(self.function_type(false)?.0),
             Tok::Punct("(") => {
                 let mut args = self.list(Self::ty)?;
                 if self.tok() == &Tok::Punct("->") {

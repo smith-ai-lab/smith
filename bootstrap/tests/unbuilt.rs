@@ -82,7 +82,7 @@ const UNBUILT: &[Unbuilt] = &[
         parsed: true,
     },
     Unbuilt {
-        declares: "fn u{i}(f: fn(Int) -> Int @! console) -> Int { 1 }\n",
+        declares: "struct S{i} {\n  f: fn(Int) -> Int @! console\n}\n",
         call: "",
         parsed: true,
     },

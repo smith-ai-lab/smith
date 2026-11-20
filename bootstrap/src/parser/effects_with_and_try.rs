@@ -254,24 +254,4 @@ impl Parser<'_> {
             )),
         }
     }
-
-    /// Reads past the effects written after a function type, which is not
-    /// built, if there are any.
-    pub(super) fn function_effects(&mut self) {
-        if self.tok() != &Tok::Punct("!") {
-            return;
-        }
-        self.unbuilt.push(Error::unsupported(
-            self.pos(),
-            "an effect on a function type",
-        ));
-        self.bump();
-        while matches!(self.tok(), Tok::Ident(_)) {
-            self.bump();
-            if self.tok() != &Tok::Punct(",") {
-                break;
-            }
-            self.bump();
-        }
-    }
 }
