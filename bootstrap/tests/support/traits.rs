@@ -1869,7 +1869,7 @@ fn main_statement(b: &mut Builder, m: &Model, sites: &Sites) {
             b.last = Some(*b.g.pick(&[
                 ("", "derive Named for Rock"),
                 ("", "without Add for Rock"),
-                ("", "effect Kind {\n  fn kind()\n}"),
+                ("", "foreign \"c\" fn kind()"),
                 (
                     "trait Spare[T] {\n  fn spare_of(x: T, note: str = ",
                     "1.5) -> str\n}",

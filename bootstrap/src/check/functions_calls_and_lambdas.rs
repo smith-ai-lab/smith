@@ -529,8 +529,8 @@ impl<'a> Checker<'a> {
         if let Some(narrowing) = narrowing(defs, call) {
             return self.narrow(body, call, narrowing, want);
         }
-        if name == "print" {
-            let print = Signature::print();
+        if let Some(provided) = defs.provided_by_name(name) {
+            let print = (provided.signature)();
             if self.effect_in_default(body, call, &print) {
                 return self.unknown_call(body, call);
             }

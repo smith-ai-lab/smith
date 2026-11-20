@@ -3,6 +3,23 @@
 
 use super::*;
 
+/// An effect: a name, and the operations it lists. Each operation is also one
+/// of the file's functions, a function with no body that carries the effect,
+/// so it is imported and called as any function is.
+#[derive(Debug, PartialEq, Eq)]
+pub struct EffectDef {
+    pub name: String,
+    pub pos: Pos,
+    /// The names of its operations, in the order written.
+    pub operations: Vec<String>,
+}
+
+/// Whether a function is an operation of an effect, which has no body and
+/// ends where it starts.
+pub fn is_operation(f: &Function) -> bool {
+    f.body.is_empty() && f.end == f.pos
+}
+
 /// `try operand`, with `try` at `pos`: what `operand` splits into goes on
 /// with the value of `.go`, and leaves the function with that of `.stop`.
 pub(super) fn split(pos: Pos, operand: Expr) -> Expr {
@@ -119,6 +136,60 @@ impl Parser<'_> {
             }
         }
         Ok(effects)
+    }
+
+    /// Parses an effect and the line break after it: its operations are
+    /// returned as functions, each carrying the effect.
+    pub(super) fn declare_effect(&mut self) -> Result<(EffectDef, Vec<Function>), Error> {
+        self.bump();
+        let (name, pos) = self.defined("the effect's name")?;
+        self.expect_punct("{", "`{` to open the effect's operations")?;
+        let mut operations = Vec::new();
+        loop {
+            self.skip_newlines();
+            match self.tok() {
+                Tok::Punct("}") => break,
+                Tok::Keyword("fn") => {}
+                tok => return Err(self.expected("an operation's signature or `}`", tok)),
+            }
+            let (op, at, generics, params, result, result_name, mut effects) = self.signature()?;
+            match self.tok() {
+                Tok::Newline | Tok::Punct("}") => {}
+                Tok::Keyword("requires" | "ensures") => {
+                    return Err(Error::unsupported(self.pos(), "a contract"));
+                }
+                tok => return Err(self.expected("a line break or `}`", tok)),
+            }
+            effects.insert(0, (name.clone(), at));
+            operations.push(Function {
+                name: op,
+                pos: at,
+                generics,
+                params,
+                result,
+                result_name,
+                effects,
+                requires: Vec::new(),
+                needs: Vec::new(),
+                ensures: Vec::new(),
+                body: Vec::new(),
+                end: at,
+            });
+        }
+        self.bump();
+        match self.tok() {
+            Tok::Newline | Tok::Eof => {}
+            tok => return Err(self.expected("a line break", tok)),
+        }
+        let names = operations.iter().map(|f| f.name.clone()).collect();
+        Ok((
+            EffectDef {
+                name,
+                pos,
+                operations: names,
+            },
+            operations,
+        ))
     }
 
     /// Parses `with e` or `with x = e`, whose call `e` is passed the rest

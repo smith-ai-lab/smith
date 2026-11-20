@@ -966,7 +966,7 @@ impl Builder<'_> {
 
 const ITEMS: &[(&str, &str)] = &[
     ("derive Eq for A", NOT_BUILT),
-    ("effect E {\n  fn e()\n}", NOT_BUILT),
+    ("foreign \"c\" fn e()", NOT_BUILT),
     ("pub fn f() {}", NOT_BUILT),
     (")", "definition"),
 ];
