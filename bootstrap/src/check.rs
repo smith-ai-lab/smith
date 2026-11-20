@@ -4737,8 +4737,7 @@ fn cycles(
                 let mut error = Error::unsupported(
                     pos,
                     &format!("a type that holds itself with no `List` between, as `{name}` does,"),
-                )
-                .with_fix(format!("hold it in a `List`, as `List[{name}]`"));
+                );
                 error.message.push_str(", and a `List` of it is built");
                 errors.push(error);
                 for &p in &path[at..] {
