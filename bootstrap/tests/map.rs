@@ -437,7 +437,7 @@ fn no_pass_makes_a_place_the_program_did_not_have() {
         ("fold", scalar::fold),
         ("fuse", scalar::fuse),
         ("common", scalar::common),
-        ("remove", scalar::remove),
+        ("remove", |p| scalar::remove(p.clone())),
         ("passes", scalar::passes),
     ];
     generate::check(9204, 10, programs::program, |case| {

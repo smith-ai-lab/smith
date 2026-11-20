@@ -205,7 +205,7 @@ fn emit(program: scalar::Program, target: Target, map: bool, timings: &mut Timin
     let program = timings.stage("thread", || scalar::thread(&program));
     let program = timings.stage("fold", || scalar::fold(&program));
     let program = timings.stage("common", || scalar::common(&program));
-    let program = timings.stage("remove", || scalar::remove(&program));
+    let program = timings.stage("remove", || scalar::remove(program));
     timings.stage("emit", || {
         let (executable, parts) = target.emit_parts(&program);
         let beside = target.beside(&program);

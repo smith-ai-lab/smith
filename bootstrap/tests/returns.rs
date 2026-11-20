@@ -563,7 +563,7 @@ fn after_an_if_that_returns_arith_knows_the_condition_is_false() {
 /// the one place the `return`s share.
 fn size(source: &str) -> (usize, usize) {
     let program = lower(source.as_bytes()).unwrap_or_else(|e| panic!("{e:?} for {source}"));
-    let after = scalar::remove(&program);
+    let after = scalar::remove(program.clone());
     let calls = (after.functions.iter())
         .flat_map(|f| &f.blocks)
         .flat_map(|b| &b.instructions)

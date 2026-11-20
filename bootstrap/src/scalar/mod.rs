@@ -53,7 +53,7 @@ pub use wellformed::{Malformed, Why, check};
 /// instruction or takes one apart: `fuse` does that, once, to a form as it is
 /// made.
 pub fn passes(program: &Program) -> Program {
-    remove(&common(&fold(&thread(&trim(&inline(program))))))
+    remove(common(&fold(&thread(&trim(&inline(program))))))
 }
 
 /// How many bits an integer has.

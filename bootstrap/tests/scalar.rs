@@ -1586,7 +1586,7 @@ fn after_each_pass(p: &scalar::Program) -> [scalar::Program; 6] {
     let threaded = scalar::thread(&trimmed);
     let folded = scalar::fold(&threaded);
     let shared = scalar::common(&folded);
-    let removed = scalar::remove(&shared);
+    let removed = scalar::remove(shared.clone());
     [inlined, trimmed, threaded, folded, shared, removed]
 }
 
@@ -1775,10 +1775,10 @@ fn the_passes_give_the_same_program_every_time_and_never_a_larger_one() {
         assert_eq!(threaded, scalar::thread(&trimmed));
         assert_eq!(folded, scalar::fold(&threaded));
         assert_eq!(shared, scalar::common(&folded));
-        assert_eq!(removed, scalar::remove(&shared));
+        assert_eq!(removed, scalar::remove(shared.clone()));
         assert!(size(&shared) <= size(&folded), "{shared:?}");
         assert!(size(&removed) <= size(&shared), "{removed:?}");
-        assert_eq!(scalar::remove(&removed), removed);
+        assert_eq!(scalar::remove(removed.clone()), removed);
     }
 }
 
@@ -1789,9 +1789,9 @@ fn removal_makes_at_most_four_walks_and_leaves_no_work() {
     assert_eq!(scalar::WALKS, 4);
     for (_, s) in taken() {
         let shared = scalar::common(&scalar::fold(&scalar::inline(s)));
-        let (removed, walks) = scalar::remove_counting(&shared);
+        let (removed, walks) = scalar::remove_counting(shared);
         assert!(walks <= scalar::WALKS, "{walks} walks over {s:?}");
-        let (again, more) = scalar::remove_counting(&removed);
+        let (again, more) = scalar::remove_counting(removed.clone());
         assert_eq!((&again, more), (&removed, 1), "{s:?}");
     }
 }
@@ -1867,7 +1867,7 @@ fn removal_makes_as_many_walks_over_ten_thousand_blocks_as_over_ten() {
     let mut most = 0;
     for blocks in [10, 100, 1_000, 10_000] {
         let program = generate::sample(2, blocks as u64, |g| blocks_in_a_row(g, blocks));
-        let (removed, walks) = scalar::remove_counting(&program);
+        let (removed, walks) = scalar::remove_counting(program.clone());
         assert!(walks <= scalar::WALKS, "{walks} walks over {blocks} blocks");
         most = most.max(walks);
         assert_eq!(scalar::run(&removed), scalar::run(&program), "{blocks} blocks");
@@ -1881,7 +1881,7 @@ fn removal_makes_as_many_walks_over_ten_thousand_blocks_as_over_ten() {
         if blocks <= 100 {
             assert_eq!(scalar::check(&removed), Ok(()), "{blocks} blocks");
         }
-        assert_eq!(scalar::remove(&removed), removed, "{blocks} blocks");
+        assert_eq!(scalar::remove(removed.clone()), removed, "{blocks} blocks");
     }
     assert!(most < scalar::WALKS, "{most} walks for the most blocks");
 }
