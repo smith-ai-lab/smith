@@ -265,7 +265,7 @@ fn a_function_of_a_chain_is_passed_what_it_reads_and_gives_back_what_it_changes(
 /// What `program` prints with each pass alone and with all of them, which must
 /// be what it prints with none.
 fn prints_the_same_with_the_pass(program: &Program, said: &Outcome) {
-    let inlined = scalar::inline(program);
+    let inlined = scalar::inline(program.clone());
     assert_eq!(&scalar::run(&scalar::trim(inlined.clone())), said);
     assert_eq!(&scalar::run(&scalar::passes(program)), said);
 }

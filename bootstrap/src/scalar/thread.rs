@@ -162,7 +162,7 @@ fn localize(f: &mut Function, reached: &[bool]) {
             let mut ops = Vec::new();
             each_read(&i.op, |v| ops.push((v, by(v, &mut f.types))));
             let lookup = |v: Value| ops.iter().find(|(from, _)| *from == v).map_or(v, |p| p.1);
-            i.op = super::inline::renamed(&i.op, &lookup);
+            i.op.rename(&lookup);
         }
         let mut ops = Vec::new();
         each_end_read(&block.end, |v| ops.push((v, by(v, &mut f.types))));
@@ -256,7 +256,7 @@ fn localize(f: &mut Function, reached: &[bool]) {
         let by = |v: Value| pairs.iter().find(|(from, _)| *from == v).map_or(v, |p| p.1);
         let block = &mut f.blocks[t];
         for i in &mut block.instructions {
-            i.op = super::inline::renamed(&i.op, &by);
+            i.op.rename(&by);
         }
         super::graph::rename_end(&mut block.end, &by);
     }

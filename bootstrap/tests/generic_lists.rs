@@ -420,7 +420,7 @@ fn kinds(source: &str) -> BTreeMap<String, usize> {
     let source = &with_imports(source);
     let program = lower(source.as_bytes()).unwrap_or_else(|e| panic!("{e:?} for {source}"));
     let mut counts = BTreeMap::new();
-    for i in (scalar::inline(&program).functions.iter())
+    for i in (scalar::inline(program.clone()).functions.iter())
         .flat_map(|f| &f.blocks)
         .flat_map(|b| &b.instructions)
     {
