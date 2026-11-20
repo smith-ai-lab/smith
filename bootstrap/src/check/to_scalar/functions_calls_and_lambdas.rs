@@ -4,6 +4,40 @@
 
 use super::*;
 
+/// The names a block writes where it uses a name: as a name, as the function
+/// a call calls, or as what it assigns.
+fn used_names(body: &[Stmt]) -> Vec<&str> {
+    let mut names = Vec::new();
+    for e in exprs(values(body)) {
+        match e {
+            Expr::Name { name, .. } => names.push(name.as_str()),
+            Expr::Call(call) if call.qualifier.is_none() => names.push(call.callee.as_str()),
+            _ => {}
+        }
+    }
+    for s in statements(body) {
+        if let Stmt::Assign { name, .. } | Stmt::Define { name, .. } = s {
+            names.push(name.as_str());
+        }
+    }
+    names
+}
+
+/// The function with the frame it is written in numbered as `map` says.
+fn moved<'a>(func: &Func<'a>, map: &[(usize, usize)]) -> Func<'a> {
+    let to = |frame: &usize| {
+        map.iter()
+            .find(|(from, _)| from == frame)
+            .expect("a frame of the handler")
+            .1
+    };
+    match func {
+        Func::Lambda(l, frame, env) => Func::Lambda(l, to(frame), env.clone()),
+        Func::Each(l, frame, env) => Func::Each(l, to(frame), env.clone()),
+        Func::Named(instance) => Func::Named(instance.clone()),
+    }
+}
+
 /// Whether a `return` is written in a block, and not in a lambda in it,
 /// which leaves the lambda.
 pub(super) fn has_return(body: &[Stmt]) -> bool {
@@ -79,6 +113,15 @@ pub(super) fn stops(body: &[Stmt], breaks: bool, returns: bool) -> bool {
 
 impl<'a> Lowering<'a> {
     pub(super) fn function(&mut self, instance: &Instance) -> form::Function {
+        self.function_with(instance, &[])
+    }
+
+    /// `function`, for a copy that runs under the handlers of `context`.
+    fn function_with(
+        &mut self,
+        instance: &Instance,
+        context: &[(HandlerId, Rc<HandlerDef<'a>>)],
+    ) -> form::Function {
         let defs = self.typed.defs;
         if let Template::Given(k) = instance.template {
             let name = self.given_name(k);
@@ -97,6 +140,36 @@ impl<'a> Lowering<'a> {
             let types = self.scalars(&ty);
             let values = out.params(&types);
             out.define(name, ty, values);
+        }
+        for (id, def) in context {
+            let below = out.handlers.len();
+            let mut map: Vec<(usize, usize)> = Vec::new();
+            for (orig, _) in &def.frames {
+                map.push((*orig, out.frames.len()));
+                out.frames.push(Vec::new());
+            }
+            for ((_, names), (_, frame)) in def.frames.iter().zip(&map) {
+                for c in names {
+                    let (values, func) = match &c.func {
+                        Some(func) => (Vec::new(), Some(moved(func, &map))),
+                        None => (out.params(&c.scalars), None),
+                    };
+                    out.frames[*frame].push(Bound {
+                        name: c.name.clone(),
+                        ty: c.ty.clone(),
+                        values,
+                        func,
+                    });
+                }
+            }
+            out.handlers.push(Handler {
+                id: *id,
+                effect: def.effect,
+                operations: def.operations.iter().map(|f| moved(f, &map)).collect(),
+                def: Some(def.clone()),
+                frames: map.iter().map(|(_, frame)| *frame).collect(),
+                below,
+            });
         }
         let gives = view.gives.subst(&instance.args);
         let code = Code::Stmts(&view.f.body);
@@ -345,8 +418,9 @@ impl<'a> Lowering<'a> {
         let args = args.into_iter();
         match func {
             Func::Named(instance) => {
-                let function = self.place(Body::Copy(instance));
-                let args = args.flat_map(|a| a.values).collect();
+                let (function, extra) = self.copy_for(out, &instance);
+                let mut args: Vec<form::Value> = args.flat_map(|a| a.values).collect();
+                args.extend(extra);
                 let types = self.scalars(gives);
                 out.emit(form::Op::Call { function, args }, types)
             }
@@ -455,9 +529,13 @@ impl<'a> Lowering<'a> {
             .map(|b| b.func.expect("a function"))
             .collect();
         let below = out.handlers.len();
+        let id = self.handler_id(call, out);
         out.handlers.push(Handler {
+            id,
             effect,
             operations,
+            def: None,
+            frames: Vec::new(),
             below,
         });
         let gives = typed.type_of(expr, env);
@@ -512,5 +590,154 @@ impl<'a> Lowering<'a> {
             result.clear();
         }
         (gives, result)
+    }
+
+    /// The number of the handler a call of an effect's name installs, which is
+    /// the same wherever the same call is lowered under the same handlers.
+    fn handler_id(&mut self, call: &'a Call, out: &Out<'a>) -> HandlerId {
+        let key = (addr(call), out.handlers.iter().map(|h| h.id).collect());
+        let next = self.handler_ids.len() as HandlerId;
+        *self.handler_ids.entry(key).or_insert(next)
+    }
+
+    /// What a handler is made of: the names its functions use, and those that
+    /// the functions they hold use in turn, found in the frames of `out`.
+    fn capture(&mut self, out: &Out<'a>, effect: usize, operations: &[Func<'a>]) -> HandlerDef<'a> {
+        let mut frames: Vec<(usize, Vec<Captured<'a>>)> = Vec::new();
+        let mut work: Vec<(usize, &'a [Stmt])> = Vec::new();
+        let reach = |func: &Func<'a>, frames: &mut Vec<(usize, Vec<Captured<'a>>)>| {
+            let (frame, body) = match func {
+                Func::Lambda(l, frame, _) => (*frame, &l.body[..]),
+                Func::Each(l, frame, _) => (*frame, &l.body[..]),
+                Func::Named(_) => return None,
+            };
+            if !frames.iter().any(|(f, _)| *f == frame) {
+                frames.push((frame, Vec::new()));
+            }
+            Some((frame, body))
+        };
+        for func in operations {
+            work.extend(reach(func, &mut frames));
+        }
+        while let Some((frame, body)) = work.pop() {
+            let assigned: Vec<(&str, Pos)> = (statements(body).into_iter())
+                .filter_map(|s| match s {
+                    Stmt::Assign { name, pos, .. } | Stmt::Define { name, pos, .. } => {
+                        Some((name.as_str(), *pos))
+                    }
+                    _ => None,
+                })
+                .collect();
+            for name in used_names(body) {
+                let Some(at) = out.frames[frame].iter().rposition(|b| b.name == name) else {
+                    continue;
+                };
+                let entry = frames.iter_mut().find(|(f, _)| *f == frame).expect("made");
+                if entry.1.iter().any(|c| c.name == name) {
+                    continue;
+                }
+                let bound = &out.frames[frame][at];
+                if let Some((_, pos)) = assigned.iter().find(|(n, _)| *n == name)
+                    && bound.func.is_none()
+                    && !bound.values.is_empty()
+                {
+                    self.errors.push(Error::unsupported(
+                        *pos,
+                        "a function a handler gives that assigns a name, under which a function that carries the effect runs,",
+                    ));
+                }
+                let scalars = match bound.func {
+                    Some(_) => Vec::new(),
+                    None => self.scalars(&bound.ty),
+                };
+                entry.1.push(Captured {
+                    name: name.to_string(),
+                    ty: bound.ty.clone(),
+                    scalars,
+                    func: bound.func.clone(),
+                });
+                let held = bound.func.clone();
+                if let Some(func) = held {
+                    work.extend(reach(&func, &mut frames));
+                }
+            }
+        }
+        HandlerDef {
+            effect,
+            operations: operations.to_vec(),
+            frames,
+        }
+    }
+
+    /// The place of the function a call runs, and the values it takes after
+    /// its own arguments. A function that carries an effect a handler answers
+    /// is built for the handlers it runs under, and takes what the functions of
+    /// those handlers use; any other is one copy.
+    pub(super) fn copy_for(
+        &mut self,
+        out: &mut Out<'a>,
+        instance: &Instance,
+    ) -> (usize, Vec<form::Value>) {
+        let defs = self.typed.defs;
+        let handled: Vec<usize> = match instance.template {
+            Template::Free(f) if !defs.is_operation(f) => (defs.signatures[f].effects.iter())
+                .filter(|e| defs.handled(e))
+                .filter_map(|e| defs.effect_named(e))
+                .collect(),
+            _ => Vec::new(),
+        };
+        if handled.is_empty() {
+            return (self.place(Body::Copy(instance.clone())), Vec::new());
+        }
+        let upto = (handled.iter())
+            .map(|e| {
+                let at = (out.handlers.iter().rposition(|h| h.effect == *e))
+                    .expect("an effect that is handled where a function that carries it is called");
+                at + 1
+            })
+            .max()
+            .expect("an effect");
+        for i in 0..upto {
+            if out.handlers[i].def.is_none() {
+                let (effect, operations) =
+                    (out.handlers[i].effect, out.handlers[i].operations.clone());
+                let def = self.capture(out, effect, &operations);
+                out.handlers[i].def = Some(Rc::new(def));
+            }
+        }
+        let ids: Vec<HandlerId> = out.handlers[..upto].iter().map(|h| h.id).collect();
+        self.contexts.entry(ids.clone()).or_insert_with(|| {
+            (out.handlers[..upto].iter())
+                .map(|h| (h.id, h.def.clone().expect("made")))
+                .collect()
+        });
+        let mut values = Vec::new();
+        for h in &out.handlers[..upto] {
+            let def = h.def.as_ref().expect("made");
+            for (i, (orig, names)) in def.frames.iter().enumerate() {
+                let frame = h.frames.get(i).copied().unwrap_or(*orig);
+                for c in names.iter().filter(|c| c.func.is_none()) {
+                    let at = out.frames[frame]
+                        .iter()
+                        .rposition(|b| b.name == c.name)
+                        .expect("a name the functions of the handler use");
+                    values.extend(out.frames[frame][at].values.iter().copied());
+                }
+            }
+        }
+        let function = self.place(Body::Under(instance.clone(), ids));
+        (function, values)
+    }
+
+    /// Lowers a copy of a function for the handlers it runs under: its own
+    /// parameters, and then the values the functions of each handler use, which
+    /// are in frames made as the ones they were written in.
+    pub(super) fn function_under(
+        &mut self,
+        instance: &Instance,
+        ids: &[HandlerId],
+    ) -> form::Function {
+        let context = self.contexts[ids].clone();
+        self.function_with(instance, &context)
     }
 }

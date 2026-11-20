@@ -21,6 +21,8 @@
 //! of two texts are calls of the functions of `scalar::runtime`, which a
 //! program holds only when it reaches them.
 
+use std::rc::Rc;
+
 use super::*;
 use crate::scalar as form;
 use crate::scalar::runtime::{self, Runtime};
@@ -50,7 +52,7 @@ fn spaceless(name: String) -> String {
 }
 
 /// The program that `start` runs, in the scalar form.
-pub(super) fn lower(typed: &Typed, start: Instance) -> form::Program {
+pub(super) fn lower(typed: &Typed, start: Instance) -> Result<form::Program, Vec<Error>> {
     // A `main` that takes the words it was started with is called by the
     // runtime's `Start`, which the system's start-up code calls.
     let takes = !typed.defs.view(start.template).params.is_empty();
@@ -61,6 +63,10 @@ pub(super) fn lower(typed: &Typed, start: Instance) -> form::Program {
         runtimes: Vec::new(),
         data: Vec::new(),
         files: Map::default(),
+        unders: Map::default(),
+        handler_ids: Map::default(),
+        contexts: Map::default(),
+        errors: Vec::new(),
     };
     lowering.add(Body::Copy(start));
     if takes {
@@ -71,14 +77,18 @@ pub(super) fn lower(typed: &Typed, start: Instance) -> form::Program {
         let body = lowering.bodies[functions.len()].clone();
         functions.push(match body {
             Body::Copy(instance) => lowering.function(&instance),
+            Body::Under(instance, ids) => lowering.function_under(&instance, &ids),
             Body::Runtime(kind) => runtime::build(kind, &mut |k| lowering.place(Body::Runtime(k))),
         });
     }
-    form::handler::install(form::Program {
+    if !lowering.errors.is_empty() {
+        return Err(lowering.errors);
+    }
+    Ok(form::handler::install(form::Program {
         data: lowering.data,
         functions,
         main: usize::from(takes),
-    })
+    }))
 }
 
 /// A function of the program: a copy of one the source defines, or one the
@@ -86,6 +96,9 @@ pub(super) fn lower(typed: &Typed, start: Instance) -> form::Program {
 #[derive(Clone, PartialEq)]
 enum Body {
     Copy(Instance),
+    /// A copy of a function that carries an effect a handler answers, for the
+    /// handlers it runs under.
+    Under(Instance, Vec<HandlerId>),
     Runtime(Runtime),
 }
 
@@ -97,6 +110,15 @@ struct Lowering<'a> {
     /// The place of each copy among `bodies`, so that a copy is found by
     /// its hash and not by a walk of all that are placed.
     copies: Map<Instance, usize>,
+    /// The same for the copies built for the handlers they run under.
+    unders: Map<(Instance, Vec<HandlerId>), usize>,
+    /// The number of each handler, by where it is installed and the handlers in
+    /// force there.
+    handler_ids: Map<(usize, Vec<HandlerId>), HandlerId>,
+    /// What each choice of handlers a copy runs under is made of.
+    contexts: Map<Vec<HandlerId>, Vec<(HandlerId, Rc<HandlerDef<'a>>)>>,
+    /// What is not built yet and a program uses.
+    errors: Vec<Error>,
     /// The place of each function of the runtime, which are few: a kind of
     /// them has no hash, as it is defined where the runtime is.
     runtimes: Vec<(Runtime, usize)>,
@@ -133,13 +155,45 @@ struct Out<'a> {
     handlers: Vec<Handler<'a>>,
 }
 
-/// A handler in force: the effect it handles, by its place among the file's,
-/// the function that answers each of its operations, in the order the effect
-/// lists them, and how many handlers were in force outside it, which are
-/// those its own functions run under.
-struct Handler<'a> {
+/// A handler's number: one for each place a call of an effect's name is
+/// lowered, under the handlers in force there.
+type HandlerId = u32;
+
+/// A name that the functions of a handler use, and what it stands for where the
+/// handler is installed.
+#[derive(Clone)]
+struct Captured<'a> {
+    name: String,
+    ty: Ty,
+    /// The scalars it is, when it holds a value.
+    scalars: Vec<form::Type>,
+    /// The function it holds, when it holds one.
+    func: Option<Func<'a>>,
+}
+
+/// What a handler is made of: the effect it handles, the function that
+/// answers each of its operations, and, for each frame of the function being
+/// lowered that those functions are written in or reach, the names of it that
+/// they use. A copy of a function that runs under the handler is given the
+/// values of those names, and nothing else of the frames.
+struct HandlerDef<'a> {
     effect: usize,
     operations: Vec<Func<'a>>,
+    frames: Vec<(usize, Vec<Captured<'a>>)>,
+}
+
+/// A handler in force: its number, the effect it handles, the function that
+/// answers each operation in the order the effect lists them, and how many
+/// handlers were in force outside it, which are those its own functions run
+/// under. `def` is made when a copy first needs it, and `frames` says where
+/// each of its frames is in the function being lowered, or is empty where they
+/// are the ones it was installed in.
+struct Handler<'a> {
+    id: HandlerId,
+    effect: usize,
+    operations: Vec<Func<'a>>,
+    def: Option<Rc<HandlerDef<'a>>>,
+    frames: Vec<usize>,
     below: usize,
 }
 
@@ -742,6 +796,9 @@ impl<'a> Lowering<'a> {
     fn place(&mut self, body: Body) -> usize {
         let found = match &body {
             Body::Copy(instance) => self.copies.get(instance).copied(),
+            Body::Under(instance, ids) => {
+                self.unders.get(&(instance.clone(), ids.clone())).copied()
+            }
             Body::Runtime(kind) => (self.runtimes.iter())
                 .find(|(k, _)| k == kind)
                 .map(|&(_, at)| at),
@@ -755,6 +812,9 @@ impl<'a> Lowering<'a> {
         match &body {
             Body::Copy(instance) => {
                 self.copies.insert(instance.clone(), at);
+            }
+            Body::Under(instance, ids) => {
+                self.unders.insert((instance.clone(), ids.clone()), at);
             }
             Body::Runtime(kind) => self.runtimes.push((kind.clone(), at)),
         }
@@ -1047,7 +1107,7 @@ impl<'a> Lowering<'a> {
                 Callee::Run(instance, gives) => {
                     let inner = typed.env_of(&Callee::Run(instance.clone(), gives.clone()));
                     let params = defs.params(instance.template);
-                    let function = self.place(Body::Copy(instance.clone()));
+                    let (function, extra) = self.copy_for(out, &instance);
                     // Arguments are worked out in the order they are
                     // written, and then passed in the order of the
                     // parameters.
@@ -1065,14 +1125,10 @@ impl<'a> Lowering<'a> {
                     for (at, default) in defs.left_out(call) {
                         args[at] = self.expr(out, default, &inner).1;
                     }
+                    let mut args = args.concat();
+                    args.extend(extra);
                     let types = self.scalars(&gives);
-                    let results = out.emit(
-                        form::Op::Call {
-                            function,
-                            args: args.concat(),
-                        },
-                        types,
-                    );
+                    let results = out.emit(form::Op::Call { function, args }, types);
                     (gives, results)
                 }
             },
