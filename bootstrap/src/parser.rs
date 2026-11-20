@@ -685,6 +685,10 @@ impl Expr {
 pub struct Call {
     /// The name before the `.`, and where it is, if one is written.
     pub qualifier: Option<(String, Pos)>,
+    /// The types in brackets after the qualifier, as in `Describe[Note].describe(d)`,
+    /// which name the types a trait's function is for. They are written as
+    /// expressions, and the checker reads them as the types they name.
+    pub type_args: Vec<Expr>,
     pub callee: String,
     /// Where the call starts, which is where its qualifier is if it has
     /// one.
@@ -2457,6 +2461,28 @@ impl Parser<'_> {
                     name: qualifier,
                     pos: at,
                 } => self.call_or_name(Some((qualifier, at)), name, pos)?,
+                // `Trait[Type].function(...)`: the types written name the types
+                // the trait's function is for.
+                Expr::Index {
+                    of,
+                    index,
+                    pos: bracket,
+                } if matches!(&*of, Expr::Name { .. }) && self.tok() == &Tok::Punct("(") => {
+                    let Expr::Name {
+                        name: qualifier,
+                        pos: at,
+                    } = *of
+                    else {
+                        unreachable!("checked")
+                    };
+                    let mut call = self.call_rest(Some((qualifier, at)), name, pos)?;
+                    call.type_args = match *index {
+                        Expr::Tuple { items, .. } => items,
+                        one => vec![one],
+                    };
+                    let _ = bracket;
+                    Expr::Call(call)
+                }
                 of => Expr::Field {
                     of: Box::new(of),
                     name,

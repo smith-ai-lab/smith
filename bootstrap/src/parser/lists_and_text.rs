@@ -42,6 +42,7 @@ fn interpolated(
     qualified.append(&mut p.qualified);
     let pos = value.pos();
     Ok(Expr::Call(Call {
+        type_args: Vec::new(),
         qualifier: Some(("Fmt".to_string(), pos)),
         callee: "fmt".to_string(),
         pos,
