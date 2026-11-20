@@ -3,8 +3,9 @@
 //! block of an `if` or a `match` that is in that place, or as what a `return`
 //! gives, and it has a `decreases` that `arith` proves is not below zero and
 //! smaller at each of the calls. Such a function is a loop in the scalar form.
-//! A call that is not the last thing a function does, and functions that call
-//! each other, are not supported yet.
+//! A call that is not the last thing a function does is held to the same rule,
+//! and keeps a frame, so the function carries `alloc`. Functions that call each
+//! other are not supported yet.
 
 use smith::scalar::{self, Op, Outcome};
 use smith::{check, lower};
@@ -46,15 +47,29 @@ pub const ONCE: &[Test] = &[
         a_decreases_of_two_parts_is_compared_as_words_in_a_dictionary_are,
     ),
     (
-        "a_call_of_itself_that_is_not_the_last_thing_a_function_does_is_not_supported_yet",
-        a_call_of_itself_that_is_not_the_last_thing_a_function_does_is_not_supported_yet,
+        "a_call_of_itself_that_is_not_the_last_thing_a_function_does_gives_what_the_calls_gave_to_any_depth",
+        a_call_of_itself_that_is_not_the_last_thing_a_function_does_gives_what_the_calls_gave_to_any_depth,
+    ),
+    (
+        "a_call_of_itself_that_is_not_the_last_thing_a_function_does_needs_alloc_and_a_measure_proven_smaller",
+        a_call_of_itself_that_is_not_the_last_thing_a_function_does_needs_alloc_and_a_measure_proven_smaller,
+    ),
+    (
+        "functions_that_call_each_other_and_a_call_of_itself_in_a_lambda_are_not_supported_yet",
+        functions_that_call_each_other_and_a_call_of_itself_in_a_lambda_are_not_supported_yet,
     ),
 ];
 
-pub const MACHINE: &[Test] = &[(
-    "an_executable_of_a_function_that_calls_itself_fifty_million_times_prints_the_count_and_its_stack_does_not_grow",
-    an_executable_of_a_function_that_calls_itself_fifty_million_times_prints_the_count_and_its_stack_does_not_grow,
-)];
+pub const MACHINE: &[Test] = &[
+    (
+        "an_executable_of_a_function_that_calls_itself_fifty_million_times_prints_the_count_and_its_stack_does_not_grow",
+        an_executable_of_a_function_that_calls_itself_fifty_million_times_prints_the_count_and_its_stack_does_not_grow,
+    ),
+    (
+        "an_executable_of_a_function_that_calls_itself_a_million_deep_not_last_prints_the_depth",
+        an_executable_of_a_function_that_calls_itself_a_million_deep_not_last_prints_the_depth,
+    ),
+];
 
 /// The messages of the errors a program is refused with, or none if it
 /// compiles.
@@ -271,23 +286,72 @@ fn an_executable_of_a_function_that_calls_itself_fifty_million_times_prints_the_
     }
 }
 
-fn a_call_of_itself_that_is_not_the_last_thing_a_function_does_is_not_supported_yet() {
+/// A program of `depth`, which adds one after each call of itself, and a
+/// `main` that prints it at each of `at`.
+fn depth(body: &str, header: &str, at: &[u64]) -> String {
+    let prints: String = at.iter().map(|n| format!("  print(\"{{depth({n})}}\")\n")).collect();
+    format!(
+        "use std.bits (u64)\nuse std.console (console, print)\nuse std.int (wrapping_add)\n\nfn depth(n: u64) -> u64{header}\n  decreases n\n{{\n  {body}\n}}\n\nfn main() ! console, alloc {{\n{prints}}}\n"
+    )
+}
+
+const NOT_LAST: &str = "if n == 0 { 0 } else { wrapping_add(depth(n - 1), 1) }";
+
+fn a_call_of_itself_that_is_not_the_last_thing_a_function_does_gives_what_the_calls_gave_to_any_depth() {
     for body in [
-        "if n == 0 { acc } else { count(n - 1, acc) + 1 }",
-        "x = count(n - 1, acc)\n  x",
-        "if n == 0 { acc } else { wrapping_add(count(n - 1, acc), 1) }",
+        NOT_LAST,
+        "if n == 0 { 0 } else { x = depth(n - 1)\n  wrapping_add(x, 1) }",
+        "if n == 0 { 0 } else { wrapping_add(1, depth(n - 1)) }",
     ] {
-        let source = counting("\n  decreases n", body);
-        let errors = refused(&source);
-        assert!(
-            errors
-                .iter()
-                .any(|e| e.contains("calls itself") && e.contains("not supported yet")),
-            "{errors:?} for {source}"
-        );
-        assert!(
-            !errors.iter().any(|e| e.contains("`decreases`")),
-            "{errors:?} for {source}"
-        );
+        for n in [0u64, 1, 2, 7, 100, 10_000] {
+            let source = depth(body, " ! alloc", &[n]);
+            assert_eq!(refused(&source), Vec::<String>::new(), "for {source}");
+            let lowered = lower(source.as_bytes()).unwrap();
+            let said = scalar::run(&lowered);
+            assert_eq!(said.stdout, format!("{n}\n").into_bytes(), "{source}");
+            assert_eq!(scalar::run(&scalar::passes(&lowered)), said, "{source}");
+        }
     }
+}
+
+/// The program of the issue: `depth(3)` and `depth(1000000)`, in an executable
+/// whose stack is the system's at its usual size.
+fn an_executable_of_a_function_that_calls_itself_a_million_deep_not_last_prints_the_depth() {
+    let source = depth(NOT_LAST, " ! alloc", &[3, 10_000_000]);
+    let said = Outcome {
+        stdout: b"3\n10000000\n".to_vec(),
+        status: 0,
+    };
+    for target in runnable() {
+        runs_as(source.as_bytes(), target, &said);
+    }
+}
+
+fn a_call_of_itself_that_is_not_the_last_thing_a_function_does_needs_alloc_and_a_measure_proven_smaller() {
+    // Without `alloc` it is refused as any missing effect is.
+    let errors = refused(&depth(NOT_LAST, "", &[3]));
+    assert!(
+        errors.iter().any(|e| e.contains("needs the `alloc` effect")),
+        "{errors:?}"
+    );
+    // A call that is last needs nothing.
+    let last = counting("\n  decreases n", TAIL);
+    assert_eq!(refused(&last), Vec::<String>::new());
+    // A measure that is not smaller is refused with the goal, as at a call that is last.
+    let stuck = depth("if n == 0 { 0 } else { wrapping_add(depth(n), 1) }", " ! alloc", &[3]);
+    let errors = refused(&stuck);
+    assert!(errors.iter().any(|e| e.contains("`n` is smaller at this call")), "{errors:?}");
+    // And a function with no `decreases` is asked for one.
+    let bare = depth(NOT_LAST, " ! alloc", &[3]).replace("\n  decreases n", "");
+    let errors = refused(&bare);
+    assert!(errors.iter().any(|e| e.contains("needs a `decreases`")), "{errors:?}");
+}
+
+fn functions_that_call_each_other_and_a_call_of_itself_in_a_lambda_are_not_supported_yet() {
+    let circle = "use std.bits (u64)\nuse std.console (console, print)\n\nfn a(n: u64) -> u64 ! alloc\n  decreases n\n{\n  if n == 0 { 0 } else { 1 + b(n - 1) }\n}\n\nfn b(n: u64) -> u64 ! alloc\n  decreases n\n{\n  if n == 0 { 0 } else { 1 + a(n - 1) }\n}\n\nfn main() ! console, alloc {\n  print(\"{a(3)}\")\n}\n";
+    let errors = refused(circle);
+    assert!(
+        errors.iter().any(|e| e.contains("calls itself") && e.contains("not supported yet")),
+        "{errors:?}"
+    );
 }

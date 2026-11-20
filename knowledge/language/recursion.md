@@ -1,16 +1,17 @@
 ---
 type: specification
 title: Recursion
-description: A tail call compiles to a loop, any other recursion keeps its frames in the arena, and so recursion cannot overflow the stack.
+description: A tail call compiles to a loop, any other recursion keeps its frames on a stack that grows in blocks asked of alloc, and so recursion cannot overflow the stack.
 status: partial
 built:
   - "a function whose every call of itself is a tail call, the last expression of its body or of a block of an `if` or a `match` that is itself in that place, or what a `return` gives, and which has a `decreases` that `arith` proves smaller at each call, is a loop with no frame for each call"
-  - "not a call of itself that is not a tail call, which keeps a frame, and not functions that call each other"
+  - "a function that calls itself where the call is not the last thing it does, which carries `alloc` and has a `decreases` that `arith` proves smaller at each call, and keeps its frames on a stack of its own that goes on in a fresh block of at least 64 KB asked of `alloc` when one is full, so no depth of calls overflows the stack"
+  - "not functions that call each other, not a call of itself in a lambda, and not recursion under an installed handler of `alloc`"
 ---
 
 # Recursion
 
-Recursion cannot overflow the stack. A call in tail position is a loop, and every other recursive call keeps its frame in an arena.
+Recursion cannot overflow the stack. A call in tail position is a loop, and every other recursive call keeps its frame on a stack that goes on in a fresh block, asked of `alloc`, when the block it is on is full.
 
 ```
 fn power(x: f64, n: Nat, acc: f64) -> f64 {
@@ -28,7 +29,7 @@ fn power_slow(x: f64, n: Nat) -> f64 ! alloc {
 }
 ```
 
-The multiplication happens after the call returns, so this is not a tail call. Each level keeps a frame, in the current arena, so the depth is limited only by memory. Such a function carries `alloc`. Leaving `alloc` out is refused, as for any function that allocates.
+The multiplication happens after the call returns, so this is not a tail call. Each level keeps a frame, on a stack that grows in blocks asked of `alloc` as any memory is, so the depth is limited only by memory. Such a function carries `alloc`. Leaving `alloc` out is refused, as for any function that allocates.
 
 ## Code with no recursion
 
@@ -50,7 +51,7 @@ Code in a [`with device(gpu)`](devices.md) scope has no recursion other than a t
 | Recursion | Compiled as | Needs |
 | --- | --- | --- |
 | A tail call | A loop | Nothing |
-| Any other | A frame in the current arena for each level | `alloc` |
+| Any other | A frame on a stack of blocks asked of `alloc`, for each level | `alloc` |
 | None | A chain of calls whose depth is known | Nothing |
 
 Next: [Types that contain themselves](recursive-types.md)
