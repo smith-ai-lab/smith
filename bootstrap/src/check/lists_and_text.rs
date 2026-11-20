@@ -57,7 +57,7 @@ pub(super) fn is_utf8(defs: &Defs, call: &Call) -> bool {
     call.qualifier.is_none()
         && call.callee == "utf8"
         && !defs.function_names.contains_key("utf8")
-        && !defs.struct_names.contains_key("utf8")
+        && defs.struct_named("utf8").is_none()
 }
 
 /// Whether a text or a slice is given where a list is needed, which it is
@@ -87,7 +87,7 @@ pub(super) fn is_freeze(defs: &Defs, call: &Call) -> bool {
     call.qualifier.is_none()
         && call.callee == "freeze"
         && !defs.function_names.contains_key("freeze")
-        && !defs.struct_names.contains_key("freeze")
+        && defs.struct_named("freeze").is_none()
         || is_library_finish(call)
 }
 
@@ -110,8 +110,12 @@ impl<'a> Checker<'a> {
         if given != Ty::Text {
             self.expect(body, value, &given, &bytes);
         }
-        let result = defs.enum_names["Result"];
-        let error = defs.struct_names["Utf8Error"];
+        let result = defs
+            .enum_named("Result")
+            .expect("the prelude defines `Result`");
+        let error = defs
+            .struct_named("Utf8Error")
+            .expect("the prelude defines `Utf8Error`");
         Ty::Enum(result, vec![Ty::Text, Ty::Struct(error, Vec::new())])
     }
 
