@@ -424,8 +424,13 @@ fn a_circle_of_functions_needs_a_decreases_of_the_same_parts_in_each_and_a_call_
     };
     // A function of the circle with no `decreases` is refused, and the error names the circle.
     let errors = refused(&ring(" ! alloc", "\n  decreases n", "", &[3]));
-    said(&errors, "`even`, `odd` call each other");
-    said(&errors, "`odd` has not");
+    said(&errors, "`even` and `odd` call each other");
+    said(&errors, "which `odd` has not");
+    // Of more functions, and two with none.
+    let bare = parts(3).replace("\n  decreases n, 2", "").replace("\n  decreases n, 1", "");
+    let errors = refused(&bare);
+    said(&errors, "`sum`, `product`, and `atom` call each other");
+    said(&errors, "which `sum` and `product` have none");
     // Measures of different numbers of parts.
     let errors = refused(&ring(" ! alloc", "\n  decreases n", "\n  decreases n, 0", &[3]));
     said(&errors, "the same number of parts");
