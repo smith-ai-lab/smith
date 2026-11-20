@@ -32,6 +32,8 @@ fn main() ! console, alloc {
 
 This prints `200 -3`. `0..256` holds 0 to 255, and `-5..6` holds -5 to 5. A type is written after a colon, as a parameter's is.
 
+Say what a number holds in its type, as narrowly as the function means it. A parameter that is an index is a `0..xs.size`, not a `Nat` with a `requires`, and a sum is left as the range arithmetic gives it. `saturating_`, `checked_`, and `wrapping_` are for arithmetic that is meant to saturate, to fail, or to wrap, and never a way to make a sum fit a type it would have fitted with a narrower one.
+
 ## A range as a type
 
 `a..b` holds `a` and every whole number above it up to `b`, and it excludes `b`, as a range is written in [Ranges and slices](ranges.md). Its least value is `a` and its greatest is `b - 1`.
