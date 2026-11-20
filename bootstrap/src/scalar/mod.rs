@@ -20,6 +20,7 @@ mod fuse;
 mod graph;
 pub mod handler;
 mod inline;
+mod recur;
 mod remat;
 mod remove;
 pub mod runtime;
@@ -40,6 +41,7 @@ pub use eval::{
 pub use fold::fold;
 pub use fuse::fuse;
 pub use inline::{BOUND, LEAF_BOUND, inline, size};
+pub use recur::recur;
 pub use remat::rematerialized;
 pub use remove::{WALKS, remove, remove_counting};
 pub use tail::tail;

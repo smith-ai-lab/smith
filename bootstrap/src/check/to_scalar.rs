@@ -84,11 +84,15 @@ pub(super) fn lower(typed: &Typed, start: Instance) -> Result<form::Program, Vec
     if !lowering.errors.is_empty() {
         return Err(lowering.errors);
     }
-    Ok(form::handler::install(form::Program {
+    // A function that calls itself as the last thing it does is a loop, and one
+    // that calls itself otherwise has a stack of its own, before the stacks of
+    // `alloc` are passed, so that the stack is asked for as any memory is.
+    let program = form::tail(form::Program {
         data: lowering.data,
         functions,
         main: usize::from(takes),
-    }))
+    });
+    Ok(form::handler::install(form::recur(program)))
 }
 
 /// A function of the program: a copy of one the source defines, or one the
