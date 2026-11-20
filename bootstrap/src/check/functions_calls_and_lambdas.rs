@@ -5,6 +5,40 @@
 use super::*;
 
 impl<'a> Checker<'a> {
+    /// Checks the parts of the `decreases` of a function: each is a whole number
+    /// of an unsigned type over the parameters, which is never computed when
+    /// the program runs.
+    pub(super) fn measure_parts(&mut self, body: &mut Body<'a>, f: &Function) {
+        for e in &f.decreases {
+            // It is an exact number, never computed, so what it does with a
+            // number that does not fit is nothing the program asks of `arith`.
+            let contract = std::mem::replace(&mut body.contract, true);
+            let gives = self.expr(body, e, &Want::Any);
+            body.contract = contract;
+            // A number that is written is of the type the other parts are, as
+            // the `2` of `decreases toks.size - at, 2` is.
+            let written = matches!(
+                e,
+                Expr::Number {
+                    negative: false,
+                    ..
+                }
+            );
+            if !written
+                && !matches!(gives, Ty::Int(t) if !t.signed())
+                && !matches!(gives, Ty::Unknown | Ty::Flex(_))
+            {
+                let given = self.defs.describe(&gives, body.scope);
+                self.errors.push(Error::new(
+                    e.pos(),
+                    format!(
+                        "`decreases` is a whole number of an unsigned type, and this is {given}"
+                    ),
+                ));
+            }
+        }
+    }
+
     /// Checks parameters, each named once in `f`, and the types of the
     /// parameters and the result, among the type parameters of `scope`.
     pub(super) fn params(&mut self, f: &Function, scope: &Scope) {
@@ -1039,8 +1073,32 @@ impl<'a> Checker<'a> {
                 Some((call.pos, callee))
             });
         let reached: Vec<(Pos, usize)> = called.chain(passed).collect();
+        let own = &defs.file.functions[f];
+        let mut tail = Vec::new();
+        tail_calls(&own.body, &mut tail);
+        for e in exprs(values(&own.body)) {
+            if let Expr::Return { value: Some(v), .. } = e
+                && let Expr::Call(c) = &**v
+            {
+                tail.push(c.pos);
+            }
+        }
         for (pos, callee) in reached {
-            if path.contains(&Item::Fn(callee)) {
+            if callee == f && tail.contains(&pos) {
+                // A call of the function from itself that is the last thing it
+                // does is a loop, which the measure of its `decreases` must
+                // prove ends.
+                // Until `arith` proves the measure smaller at a call, none of
+                // them is built, and the error says what the function lacks.
+                self.errors.push(Error::unsupported(
+                    pos,
+                    if own.decreases.is_empty() {
+                        "a function that calls itself, which needs a `decreases` that is smaller at each call,"
+                    } else {
+                        "proving that the `decreases` of a function that calls itself is smaller at the call,"
+                    },
+                ));
+            } else if path.contains(&Item::Fn(callee)) {
                 self.errors.push(Error::unsupported(
                     pos,
                     "a function that calls itself, directly or through others,",
@@ -1051,5 +1109,21 @@ impl<'a> Checker<'a> {
         }
         path.remove(&Item::Fn(f));
         done.insert(Item::Fn(f));
+    }
+}
+
+/// Where the calls are that a block ends with, which are the last thing a
+/// function does when the block is its body: the call it ends with, or the
+/// calls the blocks of its last `if` or `match` end with, and the call a
+/// `return` gives.
+fn tail_calls(stmts: &[Stmt], out: &mut Vec<Pos>) {
+    match stmts.last() {
+        Some(Stmt::Expr(Expr::Match(m))) if matches!(m.form, Form::If { .. } | Form::Match) => {
+            for arm in &m.arms {
+                tail_calls(&arm.body, out);
+            }
+        }
+        Some(Stmt::Expr(Expr::Call(c))) => out.push(c.pos),
+        _ => {}
     }
 }

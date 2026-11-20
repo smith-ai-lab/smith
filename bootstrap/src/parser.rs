@@ -181,6 +181,10 @@ pub struct Function {
     pub needs: Vec<Expr>,
     /// What the function gives, one expression for each `ensures`.
     pub ensures: Vec<Expr>,
+    /// The measure that proves the function ends, one expression for each of
+    /// its parts, as `decreases a, b` writes them. It is empty when the function
+    /// has none.
+    pub decreases: Vec<Expr>,
     pub body: Vec<Stmt>,
     /// Where the `}` that closes the body is.
     pub end: Pos,
@@ -218,6 +222,7 @@ type BodySignature = (
     Option<Type>,
     Option<(String, Pos)>,
     Effects,
+    Vec<Expr>,
     Vec<Expr>,
     Vec<Expr>,
 );
