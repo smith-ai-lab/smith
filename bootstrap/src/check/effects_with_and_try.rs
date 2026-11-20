@@ -114,7 +114,9 @@ impl<'a> Defs<'a> {
         let def = &self.file.effects[effect];
         let mut params: Vec<(String, Ty)> = Vec::new();
         for name in &def.operations {
-            let f = self.function_names[name.as_str()];
+            let f = self
+                .function(def.pos, name)
+                .expect("an operation is a function of the module that declares the effect");
             let sig = &self.signatures[f];
             let mut items: Vec<Ty> = sig.params.iter().map(|(_, t)| t.clone()).collect();
             items.push(sig.gives.clone());
@@ -170,8 +172,8 @@ impl<'a> Defs<'a> {
 
     /// What the target provides for a call of the function the name holds,
     /// if it is the operation of a provided effect.
-    pub(super) fn provided_by_name(&self, name: &str) -> Option<&'static Provided> {
-        self.provided(*self.function_names.get(name)?)
+    pub(super) fn provided_by_name(&self, pos: Pos, name: &str) -> Option<&'static Provided> {
+        self.provided(self.function(pos, name)?)
     }
 }
 

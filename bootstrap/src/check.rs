@@ -785,7 +785,10 @@ struct Defs<'a> {
     file: &'a File,
     /// How each module wrote its names, and what each calls what.
     resolution: Resolution,
-    function_names: Map<&'a str, usize>,
+    function_names: Map<std::borrow::Cow<'a, str>, usize>,
+    /// What a name written in a module is as a function, by the number of the
+    /// module, for the names that were asked.
+    function_memo: std::cell::RefCell<Vec<Map<Box<str>, Option<usize>>>>,
     /// The structs, enums, and traits, by what the file calls each.
     types: Types<'a>,
     /// The functions of traits with each name, as the trait and the
@@ -877,18 +880,39 @@ struct Spelled {
 
 impl<'a> Defs<'a> {
     /// The function the name written at `pos` is: what the module that wrote
-    /// it calls it, found among the file's functions. Until the tokens are no
-    /// longer rewritten, the name the tokens hold is found too, and the two
-    /// must be the same function.
+    /// it calls it, found among the file's functions.
     fn function(&self, pos: Pos, name: &str) -> Option<usize> {
-        let found = self.function_names.get(name).copied();
-        if cfg!(debug_assertions) {
-            let key = self
-                .resolution
-                .key(pos, name, &|n| self.function_names.contains_key(n));
-            let by_scope = self.function_names.get(key.as_str()).copied();
-            assert_eq!(found, by_scope, "`{name}` at {pos:?}");
+        let here = module_of(pos);
+        // The file that is built writes each name as it is, and a name of a
+        // module is the same function wherever the module writes it, which a
+        // debug build, that is asked what each token was written as, does not
+        // hold to.
+        if here == 0 || cfg!(debug_assertions) {
+            return self.function_at(pos, name);
         }
+        if let Some(found) = self
+            .function_memo
+            .borrow()
+            .get(here)
+            .and_then(|m| m.get(name))
+        {
+            return *found;
+        }
+        let found = self.function_at(pos, name);
+        let mut memo = self.function_memo.borrow_mut();
+        if memo.len() <= here {
+            memo.resize_with(here + 1, Default::default);
+        }
+        memo[here].insert(name.into(), found);
+        found
+    }
+
+    fn function_at(&self, pos: Pos, name: &str) -> Option<usize> {
+        // The file that is built writes each name as it is.
+        if pos.line < STEP && !cfg!(debug_assertions) {
+            return self.function_names.get(name).copied();
+        }
+        let found = (self.resolution).find(pos, name, &|n| self.function_names.get(n).copied());
         // A function another module of the library defines is not what a name
         // means in a module that neither defines nor lists it, though the
         // program lists it, and so the file writes it as it is.
@@ -978,7 +1002,7 @@ impl<'a> Defs<'a> {
             let key = self.resolution.key(pos, name, &|n| table.contains_key(n));
             assert_eq!(
                 found.map(std::ptr::from_ref),
-                table.get(key.as_str()).map(std::ptr::from_ref),
+                table.get(&*key).map(std::ptr::from_ref),
                 "`{name}` at {pos:?}, key `{key}`, written `{}`",
                 self.resolution.written_at(pos, name)
             );
@@ -2004,7 +2028,12 @@ fn check_file(
         else {
             break;
         };
-        let found = reach(&file, &names, &roots_of(&file, start_at, whole), true);
+        let found = reach(
+            &file,
+            (&names, &lazy.resolution),
+            &roots_of(&file, start_at, whole),
+            true,
+        );
         let wanted = prelude.wanted(&file, &found.items, &loaded);
         let from_modules = lazy.wanted(&file, &names, &found);
         if wanted.is_empty() && from_modules.is_empty() {
@@ -2036,17 +2065,18 @@ fn check_file(
     }
     defined.sort_by_key(|(pos, _, _)| *pos);
     let resolution = std::mem::take(&mut lazy.resolution);
-    let mut function_names: Map<&str, usize> = Map::default();
+    let mut function_names: Map<std::borrow::Cow<str>, usize> =
+        Map::with_capacity_and_hasher(file.functions.len(), Default::default());
     let mut types = Types::with_capacity(file.structs.len() + file.enums.len() + file.traits.len());
     let mut trait_fns: Map<&str, Vec<(usize, usize)>> = Map::default();
     for (pos, name, claim) in defined {
         let is_type = matches!(claim, Claim::Struct(_) | Claim::Enum(_) | Claim::Trait(_));
         // What the file calls the item, which a struct, an enum, or a trait
         // does not write: the module that defines it does.
-        let key = if is_type {
-            resolution.def_key(pos, name)
-        } else {
+        let key = if matches!(claim, Claim::TraitFn(..)) {
             std::borrow::Cow::Borrowed(name)
+        } else {
+            resolution.def_key(pos, name)
         };
         let prelude = |what: &str| {
             Error::unsupported(
@@ -2074,7 +2104,7 @@ fn check_file(
                 format!("there is already {what} named `{name}`"),
             ));
         } else if !is_type
-            && function_names.get(name).is_some_and(|&f| match claim {
+            && function_names.get(&key).is_some_and(|&f| match claim {
                 // A function of a trait is no rival of a function in a module
                 // that cannot write the trait.
                 Claim::TraitFn(k, _) => (file.scopes.iter())
@@ -2099,7 +2129,7 @@ fn check_file(
                             .find(|(m, _)| *m == module_of(pos))
                             .is_some_and(|(_, traits)| traits.contains(&file.traits[k].name))
                     };
-                    let taken = (trait_fns.get(name).and_then(|f| f.first()))
+                    let taken = (trait_fns.get(&*key).and_then(|f| f.first()))
                         .filter(|(k, _)| !of_prelude(file.traits[*k].pos) && writes(*k));
                     if let Some(&(k, _)) = taken {
                         errors.push(Error::new(
@@ -2110,7 +2140,7 @@ fn check_file(
                             ),
                         ));
                     } else {
-                        function_names.insert(name, i);
+                        function_names.insert(key, i);
                     }
                 }
                 Claim::Struct(i) => {
@@ -2156,7 +2186,7 @@ fn check_file(
         items: reached,
         unbuilt,
         ..
-    } = reach(&file, &names, &roots, false);
+    } = reach(&file, (&names, &resolution), &roots, false);
     let reached_types: Vec<Def> = (reached.iter())
         .filter_map(|r| match r {
             Item::Struct(s) => Some(Def::Struct(*s)),
@@ -2170,6 +2200,7 @@ fn check_file(
         file: &file,
         resolution,
         function_names,
+        function_memo: Default::default(),
         types,
         trait_fns,
         cyclic: vec![false; file.structs.len()],
@@ -2440,7 +2471,7 @@ fn roots_of(file: &File, start_at: usize, whole: bool) -> Vec<Item> {
 
 /// What a name stands for in a file: the item that first defines it.
 struct Names<'a> {
-    functions: Map<&'a str, usize>,
+    functions: Map<std::borrow::Cow<'a, str>, usize>,
     types: Types<'a>,
     trait_fns: Map<&'a str, Vec<(usize, usize)>>,
 }
@@ -2493,7 +2524,7 @@ impl<'a> Types<'a> {
     /// Adds what each module lists of the structs, enums, and traits of the
     /// others, once every item is in.
     fn link(&mut self, resolution: &Resolution) {
-        for (&module, naming) in &resolution.modules {
+        for (module, naming) in &resolution.modules {
             for (written, to, _) in &naming.imports {
                 if naming.types.contains(written) {
                     let item = self.names.get(to.as_str()).and_then(|n| n.file);
@@ -2540,15 +2571,27 @@ impl<'a> Names<'a> {
         self.types.at(pos, name)
     }
 
+    /// The function that the module that wrote `name` at `pos` calls it.
+    fn function_at(&self, resolution: &Resolution, pos: Pos, name: &str) -> Option<usize> {
+        // The file that is built writes each name as it is.
+        if pos.line < STEP && !cfg!(debug_assertions) {
+            return self.functions.get(name).copied();
+        }
+        resolution.find(pos, name, &|n| self.functions.get(n).copied())
+    }
+
     /// The names of the items of the file, with no mistake reported.
     fn of(file: &'a File, resolution: &Resolution) -> Names<'a> {
         let mut names = Names {
-            functions: Map::default(),
+            functions: Map::with_capacity_and_hasher(file.functions.len(), Default::default()),
             types: Types::with_capacity(file.structs.len() + file.enums.len() + file.traits.len()),
             trait_fns: Map::default(),
         };
         for (i, f) in file.functions.iter().enumerate() {
-            names.functions.entry(f.name.as_str()).or_insert(i);
+            names
+                .functions
+                .entry(resolution.def_key(f.pos, &f.name))
+                .or_insert(i);
         }
         for (i, s) in file.structs.iter().enumerate() {
             let key = resolution.def_key(s.pos, &s.name);
@@ -2581,7 +2624,12 @@ impl<'a> Names<'a> {
 /// An `impl` of a trait that is reached, for a type that is not, is in the
 /// items but is not walked, and is in the set the call gives beside them: its
 /// head is checked, and nothing it holds is, until its type is reached.
-fn reach(file: &File, names: &Names, roots: &[Item], contracts: bool) -> Reached {
+fn reach(
+    file: &File,
+    (names, resolution): (&Names, &Resolution),
+    roots: &[Item],
+    contracts: bool,
+) -> Reached {
     let fmt = prelude_item(file, Kind::Trait, "Fmt");
     let mut reached: Vec<Item> = roots.to_vec();
     let mut queue: Vec<Item> = roots.to_vec();
@@ -2642,49 +2690,55 @@ fn reach(file: &File, names: &Names, roots: &[Item], contracts: bool) -> Reached
         };
         // A case written in full names its enum, and a function may be
         // passed as a value by its name.
-        let called = |values: Vec<&Expr>, found: &mut Vec<Item>| {
-            let all = exprs(values.iter().copied());
-            for &e in &all {
-                if let Expr::Field { of, .. } = e
-                    && let Expr::Name { name, pos } = &**of
-                {
-                    type_name(name, *pos, found);
+        // A name of a parameter is the parameter in the function, so it is no
+        // function of the module that has one of that name.
+        let called =
+            |values: Vec<&Expr>, params: &[crate::parser::Param], found: &mut Vec<Item>| {
+                let all = exprs(values.iter().copied());
+                for &e in &all {
+                    if let Expr::Field { of, .. } = e
+                        && let Expr::Name { name, pos } = &**of
+                    {
+                        type_name(name, *pos, found);
+                    }
+                    if let Expr::Name { name, pos } = e
+                        && let Some(f) = names.function_at(resolution, *pos, name)
+                        && !params.iter().any(|p| p.name == *name)
+                    {
+                        found.push(Item::Fn(f));
+                    }
+                    // A `loop` over a value runs the `each` of its `Iterate`.
+                    if matches!(e, Expr::Loop(l) if l.over.is_some()) {
+                        built("Iterate", found);
+                    }
                 }
-                if let Expr::Name { name, .. } = e
-                    && let Some(&f) = names.functions.get(name.as_str())
-                {
-                    found.push(Item::Fn(f));
-                }
-                // A `loop` over a value runs the `each` of its `Iterate`.
-                if matches!(e, Expr::Loop(l) if l.over.is_some()) {
-                    built("Iterate", found);
-                }
-            }
-            let calls = all.iter().filter_map(|e| match e {
-                Expr::Call(call) => Some(call),
-                _ => None,
-            });
-            for call in calls {
-                // The types a call writes after its trait are named.
-                for t in call.type_args.iter().filter_map(traits::expr_type) {
-                    type_names_in(&t, &mut |name, pos| type_name(name, pos, found));
-                }
-                if let Some((q, pos)) = &call.qualifier {
-                    type_name(q, *pos, found);
-                    continue;
-                }
-                let name = call.callee.as_str();
-                if let Some(&f) = names.functions.get(name) {
-                    found.push(Item::Fn(f));
+                let calls = all.iter().filter_map(|e| match e {
+                    Expr::Call(call) => Some(call),
+                    _ => None,
+                });
+                for call in calls {
+                    // The types a call writes after its trait are named.
+                    for t in call.type_args.iter().filter_map(traits::expr_type) {
+                        type_names_in(&t, &mut |name, pos| type_name(name, pos, found));
+                    }
+                    if let Some((q, pos)) = &call.qualifier {
+                        type_name(q, *pos, found);
+                        continue;
+                    }
+                    let name = call.callee.as_str();
+                    if let Some(f) = names.function_at(resolution, call.name_pos, name)
+                        && !params.iter().any(|p| p.name == name)
+                    {
+                        found.push(Item::Fn(f));
+                        type_name(name, call.name_pos, found);
+                        continue;
+                    }
                     type_name(name, call.name_pos, found);
-                    continue;
+                    for &(k, _) in names.trait_fns.get(name).into_iter().flatten() {
+                        found.push(Item::Trait(k));
+                    }
                 }
-                type_name(name, call.name_pos, found);
-                for &(k, _) in names.trait_fns.get(name).into_iter().flatten() {
-                    found.push(Item::Trait(k));
-                }
-            }
-        };
+            };
         let function = |f: &Function, found: &mut Vec<Item>| {
             types_named(f, &mut |name, pos| type_name(name, pos, found));
             let defaults = f.params.iter().filter_map(|p| p.default.as_ref());
@@ -2693,6 +2747,7 @@ fn reach(file: &File, names: &Names, roots: &[Item], contracts: bool) -> Reached
                 .filter(|_| contracts);
             called(
                 values(&f.body).chain(defaults).chain(contracts).collect(),
+                &f.params,
                 found,
             );
         };
@@ -2716,7 +2771,7 @@ fn reach(file: &File, names: &Names, roots: &[Item], contracts: bool) -> Reached
                     type_name(name, pos, &mut found)
                 });
                 let defaults = s.fields.iter().filter_map(|f| f.default.as_ref());
-                called(defaults.collect(), &mut found);
+                called(defaults.collect(), &[], &mut found);
                 found.extend(
                     for_type
                         .get(&(false, si))
@@ -4185,6 +4240,13 @@ fn splice<'a>(
             if plan.whole {
                 types.extend(modules[i].own_types());
             }
+            let mut effects: Set<String> = (modules[i].imports.iter())
+                .filter(|import| {
+                    (modules[import.from].file.effects.iter()).any(|e| e.name == import.name)
+                })
+                .map(|import| import.written.clone())
+                .collect();
+            effects.extend(modules[i].file.effects.iter().map(|e| e.name.clone()));
             let naming = std::rc::Rc::new(Naming {
                 name: modules[i].name.clone(),
                 number: modules[i].number,
@@ -4196,6 +4258,7 @@ fn splice<'a>(
                     .map(|(_, from)| modules[*from].number)
                     .collect(),
                 types,
+                effects,
             });
             resolution.modules.insert(modules[i].number, naming.clone());
             naming
@@ -4294,6 +4357,10 @@ fn splice<'a>(
             for name in &naming.types {
                 filter.add(name, 0);
             }
+            // What a module that is read whole lists is written as it lists it.
+            for (written, _, _) in &naming.imports {
+                filter.add(written, 0);
+            }
         }
         Lazy {
             resolution,
@@ -4302,6 +4369,7 @@ fn splice<'a>(
                 .collect(),
             modules: rest,
             done: Map::default(),
+            keys: Vec::new(),
             filter,
             written: Vec::new(),
         }
@@ -4347,6 +4415,9 @@ struct Lazy<'a> {
     done: Map<String, u8>,
     /// The place among `modules` of each, by the module's number.
     index: Map<usize, usize>,
+    /// What the file calls each name a module wrote, by the module's number,
+    /// for the names that were asked.
+    keys: Vec<Map<Box<str>, std::rc::Rc<str>>>,
     /// What the names of the items not read may look like.
     filter: Filter,
     /// The names the file that is built writes.
@@ -4408,12 +4479,14 @@ impl LazyModule<'_> {
             if matches!(p.kind, PieceKind::Fn | PieceKind::Struct | PieceKind::Enum) {
                 let name = &self.source[p.name.0..p.name.1];
                 filter.add(name, 1 + self.naming.name.len());
-                // A type is written as it is in the module, and in the others
+                // A name is written as it is in the module, and in the others
                 // that list it.
-                if p.kind != PieceKind::Fn {
-                    filter.add(name, 0);
-                }
+                filter.add(name, 0);
             }
+        }
+        // What the module lists is written as it lists it.
+        for (written, _, _) in &self.naming.imports {
+            filter.add(written, 0);
         }
         for name in &self.naming.kept {
             filter.add(name, 0);
@@ -4429,6 +4502,16 @@ impl LazyModule<'_> {
                 .pieces
                 .find(&self.source, &self.pieces.named, name)
                 .is_empty()
+    }
+
+    /// Whether the module defines the name as a function that is read when it
+    /// is reached.
+    fn defines_function(&self, name: &str) -> bool {
+        !self.held.contains(name)
+            && (self.pieces)
+                .find_kind(&self.source, &self.pieces.named, name, &[PieceKind::Fn])
+                .next()
+                .is_some()
     }
 
     /// What the module's name is written as in the file, when it is not as the
@@ -4538,7 +4621,7 @@ impl LazyModule<'_> {
     fn final_of<'n>(&self, name: &'n str, kind: PieceKind) -> std::borrow::Cow<'n, str> {
         match kind {
             PieceKind::Struct | PieceKind::Enum | PieceKind::Trait => self.naming.own_key(name),
-            _ => std::borrow::Cow::Owned(self.rename(name).unwrap_or_else(|| name.to_string())),
+            _ => std::borrow::Cow::Owned(self.naming.final_name(name)),
         }
     }
 
@@ -4690,9 +4773,16 @@ fn names_in_function(f: &Function, out: &mut dyn FnMut(&str, Pos, Ask)) {
     types_named(f, &mut |n, pos| out(n, pos, Ask::Type));
     let defaults = f.params.iter().filter_map(|p| p.default.as_ref());
     let contracts = (f.requires.iter().chain(&f.ensures)).chain(&f.decreases);
+    // A name of a parameter is the parameter in the function, so it calls for
+    // no function of the module that has one of that name.
+    let params: Vec<&str> = f.params.iter().map(|p| p.name.as_str()).collect();
     names_in_expressions(
         values(&f.body).chain(defaults).chain(contracts).collect(),
-        out,
+        &mut |name, pos, ask| {
+            if !params.contains(&name) {
+                out(name, pos, ask)
+            }
+        },
     );
     needs_named(&f.needs, &mut |n, pos| out(n, pos, Ask::Type));
 }
@@ -4830,19 +4920,19 @@ impl<'a> Lazy<'a> {
             return Cow::Borrowed(name);
         };
         if let Some((_, to, _)) = naming.imports.iter().find(|(from, _, _)| from == name) {
-            return Cow::Borrowed(if naming.types.contains(name) {
-                to
-            } else {
-                name
-            });
+            return Cow::Borrowed(to);
         }
         let own = naming.types.contains(name)
             || (index.get(&module)).is_some_and(|&m| modules[m].defines_type(name));
         if own {
-            naming.own_key(name)
-        } else {
-            Cow::Borrowed(name)
+            return naming.own_key(name);
         }
+        // A function the module defines is what it calls the name, and the
+        // file calls it with the module after it, unless the file lists it.
+        if (index.get(&module)).is_some_and(|&m| modules[m].defines_function(name)) {
+            return Cow::Owned(naming.final_name(name));
+        }
+        Cow::Borrowed(name)
     }
 
     /// Finds the items, not read, that a name written at `pos` calls for, once
@@ -4852,19 +4942,42 @@ impl<'a> Lazy<'a> {
         if !self.filter.maybe(name) {
             return;
         }
-        let key = Lazy::key(&self.resolution, &self.index, &self.modules, pos, name);
-        let done = self.done.get(&*key).copied().unwrap_or(0);
+        // The file and the prelude write every name as it is, and a module
+        // writes a name the same way wherever it is written.
+        let at = module_of(pos);
+        let cached: std::rc::Rc<str>;
+        let key: &str = if at == 0 {
+            name
+        } else {
+            let hit = self.keys.get(at).and_then(|m| m.get(name)).cloned();
+            cached = match hit {
+                Some(key) => key,
+                None => {
+                    let key: std::rc::Rc<str> =
+                        Lazy::key(&self.resolution, &self.index, &self.modules, pos, name)
+                            .as_ref()
+                            .into();
+                    if self.keys.len() <= at {
+                        self.keys.resize_with(at + 1, Default::default);
+                    }
+                    self.keys[at].insert(name.into(), key.clone());
+                    key
+                }
+            };
+            &cached
+        };
+        let done = self.done.get(key).copied().unwrap_or(0);
         let kinds = ask.kinds_not(done);
         if kinds.is_empty() {
             return;
         }
         for (m, module) in self.modules.iter().enumerate() {
-            work.extend(module.provided(&key, kinds).into_iter().map(|i| (m, i)));
+            work.extend(module.provided(key, kinds).into_iter().map(|i| (m, i)));
         }
-        match self.done.get_mut(&*key) {
+        match self.done.get_mut(key) {
             Some(bits) => *bits |= ask.bits(),
             None => {
-                self.done.insert(key.into_owned(), ask.bits());
+                self.done.insert(key.to_string(), ask.bits());
             }
         }
     }
@@ -5511,7 +5624,9 @@ impl<'a> Defs<'a> {
                         .map(|f| (f.name.as_str(), f.default.as_ref()))
                         .collect();
                     (fields, false)
-                } else if self.provided_by_name(name).is_some() || is_stream_call(call) {
+                } else if self.provided_by_name(call.name_pos, name).is_some()
+                    || is_stream_call(call)
+                {
                     return Vec::new();
                 } else if let Some(f) = self.function(call.name_pos, name) {
                     (params(&file.functions[f]), true)
@@ -5740,7 +5855,7 @@ impl<'a> Typed<'a> {
                     };
                     return Callee::Construct(s, args);
                 }
-                if let Some(provided) = defs.provided_by_name(name) {
+                if let Some(provided) = defs.provided_by_name(call.name_pos, name) {
                     return (provided.answer)();
                 }
                 if name == "__eprint" {
