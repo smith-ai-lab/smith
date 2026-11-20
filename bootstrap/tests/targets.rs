@@ -47,8 +47,12 @@ pub const ONCE: &[Test] = &[
         every_target_builds_identical_bytes_twice_for_enums,
     ),
     (
-        "every_target_builds_identical_bytes_twice_for_text",
-        every_target_builds_identical_bytes_twice_for_text,
+        "every_target_builds_identical_bytes_twice_for_text_part_1_of_2",
+        || every_target_builds_identical_bytes_twice_for_text(0),
+    ),
+    (
+        "every_target_builds_identical_bytes_twice_for_text_part_2_of_2",
+        || every_target_builds_identical_bytes_twice_for_text(1),
     ),
     (
         "every_target_builds_identical_bytes_twice_for_reprs",
@@ -451,8 +455,9 @@ fn every_target_builds_identical_bytes_twice_for_enums() {
     builds_identical_bytes_twice(24, 0, 5, enums::program, |c| c.source.as_bytes());
 }
 
-fn every_target_builds_identical_bytes_twice_for_text() {
-    builds_identical_bytes_twice(36, 0, 5, text::program, |c| c.source.as_bytes());
+fn every_target_builds_identical_bytes_twice_for_text(part: usize) {
+    let (from, cases) = [(0, 3), (3, 2)][part];
+    builds_identical_bytes_twice(36, from, cases, text::program, |c| c.source.as_bytes());
 }
 
 // A program of these generators is built for each target twice, which takes
