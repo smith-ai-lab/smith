@@ -832,7 +832,23 @@ impl<'a> Defs<'a> {
             let by_scope = self.function_names.get(key.as_str()).copied();
             assert_eq!(found, by_scope, "`{name}` at {pos:?}");
         }
-        found
+        // A function another module of the library defines is not what a name
+        // means in a module that neither defines nor lists it, though the
+        // program lists it, and so the file writes it as it is.
+        let f = found?;
+        let (here, at) = (module_of(pos), module_of(self.file.functions[f].pos));
+        if here == 0 || at == here || at == 0 {
+            return found;
+        }
+        self.lists(here, at, name).then_some(f)
+    }
+
+    /// Whether the module `here` lists the name from the module `at`.
+    #[cold]
+    fn lists(&self, here: usize, at: usize, name: &str) -> bool {
+        (self.resolution.modules.get(&here)).is_some_and(|naming| {
+            (naming.imports.iter()).any(|(w, to, home)| (w == name || to == name) && *home == at)
+        })
     }
 
     /// The struct the name written at `pos` is, as `function` finds a function.
@@ -1951,7 +1967,16 @@ fn check_file(
                 pos,
                 format!("there is already {what} named `{name}`"),
             ));
-        } else if !is_type && function_names.contains_key(name) {
+        } else if !is_type
+            && function_names.get(name).is_some_and(|&f| match claim {
+                // A function of a trait is no rival of a function in a module
+                // that cannot write the trait.
+                Claim::TraitFn(k, _) => (file.scopes.iter())
+                    .find(|(m, _)| *m == module_of(file.functions[f].pos))
+                    .is_some_and(|(_, traits)| traits.contains(&file.traits[k].name)),
+                _ => true,
+            })
+        {
             errors.push(Error::new(
                 pos,
                 format!("there is already a function named `{name}`"),
@@ -1961,8 +1986,15 @@ fn check_file(
                 Claim::Fn(i) => {
                     // A function of the prelude's trait that no call needs a
                     // trait for is not a name the program may not use.
+                    // A trait the module that defines the function cannot write
+                    // is no rival of it.
+                    let writes = |k: usize| {
+                        (file.scopes.iter())
+                            .find(|(m, _)| *m == module_of(pos))
+                            .is_some_and(|(_, traits)| traits.contains(&file.traits[k].name))
+                    };
                     let taken = (trait_fns.get(name).and_then(|f| f.first()))
-                        .filter(|(k, _)| !of_prelude(file.traits[*k].pos));
+                        .filter(|(k, _)| !of_prelude(file.traits[*k].pos) && writes(*k));
                     if let Some(&(k, _)) = taken {
                         errors.push(Error::new(
                             pos,
@@ -2340,7 +2372,7 @@ impl<'a> Types<'a> {
     /// others, once every item is in.
     fn link(&mut self, resolution: &Resolution) {
         for (&module, naming) in &resolution.modules {
-            for (written, to) in &naming.imports {
+            for (written, to, _) in &naming.imports {
                 if naming.types.contains(written) {
                     let item = self.names.get(to.as_str()).and_then(|n| n.file);
                     let name = std::borrow::Cow::Owned(written.clone());
@@ -3954,7 +3986,7 @@ fn splice<'a>(
     // What each module writes of other modules' names, which is the same
     // for what is read now and for what is read later.
     struct Plan {
-        imports: Vec<(String, String)>,
+        imports: Vec<(String, String, usize)>,
         through: HashMap<String, HashMap<String, String>>,
         /// Whether the module is read whole, as one that is not of the
         /// standard library is.
@@ -3965,10 +3997,17 @@ fn splice<'a>(
             // The modules it imports itself are written before a name of
             // their own, as `transaction.begin`, which is the name written
             // alone.
-            let imports: Vec<(String, String)> = modules[i]
+            let imports: Vec<(String, String, usize)> = modules[i]
                 .imports
                 .iter()
-                .map(|import| (import.written.clone(), written(import.from, &import.name)))
+                .map(|import| {
+                    let home = modules[import.from].number;
+                    (
+                        import.written.clone(),
+                        written(import.from, &import.name),
+                        home,
+                    )
+                })
                 .collect();
             let through: HashMap<String, HashMap<String, String>> = modules[i]
                 .aliases
@@ -4385,7 +4424,13 @@ impl LazyModule<'_> {
     ) -> Vec<usize> {
         let mut names: Vec<&str> = self.originals(written, true);
         // A trait the module does not define or list is written as it is.
-        if !self.defines(written) && !self.naming.imports.iter().any(|(from, _)| from == written) {
+        if !self.defines(written)
+            && !self
+                .naming
+                .imports
+                .iter()
+                .any(|(from, _, _)| from == written)
+        {
             names.push(written);
         }
         let mut out = Vec::new();
@@ -4424,7 +4469,7 @@ impl LazyModule<'_> {
         loaded_type: &dyn Fn(&str) -> bool,
         lazy_type: &dyn Fn(&str) -> bool,
     ) -> bool {
-        if let Some((_, to)) = self.naming.imports.iter().find(|(from, _)| from == word) {
+        if let Some((_, to, _)) = self.naming.imports.iter().find(|(from, _, _)| from == word) {
             return !(loaded_type(to) || lazy_type(to)) || reached.contains(to.as_str());
         }
         if self.defined.contains(word) {
@@ -4640,7 +4685,7 @@ impl<'a> Lazy<'a> {
         else {
             return Cow::Borrowed(name);
         };
-        if let Some((_, to)) = naming.imports.iter().find(|(from, _)| from == name) {
+        if let Some((_, to, _)) = naming.imports.iter().find(|(from, _, _)| from == name) {
             return Cow::Borrowed(if naming.types.contains(name) {
                 to
             } else {

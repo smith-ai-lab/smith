@@ -234,9 +234,9 @@ pub(super) struct Naming {
     pub(super) kept: super::Set<String>,
     /// The names the file that is built gives the module's names with `as`.
     pub(super) aliased: Vec<(String, String)>,
-    /// What the module lists from other modules, as it writes each and as the
-    /// file writes it.
-    pub(super) imports: Vec<(String, String)>,
+    /// What the module lists from other modules, as it writes each, as the
+    /// file writes it, and the number of the module it is from.
+    pub(super) imports: Vec<(String, String, usize)>,
     /// The names the module lists that are the names of structs, enums, or
     /// traits, and, when the module is read whole, those it defines. A type is
     /// written as the module wrote it, and found by what the module calls it.
@@ -260,7 +260,7 @@ impl Naming {
     /// name, and whether it defines it as a struct, an enum, or a trait, which
     /// is not rewritten: it is found by the name the module wrote.
     pub(super) fn rename(&self, name: &str, own: impl FnOnce() -> (bool, bool)) -> Option<String> {
-        if let Some((_, to)) = self.imports.iter().find(|(from, _)| from == name) {
+        if let Some((_, to, _)) = self.imports.iter().find(|(from, _, _)| from == name) {
             return (!self.types.contains(name)).then(|| to.clone());
         }
         let (defined, own_type) = own();
@@ -291,8 +291,8 @@ impl Naming {
         if listed {
             found.extend(
                 (self.imports.iter())
-                    .filter(|(_, to)| to == written)
-                    .map(|(from, _)| from.as_str()),
+                    .filter(|(_, to, _)| to == written)
+                    .map(|(from, _, _)| from.as_str()),
             );
         }
         found
@@ -366,7 +366,7 @@ impl Resolution {
         let Some(module) = self.modules.get(&(pos.line / super::STEP)) else {
             return written.to_string();
         };
-        if let Some((_, to)) = module.imports.iter().find(|(from, _)| from == written) {
+        if let Some((_, to, _)) = module.imports.iter().find(|(from, _, _)| from == written) {
             return to.clone();
         }
         if module.standard && written.starts_with("__") {
