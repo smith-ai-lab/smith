@@ -14,36 +14,68 @@ use crate::targets::{self, any, case_files, updating};
 
 pub const ONCE: &[Test] = &[
     (
-        "the_cases_build_or_report_their_error_part_1_of_8",
+        "the_cases_build_or_report_their_error_part_1_of_16",
         || cases_build_or_report_their_error(0),
     ),
     (
-        "the_cases_build_or_report_their_error_part_2_of_8",
+        "the_cases_build_or_report_their_error_part_2_of_16",
         || cases_build_or_report_their_error(1),
     ),
     (
-        "the_cases_build_or_report_their_error_part_3_of_8",
+        "the_cases_build_or_report_their_error_part_3_of_16",
         || cases_build_or_report_their_error(2),
     ),
     (
-        "the_cases_build_or_report_their_error_part_4_of_8",
+        "the_cases_build_or_report_their_error_part_4_of_16",
         || cases_build_or_report_their_error(3),
     ),
     (
-        "the_cases_build_or_report_their_error_part_5_of_8",
+        "the_cases_build_or_report_their_error_part_5_of_16",
         || cases_build_or_report_their_error(4),
     ),
     (
-        "the_cases_build_or_report_their_error_part_6_of_8",
+        "the_cases_build_or_report_their_error_part_6_of_16",
         || cases_build_or_report_their_error(5),
     ),
     (
-        "the_cases_build_or_report_their_error_part_7_of_8",
+        "the_cases_build_or_report_their_error_part_7_of_16",
         || cases_build_or_report_their_error(6),
     ),
     (
-        "the_cases_build_or_report_their_error_part_8_of_8",
+        "the_cases_build_or_report_their_error_part_8_of_16",
         || cases_build_or_report_their_error(7),
+    ),
+    (
+        "the_cases_build_or_report_their_error_part_9_of_16",
+        || cases_build_or_report_their_error(8),
+    ),
+    (
+        "the_cases_build_or_report_their_error_part_10_of_16",
+        || cases_build_or_report_their_error(9),
+    ),
+    (
+        "the_cases_build_or_report_their_error_part_11_of_16",
+        || cases_build_or_report_their_error(10),
+    ),
+    (
+        "the_cases_build_or_report_their_error_part_12_of_16",
+        || cases_build_or_report_their_error(11),
+    ),
+    (
+        "the_cases_build_or_report_their_error_part_13_of_16",
+        || cases_build_or_report_their_error(12),
+    ),
+    (
+        "the_cases_build_or_report_their_error_part_14_of_16",
+        || cases_build_or_report_their_error(13),
+    ),
+    (
+        "the_cases_build_or_report_their_error_part_15_of_16",
+        || cases_build_or_report_their_error(14),
+    ),
+    (
+        "the_cases_build_or_report_their_error_part_16_of_16",
+        || cases_build_or_report_their_error(15),
     ),
     (
         "build_writes_the_executable_to_the_folder_it_ran_in",
@@ -120,11 +152,12 @@ fn build(dir: &Path, target: Target, file: &str) -> Output {
     smith(dir, &["build", "--target", target.name(), file])
 }
 
-/// Every case builds for every target and starts the compiler each time, so
-/// the cases are shared by four tests, and none computes for near the limit.
-/// The cases whose place in the order is `part` more than a multiple of eight.
+/// Every case builds for every target and starts the compiler each time, which
+/// costs the test the time of starting a program, so the cases are shared by
+/// sixteen tests, and none computes for near the limit.
+/// The cases whose place in the order is `part` more than a multiple of sixteen.
 fn cases_build_or_report_their_error(part: usize) {
-    for source in case_files().into_iter().skip(part).step_by(8) {
+    for source in case_files().into_iter().skip(part).step_by(16) {
         let name = source.file_stem().unwrap().to_str().unwrap();
         let file = format!("{name}.smith");
         let out = source.with_extension("out");

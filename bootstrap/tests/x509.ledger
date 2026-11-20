@@ -4,6 +4,8 @@
 # or
 #   <section> | <first words of the sentence> | reason <why std.x509 has nothing to do with it>
 # `tests/x509_standard.rs` fails for a sentence that is in no line.
+# A property that is held by tests of parts of its cases, `..._part_1_of_4` to
+# `..._part_4_of_4`, is named by the first of them.
 4.1 | TBSCertificate ::= SEQUENCE { version | test a_certificate_of_a_version_other_than_3_is_an_error
 4.1 | subjectUniqueID [2] IMPLICIT UniqueIdentifier OPTIONAL, | test a_certificate_of_a_version_other_than_3_is_an_error
 4.1.1.2 | This field MUST contain the | reason binds the certificate's writer, and the module checks no signature
@@ -22,14 +24,14 @@
 4.1.2.4 | In addition, implementations of this | reason names are given as the bytes they are written in, and the module takes none apart or compares them
 4.1.2.4 | Certificate users MUST be prepared | reason names are given as the bytes they are written in, and the module takes none apart or compares them
 4.1.2.5 | CAs conforming to this profile | reason binds a CA that issues certificates; the module reads one certificate and checks nothing of how it was made
-4.1.2.5 | Conforming applications MUST be able | test a_time_is_read_as_the_seconds_since_1970_in_both_forms_and_nothing_else_is
+4.1.2.5 | Conforming applications MUST be able | test a_time_is_read_as_the_seconds_since_1970_in_both_forms_and_nothing_else_is_part_1_of_4
 4.1.2.5 | When the issuer will not | reason binds a CA that issues certificates; the module reads one certificate and checks nothing of how it was made
-4.1.2.5.1 | For the purposes of this | test a_time_is_read_as_the_seconds_since_1970_in_both_forms_and_nothing_else_is
-4.1.2.5.1 | Conforming systems MUST interpret the | test a_time_is_read_as_the_seconds_since_1970_in_both_forms_and_nothing_else_is
-4.1.2.5.1 | Where YY is greater than | test a_time_is_read_as_the_seconds_since_1970_in_both_forms_and_nothing_else_is
-4.1.2.5.1 | Where YY is less than | test a_time_is_read_as_the_seconds_since_1970_in_both_forms_and_nothing_else_is
-4.1.2.5.2 | For the purposes of this | test a_time_is_read_as_the_seconds_since_1970_in_both_forms_and_nothing_else_is
-4.1.2.5.2 | GeneralizedTime values MUST NOT include | test a_time_is_read_as_the_seconds_since_1970_in_both_forms_and_nothing_else_is
+4.1.2.5.1 | For the purposes of this | test a_time_is_read_as_the_seconds_since_1970_in_both_forms_and_nothing_else_is_part_1_of_4
+4.1.2.5.1 | Conforming systems MUST interpret the | test a_time_is_read_as_the_seconds_since_1970_in_both_forms_and_nothing_else_is_part_1_of_4
+4.1.2.5.1 | Where YY is greater than | test a_time_is_read_as_the_seconds_since_1970_in_both_forms_and_nothing_else_is_part_1_of_4
+4.1.2.5.1 | Where YY is less than | test a_time_is_read_as_the_seconds_since_1970_in_both_forms_and_nothing_else_is_part_1_of_4
+4.1.2.5.2 | For the purposes of this | test a_time_is_read_as_the_seconds_since_1970_in_both_forms_and_nothing_else_is_part_1_of_4
+4.1.2.5.2 | GeneralizedTime values MUST NOT include | test a_time_is_read_as_the_seconds_since_1970_in_both_forms_and_nothing_else_is_part_1_of_4
 4.1.2.6 | If the subject is a | reason names are given as the bytes they are written in, and the module takes none apart or compares them
 4.1.2.6 | then the subject field MUST | reason names are given as the bytes they are written in, and the module takes none apart or compares them
 4.1.2.6 | If subject naming information is | reason names are given as the bytes they are written in, and the module takes none apart or compares them
