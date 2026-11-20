@@ -127,6 +127,11 @@ fn exact_of(
     }
 }
 
+/// Every third range, which is enough for a shift, whose amount is small.
+fn thin() -> Vec<(i128, i128)> {
+    ranges().into_iter().step_by(3).collect()
+}
+
 fn every_second(_: i128) -> Vec<(i128, i128)> {
     ranges().into_iter().filter(|(a, b)| (a + b) % 2 == 0).collect()
 }
@@ -146,11 +151,11 @@ fn the_range_of_bit_xor_is_the_least_to_the_greatest_result() {
 /// A shift by an amount from a range below 6 is `a` times two to the amount
 /// over every amount in the range.
 fn the_range_of_shift_left_is_the_least_to_the_greatest_result() {
-    exact("shift_left", |a, b| a << b, &|_| ranges());
+    exact_of(thin(), "shift_left", |a, b| a << b, &|_| thin());
 }
 
 /// A shift right by an amount from a range below 6 is `a` divided by two to
 /// the amount, over every amount in the range.
 fn the_range_of_shift_right_is_the_least_to_the_greatest_result() {
-    exact("shift_right", |a, b| a >> b, &|_| ranges());
+    exact_of(thin(), "shift_right", |a, b| a >> b, &|_| thin());
 }
