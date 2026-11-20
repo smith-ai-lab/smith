@@ -537,7 +537,7 @@ impl<'a> Checker<'a> {
             self.arguments(body, call, &print, true, None, None);
             return Ty::Nothing;
         }
-        if let Some(&f) = defs.function_names.get(name) {
+        if let Some(f) = defs.function(call.name_pos, name) {
             let sig = &defs.signatures[f];
             if self.effect_in_default(body, call, sig) {
                 return self.unknown_call(body, call);
