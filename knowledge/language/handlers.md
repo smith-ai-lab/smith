@@ -2,7 +2,11 @@
 type: specification
 title: Handlers
 description: A handler, a function that runs a lambda with an effect handled, how it is written with the effect's name, what it keeps, and what it may do.
-status: planned
+status: partial
+built:
+  - "a function with a parameter `body: fn() -> T ! e` runs it with `e` handled by calling the effect's name with a lambda for each operation, named as the operation is, and the body, and the body a lambda or a name is given may carry `e` while the function that gives it does not"
+  - "a call of an operation runs the lambda that the handler in force gives for it, with the arguments it is called with and the defaults it leaves out, under the handlers that were in force outside that handler, and the executable holds no trace of the handler: the call is the lambda lowered in place"
+  - "a function that carries a handled effect and takes no function, as `report` does, is refused where it is called, as not built yet"
 ---
 
 # Handlers
