@@ -141,7 +141,7 @@ const SHAPES: &[Shape] = &[
         program: "fn main() {\n  x = NAME(1)\n  y = NAME(2)\n}\n",
     },
     Shape {
-        program: "fn f(a: NAME, b: NAME) { }\n\nfn main() { }\n",
+        program: "fn f(first: NAME, second: NAME) { }\n\nfn main() { }\n",
     },
     Shape {
         program: "fn main() ! alloc {\n  s = \"{NAME(1)} and {NAME(2)}\"\n}\n",
