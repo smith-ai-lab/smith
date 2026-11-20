@@ -200,7 +200,8 @@ pub(super) enum Narrowing {
     Plain,
     /// `wrapping_narrow`, which keeps the low bits.
     Wrapping,
-    /// `saturating_narrow`, which gives the nearest value the type holds.
+    /// `clamp` and `saturating_narrow`, which give the nearest value the type
+    /// holds.
     Saturating,
     /// `checked_narrow`, which gives `.none`.
     Checked,
@@ -211,9 +212,14 @@ impl Narrowing {
         match self {
             Narrowing::Plain => "narrow",
             Narrowing::Wrapping => "wrapping_narrow",
-            Narrowing::Saturating => "saturating_narrow",
+            Narrowing::Saturating => "clamp",
             Narrowing::Checked => "checked_narrow",
         }
+    }
+
+    /// Whether `callee` is a name this narrowing is called by.
+    fn is_called(self, callee: &str) -> bool {
+        callee == self.name() || (self == Narrowing::Saturating && callee == "saturating_narrow")
     }
 }
 
@@ -227,7 +233,7 @@ pub(super) fn narrowing(defs: &Defs, call: &Call) -> Option<Narrowing> {
         Narrowing::Checked,
     ]
     .into_iter()
-    .find(|n| n.name() == call.callee)?;
+    .find(|n| n.is_called(&call.callee))?;
     let (at, name) = (call.name_pos, call.callee.as_str());
     let taken = defs.function(at, name).is_some()
         || defs.struct_at(at, name).is_some()
@@ -656,7 +662,7 @@ impl<'a> Checker<'a> {
         want: &Want,
     ) -> Ty {
         let defs = self.defs;
-        let name = narrowing.name();
+        let name = call.callee.as_str();
         let plain = call.args.iter().all(|a| a.name.is_none() && !a.after);
         if call.args.len() != 1 || !plain {
             self.errors.push(Error::new(
