@@ -30,8 +30,12 @@ pub const ONCE: &[Test] = &[
         a_character_outside_ascii_is_refused_as_a_u8_and_is_its_code_point_as_a_wider_type,
     ),
     (
-        "a_match_on_a_whole_number_takes_the_block_of_the_literal_that_equals_it",
-        a_match_on_a_whole_number_takes_the_block_of_the_literal_that_equals_it,
+        "a_match_on_a_whole_number_takes_the_block_of_the_literal_that_equals_it_part_1_of_2",
+        || a_match_on_a_whole_number_takes_the_block_of_the_literal_that_equals_it(0),
+    ),
+    (
+        "a_match_on_a_whole_number_takes_the_block_of_the_literal_that_equals_it_part_2_of_2",
+        || a_match_on_a_whole_number_takes_the_block_of_the_literal_that_equals_it(1),
     ),
     (
         "a_match_on_text_takes_the_block_of_the_literal_that_equals_it",
@@ -210,8 +214,8 @@ fn numbers(g: &mut Gen) -> Numbers {
     }
 }
 
-fn a_match_on_a_whole_number_takes_the_block_of_the_literal_that_equals_it() {
-    generate::check(13, 120, numbers, |n: &Numbers| {
+fn a_match_on_a_whole_number_takes_the_block_of_the_literal_that_equals_it(part: u64) {
+    generate::check_part(13, 120, part, 2, numbers, |n: &Numbers| {
         let t = n.ty.name;
         let mut by_match = format!("fn f(b: {t}) -> Int {{\n  match b {{\n");
         let mut by_if = format!("fn f(b: {t}) -> Int {{\n  ");

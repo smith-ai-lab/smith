@@ -18,8 +18,12 @@ pub const ONCE: &[Test] = &[
         the_examples_of_the_page_on_tuples_for_a_parameter_and_a_loop_give_what_it_says,
     ),
     (
-        "a_pattern_where_a_name_is_introduced_does_what_the_binding_of_it_on_the_first_line_does",
-        a_pattern_where_a_name_is_introduced_does_what_the_binding_of_it_on_the_first_line_does,
+        "a_pattern_where_a_name_is_introduced_does_what_the_binding_of_it_on_the_first_line_does_part_1_of_2",
+        || a_pattern_where_a_name_is_introduced_does_what_the_binding_of_it_on_the_first_line_does(0),
+    ),
+    (
+        "a_pattern_where_a_name_is_introduced_does_what_the_binding_of_it_on_the_first_line_does_part_2_of_2",
+        || a_pattern_where_a_name_is_introduced_does_what_the_binding_of_it_on_the_first_line_does(1),
     ),
     (
         "a_pattern_where_a_name_is_introduced_adds_nothing_to_the_program",
@@ -331,10 +335,8 @@ fn the_examples_of_the_page_on_tuples_for_a_parameter_and_a_loop_give_what_it_sa
 
 /// For every place, depth of nesting, and mark of `var`, the program prints
 /// what the sum of the values is, and what its written-out form prints.
-fn a_pattern_where_a_name_is_introduced_does_what_the_binding_of_it_on_the_first_line_does() {
-    generate::check(
-        101,
-        24,
+fn a_pattern_where_a_name_is_introduced_does_what_the_binding_of_it_on_the_first_line_does(part: u64) {
+    generate::check_part(101, 24, part, 2,
         |g| {
             let s = shape(g, false);
             let other = revalue(g, &s);
