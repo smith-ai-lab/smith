@@ -49,6 +49,9 @@ pub effect markup {
   fn end(tag: str)
 }
 
+// The text as HTML holds it as text and nothing else: `<`, `>`, `&`, `"`, and
+// `'` are written as entities, and every other byte as it is. The bytes between
+// two that are escaped are written together.
 pub fn escape(s: str) -> str ! alloc {
   var t = new_text()
   var from: Nat = 0
