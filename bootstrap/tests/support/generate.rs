@@ -145,6 +145,22 @@ pub fn check<T: Debug>(
     check_cases(seed, 0, cases, generate, property);
 }
 
+/// `check` over the part `part` of `parts` of the `cases` inputs of the seed,
+/// numbering the parts from 0: the cases `cases * part / parts` up to
+/// `cases * (part + 1) / parts`, so that the parts are the cases of one `check`
+/// with no case in two of them, however many there are.
+pub fn check_part<T: Debug>(
+    seed: u64,
+    cases: u64,
+    part: u64,
+    parts: u64,
+    generate: impl Fn(&mut Gen) -> T,
+    property: impl Fn(&T),
+) {
+    let (from, to) = (cases * part / parts, cases * (part + 1) / parts);
+    check_cases(seed, from, to - from, generate, property);
+}
+
 /// `check` over the `cases` inputs that start at the case `from` of the seed,
 /// so that a property over a hundred inputs is as many tests of a part of them
 /// each, `check_cases(seed, 20 * part, 20, ..)`, and no two of those tests draw
