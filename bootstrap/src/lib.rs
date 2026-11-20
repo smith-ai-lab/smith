@@ -331,7 +331,7 @@ fn checked_in(
 /// it writes `Describe`.
 fn with_function_args(file: &mut parser::File, source: &[u8]) {
     if function_args::asks(file) {
-        function_args::add(file, std::str::from_utf8(source).unwrap_or_default());
+        function_args::add(file, std::str::from_utf8(source).unwrap_or_default(), 0);
     }
     if item_notes::asks(file) {
         item_notes::add(file, std::str::from_utf8(source).unwrap_or_default());

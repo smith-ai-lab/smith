@@ -13,10 +13,11 @@ pub(crate) fn asks(file: &File) -> bool {
 }
 
 /// Makes the struct of the arguments of each function of the file that has
-/// one, and notes each with the comment on its function. A function that is
+/// one, and notes each with the comment on its function. `number` is the
+/// number of the module, whose places are that many steps on. A function that is
 /// an operation of an effect, has type parameters, or takes a function, has
 /// none.
-pub(crate) fn add(file: &mut File, source: &str) {
+pub(crate) fn add(file: &mut File, source: &str, number: usize) {
     let mut made = Vec::new();
     for f in &file.functions {
         if parser::is_operation(f)
@@ -38,8 +39,8 @@ pub(crate) fn add(file: &mut File, source: &str) {
             })
             .collect();
         made.push((
-            f.name.clone(),
-            comments::above(source, f.pos.line),
+            f.pos,
+            comments::above(source, f.pos.line - number * crate::check::STEP),
             Struct {
                 name,
                 pos: f.pos,
@@ -48,9 +49,8 @@ pub(crate) fn add(file: &mut File, source: &str) {
             },
         ));
     }
-    for (function, about, made) in made {
-        file.args.push((function.clone(), made.name.clone()));
-        file.abouts.push((function, about));
+    for (pos, about, made) in made {
+        file.args.push((pos, made.name.clone(), about));
         file.structs.push(std::sync::Arc::new(made));
     }
 }
