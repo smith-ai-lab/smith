@@ -79,8 +79,11 @@ struct Ended(u8);
 const BLOCKS: u64 = 3_000_000;
 
 /// How many calls may be open at once before the program is taken to never
-/// end, as a call that never returns takes the stack of the evaluator.
-const DEPTH: usize = 2_000;
+/// end, as a call that never returns takes the memory of the evaluator, which
+/// keeps the open calls in a list. A call is a block or two, so a program that
+/// goes this deep and does no more than call has entered `BLOCKS` blocks long
+/// before.
+const DEPTH: usize = 10_000_000;
 
 /// Runs the program, with standard output going to memory, where no write
 /// is refused, and no request for memory is either.
@@ -564,28 +567,98 @@ fn width(ty: Type) -> usize {
     }
 }
 
+/// A call that is open: where it is in its function, and what its values are.
+struct Frame {
+    function: usize,
+    values: Vec<Option<Word>>,
+    /// The block it is in, what the jump that entered it gave, and whether
+    /// the block has been entered, which it has when the frame goes on after
+    /// a call inside it.
+    block: usize,
+    args: Vec<Word>,
+    entered: bool,
+    /// The place of the instruction to run next in the block.
+    at: usize,
+}
+
+/// Why a frame stopped: it calls a function, or it returns.
+enum Stop {
+    Call { function: usize, args: Vec<Word> },
+    Return(Vec<Word>),
+}
+
 impl Machine<'_> {
+    /// Runs a call of the function to its end. The calls it makes, and the calls
+    /// they make, are open frames in a list and not calls of this function, so
+    /// that the depth of the calls is bounded by memory and not by the stack of
+    /// the evaluator.
     fn call(&mut self, function: usize, args: Vec<Word>) -> Result<Vec<Word>, Ended> {
-        let program = self.program;
-        let f = &program.functions[function];
-        let mut values: Vec<Option<Word>> = vec![None; f.types.len()];
-        let mut block = 0;
-        let mut args = args;
+        let mut open: Vec<Frame> = Vec::new();
+        let mut frame = self.enter(function, args);
+        loop {
+            match self.run(&mut frame)? {
+                Stop::Call { function, args } => {
+                    let next = self.enter(function, args);
+                    open.push(std::mem::replace(&mut frame, next));
+                }
+                Stop::Return(words) => match open.pop() {
+                    None => return Ok(words),
+                    Some(mut caller) => {
+                        let program = self.program;
+                        let call = &program.functions[caller.function].blocks[caller.block]
+                            .instructions[caller.at - 1];
+                        for (result, word) in call.results.iter().zip(words) {
+                            caller.values[result.0] = Some(word);
+                        }
+                        frame = caller;
+                    }
+                },
+            }
+        }
+    }
+
+    /// A frame for a call of the function that is about to begin.
+    fn enter(&mut self, function: usize, args: Vec<Word>) -> Frame {
         self.depth += 1;
         assert!(
             self.depth <= DEPTH,
             "the program never ends: its calls never return"
         );
+        Frame {
+            function,
+            values: vec![None; self.program.functions[function].types.len()],
+            block: 0,
+            args,
+            entered: false,
+            at: 0,
+        }
+    }
+
+    /// Runs the frame until it makes a call or returns.
+    fn run(&mut self, frame: &mut Frame) -> Result<Stop, Ended> {
+        let program = self.program;
+        let f = &program.functions[frame.function];
+        let Frame {
+            values,
+            block,
+            args,
+            entered,
+            at,
+            ..
+        } = frame;
         loop {
-            self.blocks = self.blocks.checked_sub(1).expect(
-                "the program never ends: it entered more blocks than any test gives it time for",
-            );
-            let b = &f.blocks[block];
-            self.ran += b.instructions.len() as u64 + 1;
-            for (param, word) in b.params.iter().zip(args) {
-                values[param.0] = Some(word);
+            let b = &f.blocks[*block];
+            if !*entered {
+                self.blocks = self.blocks.checked_sub(1).expect(
+                    "the program never ends: it entered more blocks than any test gives it time for",
+                );
+                self.ran += b.instructions.len() as u64 + 1;
+                for (param, word) in b.params.iter().zip(std::mem::take(args)) {
+                    values[param.0] = Some(word);
+                }
+                *entered = true;
             }
-            for instruction in &b.instructions {
+            for (k, instruction) in b.instructions.iter().enumerate().skip(*at) {
                 let get = |v: &Value| values[v.0].expect("a value that is defined");
                 let given = match &instruction.op {
                     Op::Constant(Constant::Int(n)) => {
@@ -832,7 +905,11 @@ impl Machine<'_> {
                             };
                             self.taken.push(count as usize);
                         }
-                        self.call(*function, args)?
+                        *at = k + 1;
+                        return Ok(Stop::Call {
+                            function: *function,
+                            args,
+                        });
                     }
                     Op::Load { ty, address } => {
                         let Word::Address(at) = get(address) else {
@@ -914,6 +991,8 @@ impl Machine<'_> {
                     values[result.0] = Some(word);
                 }
             }
+            *at = 0;
+            *entered = false;
             let jump = |j: &Jump| -> (usize, Vec<Word>) {
                 let args = j.args.iter().map(|v| values[v.0].unwrap()).collect();
                 (j.block, args)
@@ -921,14 +1000,16 @@ impl Machine<'_> {
             match &b.end {
                 End::Return(returned) => {
                     self.depth -= 1;
-                    return Ok(returned.iter().map(|v| values[v.0].unwrap()).collect());
+                    return Ok(Stop::Return(
+                        returned.iter().map(|v| values[v.0].unwrap()).collect(),
+                    ));
                 }
-                End::Jump(j) => (block, args) = jump(j),
+                End::Jump(j) => (*block, *args) = jump(j),
                 End::Switch { on, jumps } => {
                     let Some(Word::Int(n)) = values[on.0] else {
                         panic!("a choice on what is not an integer")
                     };
-                    (block, args) = jump(&jumps[n as usize]);
+                    (*block, *args) = jump(&jumps[n as usize]);
                 }
             }
         }
