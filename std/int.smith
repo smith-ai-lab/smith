@@ -46,6 +46,10 @@ pub fn saturating_narrow[A, B](x: A) -> B {
   __saturating_narrow(x)
 }
 
+pub fn clamp[A, B](x: A) -> B {
+  __saturating_narrow(x)
+}
+
 pub fn checked_narrow[A, B](x: A) -> Option[B] {
   __checked_narrow(x)
 }

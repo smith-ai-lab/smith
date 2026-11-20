@@ -95,6 +95,7 @@ const STD: &[(&str, &[&str])] = &[
             "checked_mul",
             "checked_narrow",
             "checked_sub",
+            "clamp",
             "narrow",
             "saturating_add",
             "saturating_mul",
@@ -432,7 +433,7 @@ pub fn narrowed(kind: &str, to: Int, a: i128) -> Option<String> {
     match kind {
         "narrow" => fits.then(|| a.to_string()),
         "wrapping_narrow" => Some(to.wrap(a).to_string()),
-        "saturating_narrow" => Some(a.clamp(to.min(), to.max()).to_string()),
+        "saturating_narrow" | "clamp" => Some(a.clamp(to.min(), to.max()).to_string()),
         _ => Some(if fits {
             format!(".some({a})")
         } else {
@@ -541,7 +542,7 @@ fn line(g: &mut Gen, vars: &[Var], at: usize) -> Line {
                 .copied()
                 .collect();
             let to = *g.pick(&others);
-            let mut kinds = vec!["wrapping_narrow", "saturating_narrow", "checked_narrow"];
+            let mut kinds = vec!["wrapping_narrow", "saturating_narrow", "clamp", "checked_narrow"];
             if narrowed("narrow", to, first.value).is_some() {
                 kinds.push("narrow");
             }

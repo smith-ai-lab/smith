@@ -5,7 +5,7 @@ description: The Convert trait, which turns a value of one type into another whe
 status: partial
 built:
   - "`convert` between whole number types, an `impl Convert` of a program's own, and the conversion an enum is given from the type of exactly one of its cases, the type that is expected picking which, with `without Convert` taking an enum's away"
-  - "`narrow`, `wrapping_narrow`, `saturating_narrow`, and `checked_narrow` between whole number types, the type that is expected picking the result, `narrow` compiling when `arith` proves that the value fits, and an error that says to use `convert` when the second type holds every value of the first"
+  - "`narrow`, `wrapping_narrow`, `clamp` (also written `saturating_narrow` until that is retired), and `checked_narrow` between whole number types, the type that is expected picking the result, `narrow` compiling when `arith` proves that the value fits, and an error that says to use `convert` when the second type holds every value of the first"
 ---
 
 # Conversion

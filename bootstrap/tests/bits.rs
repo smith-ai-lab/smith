@@ -301,7 +301,7 @@ fn narrow_compiles_exactly_when_the_value_is_proven_to_fit() {
                 widened.join(" and ")
             );
         }
-        for function in ["wrapping_narrow", "saturating_narrow"] {
+        for function in ["wrapping_narrow", "saturating_narrow", "clamp"] {
             assert!(
                 compiles(&make(function, "")).is_ok(),
                 "{function} from {} to {}",
@@ -318,7 +318,7 @@ fn narrow_compiles_exactly_when_the_value_is_proven_to_fit() {
 fn narrow_to_a_type_that_holds_every_value_is_an_error_that_says_to_convert() {
     for from in INTS {
         for to in INTS.iter().filter(|t| t.holds_all(*from)) {
-            for function in ["narrow", "wrapping_narrow", "saturating_narrow"] {
+            for function in ["narrow", "wrapping_narrow", "saturating_narrow", "clamp"] {
                 let source = with(
                     &format!("x: {}", from.name),
                     to.name,
@@ -378,7 +378,7 @@ fn what_arith_knows_of_a_value_it_knows_of_its_narrow_and_of_no_other_narrowing(
             "narrow from {name} when the fact is false of the value"
         );
         // The same fact is known of the value, and nothing of its narrowing.
-        for function in ["wrapping_narrow", "saturating_narrow"] {
+        for function in ["wrapping_narrow", "saturating_narrow", "clamp"] {
             assert!(
                 compiles(&program(function, k, &requires)).is_err(),
                 "{function} from {name}"
