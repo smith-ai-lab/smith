@@ -102,8 +102,12 @@ pub const ONCE: &[Test] = &[
         an_expression_in_parentheses_is_the_expression,
     ),
     (
-        "a_var_a_lambda_assigns_holds_what_the_calls_give_however_the_function_calls_it",
-        a_var_a_lambda_assigns_holds_what_the_calls_give_however_the_function_calls_it,
+        "a_var_a_lambda_assigns_holds_what_the_calls_give_however_the_function_calls_it_part_1_of_2",
+        || a_var_a_lambda_assigns_holds_what_the_calls_give_however_the_function_calls_it(0),
+    ),
+    (
+        "a_var_a_lambda_assigns_holds_what_the_calls_give_however_the_function_calls_it_part_2_of_2",
+        || a_var_a_lambda_assigns_holds_what_the_calls_give_however_the_function_calls_it(1),
     ),
     (
         "a_var_a_function_called_in_place_has_the_value_it_had_when_a_loop_around_the_call_runs_no_round",
@@ -122,28 +126,52 @@ pub const ONCE: &[Test] = &[
         every_placed_mistake_about_text_is_one_error_at_its_place,
     ),
     (
-        "the_evaluator_says_what_the_generator_built_a_program_with_reprs_to_print",
-        the_evaluator_says_what_the_generator_built_a_program_with_reprs_to_print,
+        "the_evaluator_says_what_the_generator_built_a_program_with_reprs_to_print_part_1_of_2",
+        || the_evaluator_says_what_the_generator_built_a_program_with_reprs_to_print(0),
     ),
     (
-        "a_value_and_the_text_its_repr_gives_build_equal_values",
-        a_value_and_the_text_its_repr_gives_build_equal_values,
+        "the_evaluator_says_what_the_generator_built_a_program_with_reprs_to_print_part_2_of_2",
+        || the_evaluator_says_what_the_generator_built_a_program_with_reprs_to_print(1),
+    ),
+    (
+        "a_value_and_the_text_its_repr_gives_build_equal_values_part_1_of_2",
+        || a_value_and_the_text_its_repr_gives_build_equal_values(0),
+    ),
+    (
+        "a_value_and_the_text_its_repr_gives_build_equal_values_part_2_of_2",
+        || a_value_and_the_text_its_repr_gives_build_equal_values(1),
     ),
     (
         "every_placed_mistake_about_reprs_is_one_error_at_its_place",
         every_placed_mistake_about_reprs_is_one_error_at_its_place,
     ),
     (
-        "the_evaluator_says_what_the_generator_built_a_program_with_numbers_to_print",
-        the_evaluator_says_what_the_generator_built_a_program_with_numbers_to_print,
+        "the_evaluator_says_what_the_generator_built_a_program_with_numbers_to_print_part_1_of_3",
+        || the_evaluator_says_what_the_generator_built_a_program_with_numbers_to_print(0),
+    ),
+    (
+        "the_evaluator_says_what_the_generator_built_a_program_with_numbers_to_print_part_2_of_3",
+        || the_evaluator_says_what_the_generator_built_a_program_with_numbers_to_print(1),
+    ),
+    (
+        "the_evaluator_says_what_the_generator_built_a_program_with_numbers_to_print_part_3_of_3",
+        || the_evaluator_says_what_the_generator_built_a_program_with_numbers_to_print(2),
     ),
     (
         "the_generator_of_numbers_reaches_the_least_and_greatest_value_of_each_type",
         the_generator_of_numbers_reaches_the_least_and_greatest_value_of_each_type,
     ),
     (
-        "every_placed_mistake_about_numbers_is_one_error_at_its_place",
-        every_placed_mistake_about_numbers_is_one_error_at_its_place,
+        "every_placed_mistake_about_numbers_is_one_error_at_its_place_part_1_of_3",
+        || every_placed_mistake_about_numbers_is_one_error_at_its_place(0),
+    ),
+    (
+        "every_placed_mistake_about_numbers_is_one_error_at_its_place_part_2_of_3",
+        || every_placed_mistake_about_numbers_is_one_error_at_its_place(1),
+    ),
+    (
+        "every_placed_mistake_about_numbers_is_one_error_at_its_place_part_3_of_3",
+        || every_placed_mistake_about_numbers_is_one_error_at_its_place(2),
     ),
     (
         "a_program_that_holds_no_number_builds_to_the_same_bytes_whatever_numbers_it_defines",
@@ -154,24 +182,52 @@ pub const ONCE: &[Test] = &[
         what_a_program_does_not_print_is_given_nothing,
     ),
     (
-        "the_evaluator_says_what_the_generator_built_a_program_with_choices_to_print",
-        the_evaluator_says_what_the_generator_built_a_program_with_choices_to_print,
+        "the_evaluator_says_what_the_generator_built_a_program_with_choices_to_print_part_1_of_2",
+        || the_evaluator_says_what_the_generator_built_a_program_with_choices_to_print(0),
+    ),
+    (
+        "the_evaluator_says_what_the_generator_built_a_program_with_choices_to_print_part_2_of_2",
+        || the_evaluator_says_what_the_generator_built_a_program_with_choices_to_print(1),
     ),
     (
         "every_placed_mistake_about_choices_is_one_error_at_its_place",
         every_placed_mistake_about_choices_is_one_error_at_its_place,
     ),
     (
-        "the_evaluator_says_what_the_generator_built_a_program_with_with_and_try_to_print",
-        the_evaluator_says_what_the_generator_built_a_program_with_with_and_try_to_print,
+        "the_evaluator_says_what_the_generator_built_a_program_with_with_and_try_to_print_part_1_of_3",
+        || the_evaluator_says_what_the_generator_built_a_program_with_with_and_try_to_print(0),
     ),
     (
-        "a_program_with_with_builds_to_the_bytes_of_the_lambdas_it_means",
-        a_program_with_with_builds_to_the_bytes_of_the_lambdas_it_means,
+        "the_evaluator_says_what_the_generator_built_a_program_with_with_and_try_to_print_part_2_of_3",
+        || the_evaluator_says_what_the_generator_built_a_program_with_with_and_try_to_print(1),
     ),
     (
-        "a_program_with_try_prints_what_it_prints_with_each_try_written_out_as_the_match",
-        a_program_with_try_prints_what_it_prints_with_each_try_written_out_as_the_match,
+        "the_evaluator_says_what_the_generator_built_a_program_with_with_and_try_to_print_part_3_of_3",
+        || the_evaluator_says_what_the_generator_built_a_program_with_with_and_try_to_print(2),
+    ),
+    (
+        "a_program_with_with_builds_to_the_bytes_of_the_lambdas_it_means_part_1_of_3",
+        || a_program_with_with_builds_to_the_bytes_of_the_lambdas_it_means(0),
+    ),
+    (
+        "a_program_with_with_builds_to_the_bytes_of_the_lambdas_it_means_part_2_of_3",
+        || a_program_with_with_builds_to_the_bytes_of_the_lambdas_it_means(1),
+    ),
+    (
+        "a_program_with_with_builds_to_the_bytes_of_the_lambdas_it_means_part_3_of_3",
+        || a_program_with_with_builds_to_the_bytes_of_the_lambdas_it_means(2),
+    ),
+    (
+        "a_program_with_try_prints_what_it_prints_with_each_try_written_out_as_the_match_part_1_of_3",
+        || a_program_with_try_prints_what_it_prints_with_each_try_written_out_as_the_match(0),
+    ),
+    (
+        "a_program_with_try_prints_what_it_prints_with_each_try_written_out_as_the_match_part_2_of_3",
+        || a_program_with_try_prints_what_it_prints_with_each_try_written_out_as_the_match(1),
+    ),
+    (
+        "a_program_with_try_prints_what_it_prints_with_each_try_written_out_as_the_match_part_3_of_3",
+        || a_program_with_try_prints_what_it_prints_with_each_try_written_out_as_the_match(2),
     ),
     (
         "every_placed_mistake_about_with_and_try_is_one_error_at_its_place",
@@ -504,8 +560,8 @@ fn an_expression_in_parentheses_is_the_expression() {
     });
 }
 
-fn a_var_a_lambda_assigns_holds_what_the_calls_give_however_the_function_calls_it() {
-    generate::check(117, 150, lambdas::loop_program, |case| {
+fn a_var_a_lambda_assigns_holds_what_the_calls_give_however_the_function_calls_it(part: u64) {
+    generate::check_part(117, 150, part, 2, lambdas::loop_program, |case| {
         let program = lower(case.source.as_bytes()).unwrap_or_else(|e| panic!("{e:?}"));
         let expected = Outcome {
             stdout: case.stdout.clone(),
@@ -566,8 +622,8 @@ fn every_placed_mistake_about_lambdas_is_one_error_at_its_place() {
     });
 }
 
-fn the_evaluator_says_what_the_generator_built_a_program_with_with_and_try_to_print() {
-    generate::check(40, 110, tries::program, |case| {
+fn the_evaluator_says_what_the_generator_built_a_program_with_with_and_try_to_print(part: u64) {
+    generate::check_part(40, 110, part, 3, tries::program, |case| {
         let program = lower(case.source.as_bytes()).unwrap_or_else(|e| panic!("{e:?}"));
         let expected = Outcome {
             stdout: case.stdout.clone(),
@@ -580,9 +636,9 @@ fn the_evaluator_says_what_the_generator_built_a_program_with_with_and_try_to_pr
 /// `with x = f(args)` and the rest of the block mean `f(args) fn(x) { the
 /// rest }`, and `with f(args)` means `f(args) { the rest }`, so the programs
 /// written each way build to the same bytes.
-fn a_program_with_with_builds_to_the_bytes_of_the_lambdas_it_means() {
+fn a_program_with_with_builds_to_the_bytes_of_the_lambdas_it_means(part: u64) {
     let targets = targets::buildable();
-    generate::check(41, 6, tries::program, |case| {
+    generate::check_part(41, 6, part, 3, tries::program, |case| {
         let source = case.source.as_bytes();
         let program = lower(source).unwrap_or_else(|e| panic!("{e:?}"));
         let written = lower(case.lambdas.as_bytes()).unwrap_or_else(|e| panic!("{e:?}"));
@@ -599,8 +655,8 @@ fn a_program_with_with_builds_to_the_bytes_of_the_lambdas_it_means() {
 /// `try e` goes on with what `e` splits into when it goes, and returns from
 /// the function with what it splits into when it stops, so the program that
 /// writes each `try` out as that `match` prints what the one with `try` does.
-fn a_program_with_try_prints_what_it_prints_with_each_try_written_out_as_the_match() {
-    generate::check(44, 110, tries::program, |case| {
+fn a_program_with_try_prints_what_it_prints_with_each_try_written_out_as_the_match(part: u64) {
+    generate::check_part(44, 110, part, 3, tries::program, |case| {
         let program = lower(case.matched.as_bytes()).unwrap_or_else(|e| panic!("{e:?}"));
         let expected = Outcome {
             stdout: case.stdout.clone(),
@@ -635,8 +691,8 @@ fn every_placed_mistake_about_text_is_one_error_at_its_place() {
     });
 }
 
-fn the_evaluator_says_what_the_generator_built_a_program_with_reprs_to_print() {
-    generate::check(60, 119, reprs::program, |case| {
+fn the_evaluator_says_what_the_generator_built_a_program_with_reprs_to_print(part: u64) {
+    generate::check_part(60, 119, part, 2, reprs::program, |case| {
         let program = lower(case.source.as_bytes()).unwrap_or_else(|e| panic!("{e:?}"));
         let expected = Outcome {
             stdout: case.stdout.clone(),
@@ -646,8 +702,8 @@ fn the_evaluator_says_what_the_generator_built_a_program_with_reprs_to_print() {
     });
 }
 
-fn the_evaluator_says_what_the_generator_built_a_program_with_choices_to_print() {
-    generate::check(66, 109, choices::program, |case| {
+fn the_evaluator_says_what_the_generator_built_a_program_with_choices_to_print(part: u64) {
+    generate::check_part(66, 109, part, 2, choices::program, |case| {
         let program = lower(case.source.as_bytes()).unwrap_or_else(|e| panic!("{e:?}"));
         let expected = Outcome {
             stdout: case.stdout.clone(),
@@ -665,8 +721,8 @@ fn every_placed_mistake_about_choices_is_one_error_at_its_place() {
 }
 
 /// What a program prints, by the evaluator.
-fn the_evaluator_says_what_the_generator_built_a_program_with_numbers_to_print() {
-    generate::check(70, 166, numbers::program, |case| {
+fn the_evaluator_says_what_the_generator_built_a_program_with_numbers_to_print(part: u64) {
+    generate::check_part(70, 166, part, 3, numbers::program, |case| {
         let program = lower(case.source.as_bytes()).unwrap_or_else(|e| panic!("{e:?}"));
         assert_eq!(
             scalar::run(&program),
@@ -706,8 +762,8 @@ fn the_generator_of_numbers_reaches_the_least_and_greatest_value_of_each_type() 
     }
 }
 
-fn every_placed_mistake_about_numbers_is_one_error_at_its_place() {
-    generate::check(71, 231, numbers::program_with_mistake, |case| {
+fn every_placed_mistake_about_numbers_is_one_error_at_its_place(part: u64) {
+    generate::check_part(71, 231, part, 3, numbers::program_with_mistake, |case| {
         let expected = case.mistake.as_ref().expect("a placed mistake");
         assert_mistake(case.source.as_bytes(), expected);
     });
@@ -733,8 +789,8 @@ fn stdout_of(source: &str) -> Vec<u8> {
     scalar::run(&program).stdout
 }
 
-fn a_value_and_the_text_its_repr_gives_build_equal_values() {
-    generate::check(61, 58, reprs::program_to_rewrite, |written| {
+fn a_value_and_the_text_its_repr_gives_build_equal_values(part: u64) {
+    generate::check_part(61, 58, part, 2, reprs::program_to_rewrite, |written| {
         // The program prints the `Repr` of each value first, on a line of
         // its own, and an equal value prints the same.
         let printed = stdout_of(&written.with(&written.values));
