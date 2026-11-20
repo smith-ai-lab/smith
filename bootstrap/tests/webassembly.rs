@@ -64,8 +64,12 @@ pub const ONCE: &[Test] = &[
         every_integer_operation_gives_what_the_evaluator_gives,
     ),
     (
-        "every_function_of_a_generated_program_is_written_as_loops_and_branches",
-        every_function_of_a_generated_program_is_written_as_loops_and_branches,
+        "every_function_of_a_generated_program_is_written_as_loops_and_branches_part_1_of_2",
+        || every_function_of_a_generated_program_is_written_as_loops_and_branches(0),
+    ),
+    (
+        "every_function_of_a_generated_program_is_written_as_loops_and_branches_part_2_of_2",
+        || every_function_of_a_generated_program_is_written_as_loops_and_branches(1),
     ),
     (
         "loops_and_choices_of_many_jumps_that_join_run_as_the_evaluator_says",
@@ -540,7 +544,7 @@ fn written_as_loops(program: &Program) -> bool {
 
 /// The passes never leave a function whose blocks cannot be written as
 /// WebAssembly's own loops and branches, for any program the generators build.
-fn every_function_of_a_generated_program_is_written_as_loops_and_branches() {
+fn every_function_of_a_generated_program_is_written_as_loops_and_branches(part: u64) {
     fn all<T: std::fmt::Debug>(
         seed: u64,
         generate: impl Fn(&mut Gen) -> T,
@@ -550,10 +554,15 @@ fn every_function_of_a_generated_program_is_written_as_loops_and_branches() {
             assert!(written_as_loops(&after_the_pass(source(case))));
         });
     }
-    all(101, programs::program, |case| &case.source);
-    all(102, text::program, |case| case.source.as_bytes());
-    all(103, numbers::program, |case| case.source.as_bytes());
-    all(104, choices::program, |case| case.source.as_bytes());
+    // The generators are shared by two tests, the first four and the rest, and
+    // the lexer is in the second.
+    if part == 0 {
+        all(101, programs::program, |case| &case.source);
+        all(102, text::program, |case| case.source.as_bytes());
+        all(103, numbers::program, |case| case.source.as_bytes());
+        all(104, choices::program, |case| case.source.as_bytes());
+        return;
+    }
     all(105, lambdas::program, |case| case.source.as_bytes());
     all(106, enums::program, |case| case.source.as_bytes());
     all(107, tuples::program, |case| case.source.as_bytes());

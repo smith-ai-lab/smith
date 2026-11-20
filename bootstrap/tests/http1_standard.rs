@@ -22,8 +22,16 @@ pub const ONCE: &[Test] = &[
         a_ledger_that_lost_a_line_or_names_a_test_that_is_not_there_is_refused,
     ),
     (
-        "the_bytes_http1_takes_in_a_name_a_value_a_method_and_a_reason_are_those_of_the_grammar",
-        the_bytes_http1_takes_in_a_name_a_value_a_method_and_a_reason_are_those_of_the_grammar,
+        "the_bytes_http1_takes_in_a_name_a_value_a_method_and_a_reason_are_those_of_the_grammar_part_1_of_3",
+        || the_bytes_http1_takes_in_a_name_a_value_a_method_and_a_reason_are_those_of_the_grammar(0),
+    ),
+    (
+        "the_bytes_http1_takes_in_a_name_a_value_a_method_and_a_reason_are_those_of_the_grammar_part_2_of_3",
+        || the_bytes_http1_takes_in_a_name_a_value_a_method_and_a_reason_are_those_of_the_grammar(1),
+    ),
+    (
+        "the_bytes_http1_takes_in_a_name_a_value_a_method_and_a_reason_are_those_of_the_grammar_part_3_of_3",
+        || the_bytes_http1_takes_in_a_name_a_value_a_method_and_a_reason_are_those_of_the_grammar(2),
     ),
 ];
 
@@ -96,7 +104,9 @@ fn kinds(heads: &[Vec<u8>], request: bool) -> Vec<String> {
         .collect()
 }
 
-fn the_bytes_http1_takes_in_a_name_a_value_a_method_and_a_reason_are_those_of_the_grammar() {
+/// The bytes that the grammar allows in each place, tried in three tests: the
+/// bytes of a name and of a method, of a value and a reason, and of the digits.
+fn the_bytes_http1_takes_in_a_name_a_value_a_method_and_a_reason_are_those_of_the_grammar(part: u64) {
     // The rules are in the text of the two standards, and a rule that one of
     // them names is in the other.
     let text = format!("{}\n{}", standard::read("rfc9112.txt"), standard::read("rfc9110.txt"));
@@ -119,37 +129,43 @@ fn the_bytes_http1_takes_in_a_name_a_value_a_method_and_a_reason_are_those_of_th
         let allowed = set[b as usize] || (blanks && (b == b' ' || b == b'\t'));
         if allowed && b < 128 { "complete" } else { "refused" }
     };
-    let name = tried.iter().map(|b| with(b"GET / HTTP/1.1\r\nhost: h\r\nx", *b, b"y: v\r\n\r\n")).collect::<Vec<_>>();
-    let got = kinds(&name, true);
-    let want: Vec<&str> = tried.iter().map(|b| text_of(*b, &token, false)).collect();
-    assert_eq!(got, want, "the bytes of the name of a header, which is a token");
-    let method = tried.iter().map(|b| with(b"G", *b, b"T / HTTP/1.1\r\nhost: h\r\n\r\n")).collect::<Vec<_>>();
-    let got = kinds(&method, true);
-    assert_eq!(got, want, "the bytes of a method, which is a token");
-    let values = tried.iter().map(|b| with(b"GET / HTTP/1.1\r\nhost: h\r\nx: a", *b, b"c\r\n\r\n")).collect::<Vec<_>>();
-    let got = kinds(&values, true);
-    let want: Vec<&str> = tried.iter().map(|b| text_of(*b, &value, true)).collect();
-    assert_eq!(got, want, "the bytes of the value of a header");
-    let reasons = tried.iter().map(|b| with(b"HTTP/1.1 200 a", *b, b"c\r\n\r\n")).collect::<Vec<_>>();
-    let got = kinds(&reasons, false);
-    let want: Vec<&str> = tried.iter().map(|b| text_of(*b, &reason, true)).collect();
-    assert_eq!(got, want, "the bytes of a reason");
-    // A digit of a status code (RFC 5234's `DIGIT`), and a digit of a chunk
-    // size (`HEXDIG`), which the text of RFC 9112 uses without defining.
-    let digits = tried.iter().map(|b| with(b"HTTP/1.1 2", *b, b"0 x\r\n\r\n")).collect::<Vec<_>>();
-    let want: Vec<&str> = tried
-        .iter()
-        .map(|b| if standard::in_core(standard::DIGIT, *b) { "complete" } else { "refused" })
-        .collect();
-    assert_eq!(kinds(&digits, false), want, "the digits of a status code");
-    let sizes = tried.iter().map(|b| with(b"", *b, b"\r\n")).collect::<Vec<_>>();
-    let got = chunk_kinds(&sizes);
-    // A size is read, and the bytes it asks for are not there: incomplete.
-    let want: Vec<&str> = tried
-        .iter()
-        .map(|b| if standard::in_core(standard::HEXDIG, *b) { "incomplete" } else { "refused" })
-        .collect();
-    assert_eq!(got, want, "the digits of the size of a chunk");
+    if part == 0 {
+        let name = tried.iter().map(|b| with(b"GET / HTTP/1.1\r\nhost: h\r\nx", *b, b"y: v\r\n\r\n")).collect::<Vec<_>>();
+        let got = kinds(&name, true);
+        let want: Vec<&str> = tried.iter().map(|b| text_of(*b, &token, false)).collect();
+        assert_eq!(got, want, "the bytes of the name of a header, which is a token");
+        let method = tried.iter().map(|b| with(b"G", *b, b"T / HTTP/1.1\r\nhost: h\r\n\r\n")).collect::<Vec<_>>();
+        let got = kinds(&method, true);
+        assert_eq!(got, want, "the bytes of a method, which is a token");
+    }
+    if part == 1 {
+        let values = tried.iter().map(|b| with(b"GET / HTTP/1.1\r\nhost: h\r\nx: a", *b, b"c\r\n\r\n")).collect::<Vec<_>>();
+        let got = kinds(&values, true);
+        let want: Vec<&str> = tried.iter().map(|b| text_of(*b, &value, true)).collect();
+        assert_eq!(got, want, "the bytes of the value of a header");
+        let reasons = tried.iter().map(|b| with(b"HTTP/1.1 200 a", *b, b"c\r\n\r\n")).collect::<Vec<_>>();
+        let got = kinds(&reasons, false);
+        let want: Vec<&str> = tried.iter().map(|b| text_of(*b, &reason, true)).collect();
+        assert_eq!(got, want, "the bytes of a reason");
+    }
+    if part == 2 {
+        // A digit of a status code (RFC 5234's `DIGIT`), and a digit of a chunk
+        // size (`HEXDIG`), which the text of RFC 9112 uses without defining.
+        let digits = tried.iter().map(|b| with(b"HTTP/1.1 2", *b, b"0 x\r\n\r\n")).collect::<Vec<_>>();
+        let want: Vec<&str> = tried
+            .iter()
+            .map(|b| if standard::in_core(standard::DIGIT, *b) { "complete" } else { "refused" })
+            .collect();
+        assert_eq!(kinds(&digits, false), want, "the digits of a status code");
+        let sizes = tried.iter().map(|b| with(b"", *b, b"\r\n")).collect::<Vec<_>>();
+        let got = chunk_kinds(&sizes);
+        // A size is read, and the bytes it asks for are not there: incomplete.
+        let want: Vec<&str> = tried
+            .iter()
+            .map(|b| if standard::in_core(standard::HEXDIG, *b) { "incomplete" } else { "refused" })
+            .collect();
+        assert_eq!(got, want, "the digits of the size of a chunk");
+    }
 }
 
 /// What `chunk` says of each of the bytes.

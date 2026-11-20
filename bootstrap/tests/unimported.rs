@@ -21,8 +21,16 @@ pub const ONCE: &[Test] = &[
         each_name_of_the_library_used_with_no_import_is_one_error_at_its_first_use_naming_its_module,
     ),
     (
-        "each_name_of_the_library_that_the_file_imports_is_not_refused",
-        each_name_of_the_library_that_the_file_imports_is_not_refused,
+        "each_name_of_the_library_that_the_file_imports_is_not_refused_part_1_of_3",
+        || each_name_of_the_library_that_the_file_imports_is_not_refused(0),
+    ),
+    (
+        "each_name_of_the_library_that_the_file_imports_is_not_refused_part_2_of_3",
+        || each_name_of_the_library_that_the_file_imports_is_not_refused(1),
+    ),
+    (
+        "each_name_of_the_library_that_the_file_imports_is_not_refused_part_3_of_3",
+        || each_name_of_the_library_that_the_file_imports_is_not_refused(2),
     ),
     (
         "importing_an_effect_brings_its_name_alone",
@@ -172,8 +180,8 @@ fn each_name_of_the_library_used_with_no_import_is_one_error_at_its_first_use_na
 }
 
 /// The same programs with the name imported are not refused for it.
-fn each_name_of_the_library_that_the_file_imports_is_not_refused() {
-    for (name, module) in names() {
+fn each_name_of_the_library_that_the_file_imports_is_not_refused(part: usize) {
+    for (name, module) in names().into_iter().skip(part).step_by(3) {
         let program = SHAPES[0].program.replace("NAME", name);
         let source = format!("use std.{module} ({name})\n\n{program}");
         let said: Vec<Error> = missing(&source);
