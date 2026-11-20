@@ -593,7 +593,9 @@ impl<'a> Checker<'a> {
             self.contract_call(body, call, &defs.file.functions[f], sig);
             return sig.gives.solved(&sol);
         }
-        let mut of = defs.trait_fns.get(name).cloned().unwrap_or_default();
+        let mut of = (defs.trait_fns_at(call.name_pos, name))
+            .cloned()
+            .unwrap_or_default();
         if let [(k, _)] = of[..] {
             of.extend(defs.rivals(k, name, call.pos));
         }
@@ -1040,8 +1042,8 @@ impl<'a> Checker<'a> {
         let called = (all.into_iter())
             .filter(|call| call.qualifier.is_none())
             .filter_map(|call| {
-                let callee = self.defs.function_names.get(call.callee.as_str())?;
-                Some((call.pos, *callee))
+                let callee = self.defs.function(call.name_pos, call.callee.as_str())?;
+                Some((call.pos, callee))
             });
         let reached: Vec<(Pos, usize)> = called.chain(passed).collect();
         for (pos, callee) in reached {

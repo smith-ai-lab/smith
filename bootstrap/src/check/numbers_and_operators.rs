@@ -228,9 +228,10 @@ pub(super) fn narrowing(defs: &Defs, call: &Call) -> Option<Narrowing> {
     ]
     .into_iter()
     .find(|n| n.name() == call.callee)?;
-    let taken = defs.function_names.contains_key(call.callee.as_str())
-        || defs.struct_names.contains_key(call.callee.as_str())
-        || defs.trait_fns.contains_key(call.callee.as_str());
+    let (at, name) = (call.name_pos, call.callee.as_str());
+    let taken = defs.function(at, name).is_some()
+        || defs.struct_at(at, name).is_some()
+        || defs.trait_fns_at(at, name).is_some();
     (call.qualifier.is_none() && !taken).then_some(named)
 }
 

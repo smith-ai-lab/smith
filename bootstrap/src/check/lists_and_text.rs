@@ -11,7 +11,8 @@ pub(super) fn is_push(defs: &Defs, call: &Call) -> bool {
     call.qualifier.is_none()
         && match name {
             "push" | "append" => {
-                !defs.function_names.contains_key(name) && !defs.struct_names.contains_key(name)
+                defs.function(call.name_pos, name).is_none()
+                    && defs.struct_at(call.name_pos, name).is_none()
             }
             _ => is_library_append(call),
         }
