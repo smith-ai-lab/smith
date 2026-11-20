@@ -120,6 +120,28 @@ A client that lists the prompts is told of `summarise`, with its comment and its
 
 Each message is a message of JSON-RPC 2.0, read and written by [`std.jsonrpc`](jsonrpc.md), and `std.mcp` reads the parameters of each method into its own types.
 
+```
+struct Incoming {
+  text: str
+  headers: List[(str, str)]
+}
+
+struct Reply {
+  text: Option[str]
+  status: 100..600
+}
+
+effect messages {
+  fn message() -> Incoming
+  fn answer(reply: Reply)
+}
+```
+
+- `message` gives the message being answered, with what carried it knows of it: the headers of the request it came in, each name in small letters, and none for a message that came by the standard input.
+- `answer` takes what `mcp` says of it: the text of one message, or none for a message that needs no answer, and a status. Whoever carries messages over HTTP sends that status, and whoever carries them another way has no use for it.
+
+The protocol asks a server to hold the headers of a request to the message inside it, and to choose the status by how the message fails, so `mcp` does both and what carries the message knows nothing of the protocol. `mcp` refuses with status 400 a message whose `Mcp-Method` header is not its method, whose `Mcp-Name` header is not the tool, the prompt, or the address it names, or whose `MCP-Protocol-Version` header is not the version it says inside, each only where there are headers. It answers 404 for a method it has not, 202 with no text for a message that needs no answer, and 200 for every other answer.
+
 `mcp` asks for each message and gives each answer through the effect `messages`, and does not know where they come from. What answers `messages` is the deployment and not the program:
 
 - A server a client starts on the same machine reads each message from the standard input and writes each answer to the standard output.
