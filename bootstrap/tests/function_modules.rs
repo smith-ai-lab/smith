@@ -27,6 +27,10 @@ pub const ONCE: &[Test] = &[
         a_module_that_the_file_does_not_write_function_for_holds_no_struct_of_arguments,
     ),
     (
+        "a_function_of_the_file_is_given_function_when_a_module_it_lists_writes_it",
+        a_function_of_the_file_is_given_function_when_a_module_it_lists_writes_it,
+    ),
+    (
         "two_modules_with_a_function_of_one_name_are_each_given_their_own_comment",
         two_modules_with_a_function_of_one_name_are_each_given_their_own_comment,
     ),
@@ -122,4 +126,12 @@ fn a_module_that_the_file_does_not_write_function_for_holds_no_struct_of_argumen
     let source = "use app.m (go)\nuse std.console (console, print)\n\nfn main() ! console, alloc {\n  print(\"{go(1)}\")\n}\n";
     let program = lower_project(source.as_bytes(), &[("app.m", module)]).expect("builds");
     assert!(!format!("{program:?}").contains("Args"));
+}
+
+/// A file that does not write `Function` has it given to its functions when a
+/// module it lists writes it, as it is for what the module takes.
+fn a_function_of_the_file_is_given_function_when_a_module_it_lists_writes_it() {
+    let module = "pub fn told[F: Function](f: F) -> str ! alloc {\n  \"{Function.name(f)}|{Function.about(f)}\"\n}\n";
+    let source = "use app.tools (told)\nuse std.console (console, print)\n\n// Says hello.\nfn hello() -> str { \"hi\" }\n\nfn main() ! console, alloc {\n  print(told(hello))\n}\n";
+    assert_eq!(said(source, &[("app.tools", module)]), "hello|Says hello.\n");
 }

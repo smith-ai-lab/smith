@@ -68,6 +68,9 @@ pub struct File {
     /// For a file that writes `Describe`, the comment on each struct, field,
     /// enum, and case that has one, by its name, as `Note` or `Note.title`.
     pub abouts: Vec<(String, String)>,
+    /// The source of the file that is built, for the comments that are read from
+    /// it when a module asks for them. `None` for a module.
+    pub text: Option<Arc<str>>,
 }
 
 /// A name written with the name of an imported module before it.
@@ -922,6 +925,7 @@ fn parse_file(tokens: &[Token], library: bool) -> Result<File, Vec<Error>> {
             unbuilt: p.unbuilt,
             args: Vec::new(),
             abouts: Vec::new(),
+            text: None,
             modules: Vec::new(),
         })
     } else {

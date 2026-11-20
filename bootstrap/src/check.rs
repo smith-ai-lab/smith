@@ -1857,7 +1857,8 @@ fn check_reading(
 ) -> Result<Checked, Vec<Error>> {
     // Whether a function of a module is given a struct of arguments, which the
     // file that is built asks for by writing `Function`.
-    let asks_function = crate::function_args::asks(&file);
+    let file_asks = crate::function_args::asks(&file);
+    let asks_function = file_asks;
     let mut resolver = Resolver::new(library);
     resolver.whole = whole.is_some();
     let defined: HashSet<String> = defined_names(&file).into_iter().map(String::from).collect();
@@ -1907,6 +1908,17 @@ fn check_reading(
         .map(|(name, _)| name)
         .collect();
     written.extend((file.qualified.iter()).map(|q| format!("{}@{}", q.name.0, q.module)));
+    // A module that the file imports may write `Function` for the functions of
+    // the file, as the file may for those of a module.
+    let asks_function = asks_function
+        || read.iter().any(|m| match m.name.strip_prefix("std.") {
+            Some(name) => FUNCTION_USERS.contains(&name),
+            None => crate::function_args::asks(&m.file),
+        });
+    if asks_function && !file_asks {
+        let text = file.text.clone().unwrap_or_else(|| "".into());
+        crate::function_args::add(&mut file, &text, 0);
+    }
     let (mut file, items, mut lazy) = splice(file, read, &mut errors, asks_function);
     lazy.written = written;
     file.modules = module_names(&labels, library);

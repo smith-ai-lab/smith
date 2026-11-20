@@ -330,6 +330,7 @@ fn checked_in(
 /// `Function`, which they are for, and notes the comments of its types, when
 /// it writes `Describe`.
 fn with_function_args(file: &mut parser::File, source: &[u8]) {
+    file.text = Some(std::str::from_utf8(source).unwrap_or_default().into());
     if function_args::asks(file) {
         function_args::add(file, std::str::from_utf8(source).unwrap_or_default(), 0);
     }
