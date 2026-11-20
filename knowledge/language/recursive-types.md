@@ -2,7 +2,12 @@
 type: specification
 title: Types that contain themselves
 description: A type may contain itself, which is how a tree is written, and a graph is a collection plus indices.
-status: planned
+status: partial
+built:
+  - "a struct or an enum that holds itself only through a `List`, directly or through other types, as `struct Node { kids: List[Node] }`, which is accepted where it is declared, and a value of it is built"
+  - "a type that holds itself with no `List` between, directly or through others, refused with one error, at the name that closes the cycle, that says it is not built yet and that a `List` of it is"
+  - "`==`, `Repr`, `Fmt`, and `Hash` of a type that holds itself through a `List`, refused at the use with one error, until a function may call itself"
+  - "not the page's own example, which holds itself with no `List`, nor recursion, nor a tree walked to any depth"
 ---
 
 # Types that contain themselves

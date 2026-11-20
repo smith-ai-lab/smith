@@ -1,0 +1,12 @@
+use std.bits (u8)
+use std.console (console, print)
+
+struct Node {
+  value: u8
+  kids: List[Node]
+}
+
+fn main() ! console, alloc {
+  leaf = Node(value: 1, kids: [])
+  print("{leaf.value} {leaf.kids.size}")
+}

@@ -1,0 +1,3 @@
+type_through_list_has_no_eq.smith:6:37: there is no implementation of `Eq` for `Tree`, as `Tree` contains itself, and a type that does is given no `Eq` until a function may call itself, which is not built yet
+  6 | fn same(a: Tree, b: Tree) -> bool { a == b }
+    |                                     ^
