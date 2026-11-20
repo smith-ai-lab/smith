@@ -12,6 +12,7 @@ pub(super) fn renamed_tokens(
     tokens: &[crate::lexer::Token],
     rename: &dyn Fn(&str) -> Option<String>,
     through: &HashMap<String, HashMap<String, String>>,
+    record: &mut dyn FnMut(crate::diag::Pos, &str),
 ) -> Vec<crate::lexer::Token> {
     use crate::lexer::{Piece, Tok, Token};
     // The depth of parentheses inside the parameters of a function, which is 0
@@ -173,6 +174,7 @@ pub(super) fn renamed_tokens(
                         Tok::Ident(member.cloned().unwrap_or_default())
                     }
                     Some(to) if !after_dot && !labelled && !case_defined && !is_parameter => {
+                        record(t.pos, name);
                         Tok::Ident(to)
                     }
                     _ => t.tok.clone(),
@@ -182,7 +184,9 @@ pub(super) fn renamed_tokens(
                 pieces
                     .iter()
                     .map(|p| match p {
-                        Piece::Expr(inner) => Piece::Expr(renamed_tokens(inner, rename, through)),
+                        Piece::Expr(inner) => {
+                            Piece::Expr(renamed_tokens(inner, rename, through, record))
+                        }
                         text => text.clone(),
                     })
                     .collect(),
@@ -284,5 +288,73 @@ impl<'s, 'k> ModuleScope<'s, 'k> {
             );
         }
         found
+    }
+}
+
+/// What one module of the file calls what, kept for the checker to ask: the
+/// module's name, whether it is of the standard library, the names it writes
+/// as they are, the names the file that is built gives its names with `as`,
+/// and what it lists from other modules.
+pub(super) struct Naming {
+    pub(super) name: String,
+    pub(super) standard: bool,
+    pub(super) kept: HashSet<String>,
+    pub(super) aliased: Vec<(String, String)>,
+    pub(super) imports: Vec<(String, String)>,
+}
+
+/// How each name of each module was written, and what each module calls what,
+/// so that the name a place means is told from what the module wrote there,
+/// and not from the tokens that were rewritten.
+#[derive(Default)]
+pub(super) struct Resolution {
+    /// The name each rewritten token was written as, by its place.
+    pub(super) written: HashMap<crate::diag::Pos, String>,
+    /// What each module calls what, by the module's number.
+    pub(super) modules: HashMap<usize, Naming>,
+}
+
+impl Resolution {
+    /// The name as the module wrote it at `pos`, where `text` is what the
+    /// tokens say.
+    pub(super) fn written_at<'s>(&'s self, pos: crate::diag::Pos, text: &'s str) -> &'s str {
+        self.written.get(&pos).map_or(text, String::as_str)
+    }
+
+    /// What the name `text` at `pos` is called in the file that holds every
+    /// module, from what the module that wrote it calls what. `exists` says
+    /// whether the file has an item of a kind that is wanted with the name
+    /// it is asked about, which tells a name the module defines from one it
+    /// does not.
+    pub(super) fn key(
+        &self,
+        pos: crate::diag::Pos,
+        text: &str,
+        exists: &dyn Fn(&str) -> bool,
+    ) -> String {
+        let written = self.written_at(pos, text);
+        let Some(module) = self.modules.get(&(pos.line / super::STEP)) else {
+            return written.to_string();
+        };
+        if let Some((_, to)) = module.imports.iter().find(|(from, _)| from == written) {
+            return to.clone();
+        }
+        if module.standard && written.starts_with("__") {
+            return written.to_string();
+        }
+        let kept = |n: &str| module.kept.contains(n);
+        let scope = ModuleScope {
+            name: &module.name,
+            standard: module.standard,
+            kept: &kept,
+            aliased: &module.aliased,
+            imports: &module.imports,
+        };
+        let own = scope.final_name(written);
+        if exists(&own) {
+            own
+        } else {
+            written.to_string()
+        }
     }
 }

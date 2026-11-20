@@ -53,7 +53,7 @@ use crate::parser::{
 };
 use effects_with_and_try::{BUILT, BUILT_IN_EFFECTS, LIBRARY_EFFECTS, declarations};
 use lists_and_text::{as_read, is_freeze, is_push, is_utf8};
-use names::{ModuleScope, own_final, renamed_tokens};
+use names::{ModuleScope, Naming, Resolution, own_final, renamed_tokens};
 use numbers_and_operators::{Int, Narrowing, Numbers, flexible, literal_blocks, narrowing};
 use traits::{
     Found, ImplInfo, PRELUDE_TRAITS, Requirement, TRAITS_NOT_BUILT, bounds_named, impl_info,
@@ -729,6 +729,8 @@ impl Signature {
 /// any body is checked.
 struct Defs<'a> {
     file: &'a File,
+    /// How each module wrote its names, and what each calls what.
+    resolution: Resolution,
     function_names: Map<&'a str, usize>,
     struct_names: Map<&'a str, usize>,
     enum_names: Map<&'a str, usize>,
@@ -814,6 +816,20 @@ struct Spelled {
 }
 
 impl<'a> Defs<'a> {
+    /// The function the name written at `pos` is: what the module that wrote
+    /// it calls it, found among the file's functions. Until the tokens are no
+    /// longer rewritten, the name the tokens hold is found too, and the two
+    /// must be the same function.
+    fn function(&self, pos: Pos, name: &str) -> Option<usize> {
+        let found = self.function_names.get(name).copied();
+        let key = self
+            .resolution
+            .key(pos, name, &|n| self.function_names.contains_key(n));
+        let by_scope = self.function_names.get(key.as_str()).copied();
+        debug_assert_eq!(found, by_scope, "`{name}` at {pos:?}");
+        found
+    }
+
     /// The number a bound of the range type `t` stands for where only the
     /// range of the bound is known: a number is itself, and a name is the
     /// least number of its parameter if it is the first bound of the range
@@ -1902,8 +1918,15 @@ fn check_file(
         })
         .collect();
 
+    let mut resolution = std::mem::take(&mut lazy.resolution);
+    for module in &mut lazy.modules {
+        resolution
+            .written
+            .extend(std::mem::take(&mut module.written));
+    }
     let mut defs = Defs {
         file: &file,
+        resolution,
         function_names: names.functions,
         struct_names: names.structs,
         enum_names: names.enums,
@@ -3694,6 +3717,19 @@ fn splice<'a>(
             }
         })
         .collect();
+    let mut resolution = Resolution::default();
+    for (i, plan) in plans.iter().enumerate() {
+        resolution.modules.insert(
+            modules[i].number,
+            Naming {
+                name: modules[i].name.clone(),
+                standard: modules[i].name.starts_with("std."),
+                kept: kept[i].clone(),
+                aliased: modules[i].entry_aliased.clone(),
+                imports: plan.imports.clone(),
+            },
+        );
+    }
     let mut rest: Vec<LazyModule<'a>> = Vec::new();
     for (i, plan) in plans.into_iter().enumerate() {
         let standard = modules[i].name.starts_with("std.");
@@ -3715,6 +3751,9 @@ fn splice<'a>(
                 &tokens,
                 &|n| scope.rename(n, modules[i].defined.contains(n)),
                 &through,
+                &mut |pos, name| {
+                    resolution.written.insert(pos, name.to_string());
+                },
             );
             let found = match crate::parser::parse_library(&tokens) {
                 Ok(found) => found,
@@ -3744,6 +3783,7 @@ fn splice<'a>(
             imports,
             through,
             parsed: Vec::new(),
+            written: HashMap::new(),
         };
         lazy.parsed = (0..lazy.pieces.list.len()).map(|_| None).collect();
         // The traits, and what the compiler leans on, are read at once.
@@ -3787,6 +3827,7 @@ fn splice<'a>(
             module.mark(&mut filter);
         }
         Lazy {
+            resolution,
             modules: rest,
             done: Set::default(),
             filter,
@@ -3827,6 +3868,8 @@ fn add_items(file: &mut File, found: File, held: &HashSet<String>) {
 /// The modules of the standard library whose items are read as the program
 /// reaches them.
 struct Lazy<'a> {
+    /// How each module wrote its names, and what each calls what.
+    resolution: Resolution,
     modules: Vec<LazyModule<'a>>,
     /// The names looked up, whose items are all read.
     done: Set<String>,
@@ -3884,6 +3927,9 @@ struct LazyModule<'a> {
     through: HashMap<String, HashMap<String, String>>,
     /// The items read since, by their place among the module's.
     parsed: Vec<Option<File>>,
+    /// The name each token of the items read was written as, by its place,
+    /// where the tokens were rewritten.
+    written: HashMap<Pos, String>,
 }
 
 impl LazyModule<'_> {
@@ -3939,7 +3985,14 @@ impl LazyModule<'_> {
         let text = &self.source[piece.text.0..piece.text.1];
         let tokens = crate::lexer::lex(text.as_bytes()).ok()?;
         let tokens = shifted(&tokens, self.number * STEP + piece.line);
-        let tokens = renamed_tokens(&tokens, &|n| self.rename(n), &self.through);
+        let mut renamed: Vec<(Pos, String)> = Vec::new();
+        let tokens = renamed_tokens(
+            &tokens,
+            &|n| self.rename(n),
+            &self.through,
+            &mut |pos, name| renamed.push((pos, name.to_string())),
+        );
+        self.written.extend(renamed);
         match crate::parser::parse_library(&tokens) {
             Ok(found) => Some(found),
             Err(found) => {
@@ -5116,7 +5169,7 @@ impl<'a> Typed<'a> {
                 if let Some(narrowing) = narrowing(defs, call) {
                     return Callee::Narrow(narrowing);
                 }
-                if let Some(&f) = defs.function_names.get(name) {
+                if let Some(f) = defs.function(call.name_pos, name) {
                     let sig = &defs.signatures[f];
                     let args = solve(&sig.params, sig.scope.names.len());
                     let args = defaulted(args, sig.param_defaults.clone());
@@ -6496,9 +6549,7 @@ impl<'a> Checker<'a> {
             Expr::Name { name, pos } => {
                 if let Some((_, ty)) = body.names.iter().rfind(|(n, _)| n == name) {
                     ty.clone()
-                } else if let (Some(&f), None) =
-                    (defs.function_names.get(name.as_str()), &body.default)
-                {
+                } else if let (Some(f), None) = (defs.function(*pos, name), &body.default) {
                     self.function_value(body, expr, f, *pos)
                 } else if name == "true" || name == "false" {
                     defs.bool_ty()

@@ -545,7 +545,7 @@ impl<'a> Checker<'a> {
         ) {
             return self.handler_call(body, call, effect);
         }
-        if let Some(&f) = defs.function_names.get(name) {
+        if let Some(f) = defs.function(call.name_pos, name) {
             let sig = &defs.signatures[f];
             if self.effect_in_default(body, call, sig) {
                 return self.unknown_call(body, call);
