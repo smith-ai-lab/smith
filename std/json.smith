@@ -1,6 +1,6 @@
-use std.bits (bit_and, bit_not, bit_or, shift_left, shift_right, u32, u64)
+use std.bits (bit_and, bit_not, bit_or, shift_right, u32, u64)
 use std.deserialize (Deserialize, Problem, ReadError, Reader, fail, read)
-use std.int (checked_add, checked_mul, saturating_add, saturating_sub, wrapping_add, wrapping_mul, wrapping_narrow, wrapping_sub)
+use std.int (checked_add, checked_mul, saturating_add, saturating_sub, wrapping_add, wrapping_mul, wrapping_narrow, wrapping_shift_left, wrapping_sub)
 use std.list (freeze, push)
 use std.serialize (Serialize, Writer, write)
 use std.text (Text, append, append_ascii, finish, text)
@@ -886,17 +886,17 @@ fn put_char(to: take List[Byte], code: u32) -> List[Byte] ! alloc {
   if code < 128 {
     acc = push(acc, wrapping_narrow(code))
   } else if code < 2048 {
-    acc = push(acc, wrapping_narrow(bit_or(192, shift_right(code, 6))))
-    acc = push(acc, wrapping_narrow(bit_or(128, bit_and(code, 63))))
+    acc = push(acc, bit_or(192, shift_right(code, 6)))
+    acc = push(acc, bit_or(128, bit_and(code, 63)))
   } else if code < 65536 {
-    acc = push(acc, wrapping_narrow(bit_or(224, shift_right(code, 12))))
-    acc = push(acc, wrapping_narrow(bit_or(128, bit_and(shift_right(code, 6), 63))))
-    acc = push(acc, wrapping_narrow(bit_or(128, bit_and(code, 63))))
-  } else {
-    acc = push(acc, wrapping_narrow(bit_or(240, shift_right(code, 18))))
-    acc = push(acc, wrapping_narrow(bit_or(128, bit_and(shift_right(code, 12), 63))))
-    acc = push(acc, wrapping_narrow(bit_or(128, bit_and(shift_right(code, 6), 63))))
-    acc = push(acc, wrapping_narrow(bit_or(128, bit_and(code, 63))))
+    acc = push(acc, bit_or(224, shift_right(code, 12)))
+    acc = push(acc, bit_or(128, bit_and(shift_right(code, 6), 63)))
+    acc = push(acc, bit_or(128, bit_and(code, 63)))
+  } else if code < 2097152 {
+    acc = push(acc, bit_or(240, shift_right(code, 18)))
+    acc = push(acc, bit_or(128, bit_and(shift_right(code, 12), 63)))
+    acc = push(acc, bit_or(128, bit_and(shift_right(code, 6), 63)))
+    acc = push(acc, bit_or(128, bit_and(code, 63)))
   }
   acc
 }
@@ -1173,7 +1173,7 @@ fn top_not_closing(r: take In) -> In ! alloc {
   } else if n < 64 {
     by: Byte = n
     one: u64 = 1
-    w.forms = bit_and(w.forms, bit_not(shift_left(one, by)))
+    w.forms = bit_and(w.forms, bit_not(wrapping_shift_left(one, by)))
     w
   } else {
     w.deep = grown_byte(without_last_byte(w.deep), 0)
@@ -1190,7 +1190,7 @@ fn left_case(r: take In) -> In {
   } else if n < 64 {
     by: Byte = n
     one: u64 = 1
-    w.forms = bit_and(w.forms, bit_not(shift_left(one, by)))
+    w.forms = bit_and(w.forms, bit_not(wrapping_shift_left(one, by)))
     w.cases = n
     w
   } else {
@@ -1357,7 +1357,7 @@ fn pushed(r: take In, form: u64) -> Result[In, Bad] ! alloc {
   n = w.cases
   if n < 64 {
     by: Byte = n
-    w.forms = bit_or(w.forms, shift_left(form, by))
+    w.forms = bit_or(w.forms, wrapping_shift_left(form, by))
   } else {
     w.deep = grown_byte(w.deep, wrapping_narrow(form))
   }

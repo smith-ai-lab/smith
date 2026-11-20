@@ -4,6 +4,7 @@
 //! `Convert` between numbers.
 
 use super::*;
+use crate::check::numbers_and_operators::{BitFn, bits_function};
 
 /// How many bits a number of the type has, in the scalar form.
 pub(super) fn bits_of(t: Int) -> form::Bits {
@@ -288,6 +289,63 @@ impl<'a> Lowering<'a> {
         (typed.type_of(expr, env), values)
     }
 
+    /// Which function of `Bits` with two numbers `call` is a call of.
+    pub(super) fn bits_function(&self, call: &Call) -> Option<BitFn> {
+        bits_function(self.typed.defs, call)
+    }
+
+    /// Lowers a call of `bit_and`, `bit_or`, `bit_xor`, `shift_left`, or
+    /// `shift_right`: the numbers are at the size the work is done at, which
+    /// the checker made them, and the result is taken to the size its range is
+    /// kept at.
+    pub(super) fn bits_call(
+        &mut self,
+        out: &mut Out<'a>,
+        expr: &'a Expr,
+        call: &'a Call,
+        op: BitFn,
+        env: &[Ty],
+    ) -> (Ty, Vec<form::Value>) {
+        use form::Binary::*;
+        let typed = self.typed;
+        let (Ty::Int(a), a_values) = self.expr(out, &call.args[0].value, env) else {
+            unreachable!("a whole number")
+        };
+        let (Ty::Int(b), b_values) = self.expr(out, &call.args[1].value, env) else {
+            unreachable!("a whole number")
+        };
+        let ty = typed.type_of(expr, env);
+        let Ty::Int(r) = ty else {
+            unreachable!("a whole number")
+        };
+        let (x, y) = (a_values[0], b_values[0]);
+        let done = match op {
+            BitFn::And => out.binary(And, x, y),
+            BitFn::Or => out.binary(Or, x, y),
+            BitFn::Xor => out.binary(Xor, x, y),
+            BitFn::Left | BitFn::Right => {
+                let how = match (op, a.signed()) {
+                    (BitFn::Left, _) => ShiftLeft,
+                    (_, true) => ShiftRightS,
+                    (_, false) => ShiftRightU,
+                };
+                // The amount is a `Byte`, whatever size its range is kept at.
+                let by = if bits_of(b) == form::Bits::B8 {
+                    y
+                } else {
+                    out.resize(b.signed(), y, form::Bits::B8)
+                };
+                out.binary(how, x, by)
+            }
+        };
+        let value = if bits_of(a) == bits_of(r) {
+            done
+        } else {
+            out.resize(a.signed(), done, bits_of(r))
+        };
+        (ty, vec![value])
+    }
+
     /// Lowers a call of a function that only calls the function the compiler
     /// builds for `kind` and `op` on its parameters, in order, at the call: a
     /// `wrapping_`, `saturating_`, or `checked_` `add`, `sub`, or `mul`. No
@@ -409,6 +467,7 @@ impl<'a> Lowering<'a> {
         let word = match op {
             "add" => Add,
             "sub" => Sub,
+            "shift_left" => ShiftLeft,
             _ => Mul,
         };
         if kind == "wrapping" {
@@ -563,7 +622,9 @@ pub(super) fn number_function(f: &Function) -> Option<(&'static str, &'static st
     let kind = ["wrapping", "saturating", "checked"]
         .into_iter()
         .find(|k| *k == kind)?;
-    let op = ["add", "sub", "mul"].into_iter().find(|o| *o == op)?;
+    let op = ["add", "sub", "mul", "shift_left"]
+        .into_iter()
+        .find(|o| *o == op && (*o != "shift_left" || kind == "wrapping"))?;
     (f.body.len() == 1 && f.params.len() == 2 && (of_prelude(f.pos) || of_std(f.pos)))
         .then_some((kind, op))
 }

@@ -2115,7 +2115,8 @@ const STD_NAMES: &[(&str, &[&str])] = &[
         &[
             "checked_add", "checked_mul", "checked_sub", "clamp", "narrow",
             "saturating_add", "saturating_mul", "saturating_sub",
-            "wrapping_add", "wrapping_mul", "wrapping_narrow", "wrapping_sub",
+            "wrapping_add", "wrapping_mul", "wrapping_narrow", "wrapping_shift_left",
+            "wrapping_sub",
         ],
     ),
     ("std.list", &["copy", "freeze", "push"]),

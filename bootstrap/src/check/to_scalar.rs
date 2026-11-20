@@ -1052,6 +1052,10 @@ impl<'a> Lowering<'a> {
                     )
                 }
             },
+            Expr::Call(call) if self.bits_function(call).is_some() => {
+                let op = self.bits_function(call).expect("a function of `Bits`");
+                self.bits_call(out, expr, call, op, env)
+            }
             Expr::Call(call) if self.compares_scalars(call, "eq", env) => {
                 self.equal_scalars(out, call, env)
             }
