@@ -755,7 +755,7 @@ fn a_function_of_a_module_is_inlined_and_folded_as_one_of_the_file_is() {
     );
     let own = built_with(&numbers::with_header(format!("{}\n{main}", ascii.replace("pub ", ""))), &[]);
     let build = |p: &smith::scalar::Program| {
-        smith::scalar::remove(smith::scalar::common(&smith::scalar::fold(&smith::scalar::inline(p.clone()))))
+        smith::scalar::remove(smith::scalar::common(smith::scalar::fold(smith::scalar::inline(p.clone()))))
     };
     assert_eq!(build(&imported), build(&own));
 }

@@ -27,16 +27,15 @@ use super::{Binary, Constant, End, Function, Instruction, Lane, Op, Place, Progr
 
 /// The program with every instruction whose inputs are all constants
 /// replaced by a constant, and every choice on a constant made.
-pub fn fold(program: &Program) -> Program {
+pub fn fold(program: Program) -> Program {
     Program {
-        data: program.data.clone(),
-        functions: program.functions.iter().map(folded).collect(),
+        data: program.data,
+        functions: program.functions.into_iter().map(folded).collect(),
         main: program.main,
     }
 }
 
-fn folded(f: &Function) -> Function {
-    let mut f = f.clone();
+fn folded(mut f: Function) -> Function {
     // A value that a parameter only copies is the value it copies.
     let copy = graph::copies(&f);
     graph::rename(&mut f, &|v| copy[v.0]);

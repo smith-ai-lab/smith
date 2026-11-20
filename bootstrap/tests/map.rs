@@ -434,9 +434,9 @@ fn no_pass_makes_a_place_the_program_did_not_have() {
         ("inline", |p| scalar::inline(p.clone())),
         ("trim", |p| scalar::trim(p.clone())),
         ("thread", |p| scalar::thread(p.clone())),
-        ("fold", scalar::fold),
+        ("fold", |p| scalar::fold(p.clone())),
         ("fuse", scalar::fuse),
-        ("common", scalar::common),
+        ("common", |p| scalar::common(p.clone())),
         ("remove", |p| scalar::remove(p.clone())),
         ("passes", scalar::passes),
     ];
@@ -482,7 +482,7 @@ fn an_instruction_a_pass_makes_in_place_of_others_holds_the_place_of_the_first()
     let mut main = Builder::new();
     main.ret(vec![]);
     let program = Program { data: Vec::new(), functions: vec![f, main.finish(&[])], main: 1 };
-    let folded = scalar::fold(&program);
+    let folded = scalar::fold(program.clone());
     let sum_at = places(&folded).into_iter().rev().find(|(op, _)| op.starts_with("Constant(Int(3"));
     assert_eq!(sum_at.map(|(_, line)| line), Some(7));
     // A product and the sum that uses it are one fused instruction, which is
