@@ -53,7 +53,7 @@ smith run hello.smith
 
 ## Check
 
-`smith check` checks a program and writes no code. It reports the errors, and when there are none it reports warnings, such as dead code, unused variables, and unused imports, and it fails if there are any.
+`smith check` checks a program and writes no code. It reports the errors, and when there are none it reports warnings, such as dead code, unused variables, unused imports, and [an effect a function lists and does not need](effects.md#an-effect-that-is-listed-and-not-needed), and it fails if there are any.
 
 ```
 use std.bits (i32)
