@@ -393,7 +393,8 @@ fn frame(g: &mut Gen) -> F {
 
 /// The start of every program that reads frames: how a frame is printed.
 const FRAMES: &str = "use std.console (console, print)
-use std.http2 (Continuation, Data, Dependency, Frame, GoAway, Headers, Ping, Promise, Read, Reset, Window, frame, write_frame)
+use std.http1 (Read)
+use std.http2 (Continuation, Data, Dependency, Frame, GoAway, Headers, Ping, Promise, Reset, Window, frame, write_frame)
 use std.int (wrapping_add)
 use std.list (freeze)
 
