@@ -154,7 +154,7 @@ pub fn rounds(f: &Function, takes: &dyn Fn(&Instruction) -> bool) -> Rounds {
         if !reached[b] {
             continue;
         }
-        for (j, jump) in jumps(&block.end).into_iter().enumerate() {
+        for (j, jump) in jumps(&block.end).iter().enumerate() {
             if reached[jump.block] && dominates(jump.block, b) {
                 back.push((b, j, jump.block));
                 if !headers.contains(&jump.block) {

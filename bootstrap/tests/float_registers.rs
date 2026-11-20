@@ -81,12 +81,12 @@ fn live_in(f: &Function) -> Vec<HashSet<usize>> {
                 );
             }
             let block = &f.blocks[b];
-            now.extend(block.end.operands().iter().map(|v| v.0));
+            now.extend(block.end.operands().map(|v| v.0));
             for i in block.instructions.iter().rev() {
                 for r in &i.results {
                     now.remove(&r.0);
                 }
-                now.extend(i.op.operands().iter().map(|v| v.0));
+                now.extend(i.op.operands().map(|v| v.0));
             }
             for p in &block.params {
                 now.remove(&p.0);
@@ -150,7 +150,7 @@ pub fn check(f: &Function, floats: Registers) {
                     .filter(|v| !target.params.contains(&Value(**v))),
             );
         }
-        alive.extend(block.end.operands().iter().map(|v| v.0));
+        alive.extend(block.end.operands().map(|v| v.0));
         together(&alive);
         for i in block.instructions.iter().rev() {
             let mut at: HashSet<usize> = alive.clone();
@@ -174,7 +174,7 @@ pub fn check(f: &Function, floats: Registers) {
             for r in &i.results {
                 alive.remove(&r.0);
             }
-            alive.extend(i.op.operands().iter().map(|v| v.0));
+            alive.extend(i.op.operands().map(|v| v.0));
         }
         let mut start = alive;
         start.extend(block.params.iter().map(|p| p.0));

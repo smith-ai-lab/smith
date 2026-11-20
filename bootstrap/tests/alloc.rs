@@ -331,7 +331,7 @@ fn has_a_loop(f: &Function) -> bool {
     }
     (0..n).filter(|b| reached[*b]).any(|start| {
         let mut seen = vec![false; n];
-        let mut stack = f.blocks[start].end.successors();
+        let mut stack = f.blocks[start].end.successors().collect::<Vec<_>>();
         while let Some(b) = stack.pop() {
             if b == start {
                 return true;

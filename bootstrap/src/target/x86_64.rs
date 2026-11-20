@@ -1335,7 +1335,7 @@ fn held(f: &Function, constants: &[Option<u64>]) -> Vec<bool> {
     for block in &f.blocks {
         for i in &block.instructions {
             let embedded = immediate(f, constants, &i.op).is_some();
-            for (k, v) in i.op.operands().into_iter().enumerate() {
+            for (k, v) in i.op.operands().enumerate() {
                 needs_a_home[v.0] |= !match &i.op {
                     Op::Binary { .. } | Op::Compare { .. } => embedded && k == 1,
                     Op::Store { .. } => k == 1,

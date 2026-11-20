@@ -553,20 +553,40 @@ pub enum Op {
     },
 }
 
-impl Op {
-    /// The values the instruction reads, in order.
-    pub fn operands(&self) -> Vec<Value> {
-        let mut values = Vec::new();
-        self.operands_into(&mut values);
-        values
-    }
+/// The values an instruction reads: up to three held in it, or the arguments
+/// of a call, in order.
+pub struct Operands<'a> {
+    fixed: [Value; 3],
+    at: usize,
+    len: usize,
+    args: std::slice::Iter<'a, Value>,
+}
 
-    /// Puts the values the instruction reads, in order, in `values`, which it
-    /// empties first.
-    pub fn operands_into(&self, values: &mut Vec<Value>) {
-        values.clear();
+impl Iterator for Operands<'_> {
+    type Item = Value;
+
+    fn next(&mut self) -> Option<Value> {
+        if self.at < self.len {
+            self.at += 1;
+            Some(self.fixed[self.at - 1])
+        } else {
+            self.args.next().copied()
+        }
+    }
+}
+
+impl Op {
+    /// The values the instruction reads, in order, which it gives without
+    /// asking for memory.
+    pub fn operands(&self) -> Operands<'_> {
+        let some = |fixed: [Value; 3], len: usize| Operands {
+            fixed,
+            at: 0,
+            len,
+            args: [].iter(),
+        };
         match self {
-            Op::Constant(_) => {}
+            Op::Constant(_) => some([Value(0); 3], 0),
             Op::Binary { a, b, .. }
             | Op::Compare { a, b, .. }
             | Op::Overflows { a, b, .. }
@@ -575,9 +595,9 @@ impl Op {
             | Op::VectorBinary { a, b, .. }
             | Op::VectorFloatBinary { a, b, .. }
             | Op::VectorCompare { a, b, .. }
-            | Op::VectorFloatCompare { a, b, .. } => values.extend([*a, *b]),
+            | Op::VectorFloatCompare { a, b, .. } => some([*a, *b, *a], 2),
             Op::FloatFused { a, b, c, .. } | Op::VectorFloatFused { a, b, c, .. } => {
-                values.extend([*a, *b, *c])
+                some([*a, *b, *c], 3)
             }
             Op::Widen { value, .. }
             | Op::Narrow(value)
@@ -588,7 +608,7 @@ impl Op {
             | Op::FloatNegate(value)
             | Op::FloatFromInt { value, .. }
             | Op::IntFromFloat { value, .. }
-            | Op::FloatResize(value) => values.push(*value),
+            | Op::FloatResize(value) => some([*value; 3], 1),
             Op::Choose {
                 on,
                 then,
@@ -598,12 +618,24 @@ impl Op {
                 mask: on,
                 then,
                 otherwise,
-            } => values.extend([*on, *then, *otherwise]),
-            Op::VectorInsert { vector, value, .. } => values.extend([*vector, *value]),
-            Op::Load { address, .. } => values.push(*address),
-            Op::Store { address, value, .. } => values.extend([*address, *value]),
-            Op::Call { args, .. } | Op::System { args, .. } => values.extend(args),
+            } => some([*on, *then, *otherwise], 3),
+            Op::VectorInsert { vector, value, .. } => some([*vector, *value, *vector], 2),
+            Op::Load { address, .. } => some([*address; 3], 1),
+            Op::Store { address, value, .. } => some([*address, *value, *address], 2),
+            Op::Call { args, .. } | Op::System { args, .. } => Operands {
+                fixed: [Value(0); 3],
+                at: 0,
+                len: 0,
+                args: args.iter(),
+            },
         }
+    }
+
+    /// Puts the values the instruction reads, in order, in `values`, which it
+    /// empties first.
+    pub fn operands_into(&self, values: &mut Vec<Value>) {
+        values.clear();
+        values.extend(self.operands());
     }
 
     /// Whether the instruction runs a function or asks the system for
@@ -726,34 +758,47 @@ pub enum End {
 }
 
 impl End {
-    /// The values the end reads, in order.
-    pub fn operands(&self) -> Vec<Value> {
-        let mut values = Vec::new();
-        self.operands_into(&mut values);
-        values
+    /// The values the end reads, in order, which it gives without asking for
+    /// memory.
+    pub fn operands(&self) -> impl Iterator<Item = Value> + '_ {
+        let (on, returned): (Option<Value>, &[Value]) = match self {
+            End::Switch { on, .. } => (Some(*on), &[]),
+            End::Return(values) => (None, values),
+            End::Jump(_) => (None, &[]),
+        };
+        on.into_iter()
+            .chain(self.jumps().iter().flat_map(|j| j.args.iter().copied()))
+            .chain(returned.iter().copied())
     }
 
     /// Puts the values the end reads, in order, in `values`, which it empties
     /// first.
     pub fn operands_into(&self, values: &mut Vec<Value>) {
         values.clear();
+        values.extend(self.operands());
+    }
+
+    /// The jumps the end makes, in order.
+    pub fn jumps(&self) -> &[Jump] {
         match self {
-            End::Jump(jump) => values.extend(&jump.args),
-            End::Switch { on, jumps } => {
-                values.push(*on);
-                values.extend(jumps.iter().flat_map(|j| j.args.iter().copied()));
-            }
-            End::Return(returned) => values.extend(returned),
+            End::Jump(jump) => std::slice::from_ref(jump),
+            End::Switch { jumps, .. } => jumps,
+            End::Return(_) => &[],
+        }
+    }
+
+    /// The jumps the end makes, in order, to change.
+    pub fn jumps_mut(&mut self) -> &mut [Jump] {
+        match self {
+            End::Jump(jump) => std::slice::from_mut(jump),
+            End::Switch { jumps, .. } => jumps,
+            End::Return(_) => &mut [],
         }
     }
 
     /// The blocks the end may go to, in order.
-    pub fn successors(&self) -> Vec<usize> {
-        match self {
-            End::Jump(jump) => vec![jump.block],
-            End::Switch { jumps, .. } => jumps.iter().map(|j| j.block).collect(),
-            End::Return(_) => Vec::new(),
-        }
+    pub fn successors(&self) -> impl Iterator<Item = usize> + '_ {
+        self.jumps().iter().map(|j| j.block)
     }
 }
 

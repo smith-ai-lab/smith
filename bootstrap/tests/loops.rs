@@ -605,7 +605,7 @@ fn a_loop_over_a_range_is_one_counter_and_one_comparison_each_time_round() {
             .functions
             .iter()
             .flat_map(|f| f.blocks.iter().enumerate()))
-        .any(|(at, block)| block.end.successors().iter().any(|&to| to <= at));
+        .any(|(at, block)| block.end.successors().any(|to| to <= at));
         assert!(loops, "no loop in {source}");
     }
 }
