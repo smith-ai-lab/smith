@@ -834,28 +834,33 @@ impl<'a> Defs<'a> {
 
     /// The struct the name written at `pos` is, as `function` finds a function.
     fn struct_at(&self, pos: Pos, name: &str) -> Option<usize> {
-        self.by_scope(&self.struct_names, pos, name)
+        self.by_scope(&self.struct_names, pos, name).copied()
     }
 
     /// The enum the name written at `pos` is.
     fn enum_at(&self, pos: Pos, name: &str) -> Option<usize> {
-        self.by_scope(&self.enum_names, pos, name)
+        self.by_scope(&self.enum_names, pos, name).copied()
     }
 
     /// The trait the name written at `pos` is.
     fn trait_at(&self, pos: Pos, name: &str) -> Option<usize> {
-        self.by_scope(&self.trait_names, pos, name)
+        self.by_scope(&self.trait_names, pos, name).copied()
+    }
+
+    /// The functions of traits that the name written at `pos` is.
+    fn trait_fns_at(&self, pos: Pos, name: &str) -> Option<&Vec<(usize, usize)>> {
+        self.by_scope(&self.trait_fns, pos, name)
     }
 
     /// The item of `table` that the name written at `pos` is, which in a
     /// debug build is asked of the module that wrote it too.
-    fn by_scope(&self, table: &Map<&'a str, usize>, pos: Pos, name: &str) -> Option<usize> {
-        let found = table.get(name).copied();
+    fn by_scope<'t, V>(&self, table: &'t Map<&'a str, V>, pos: Pos, name: &str) -> Option<&'t V> {
+        let found = table.get(name);
         if cfg!(debug_assertions) {
             let key = self.resolution.key(pos, name, &|n| table.contains_key(n));
             assert_eq!(
-                found,
-                table.get(key.as_str()).copied(),
+                found.map(std::ptr::from_ref),
+                table.get(key.as_str()).map(std::ptr::from_ref),
                 "`{name}` at {pos:?}, key `{key}`, written `{}`",
                 self.resolution.written_at(pos, name)
             );
@@ -1007,7 +1012,7 @@ impl<'a> Defs<'a> {
                 element => Ty::list(element),
             };
         }
-        if name == "Slice" && !self.struct_names.contains_key(name) {
+        if name == "Slice" && self.struct_at(t.pos, name).is_none() {
             if t.args.len() != 1 {
                 errors.push(Error::new(
                     t.pos,
@@ -1038,7 +1043,7 @@ impl<'a> Defs<'a> {
                 (_, None) => Ty::Text,
             };
         }
-        errors.push(if self.trait_names.contains_key(name) {
+        errors.push(if self.trait_at(t.pos, name).is_some() {
             Error::new(t.pos, format!("`{name}` is a trait, which is not a type"))
         } else if TYPES_NOT_BUILT.contains(&name) {
             Error::unsupported(t.pos, &format!("the type `{name}`"))
@@ -1174,13 +1179,13 @@ impl<'a> Defs<'a> {
     /// The enum and its case, if the expression names a case in full, as
     /// in `Pet.none`, where `names` are the names defined.
     fn qualified_case(&self, of: &Expr, names: &[(String, Ty)]) -> Option<usize> {
-        let Expr::Name { name, .. } = of else {
+        let Expr::Name { name, pos } = of else {
             return None;
         };
         if names.iter().any(|(n, _)| n == name) {
             return None;
         }
-        self.enum_names.get(name.as_str()).copied()
+        self.enum_at(*pos, name)
     }
 
     /// A function's signature among the type parameters of `scope`.
@@ -4980,9 +4985,11 @@ impl<'a> Defs<'a> {
                     (fields, false)
                 } else if self.provided_by_name(name).is_some() || is_stream_call(call) {
                     return Vec::new();
-                } else if let Some(&f) = self.function_names.get(name) {
+                } else if let Some(f) = self.function(call.name_pos, name) {
                     (params(&file.functions[f]), true)
-                } else if let Some([(k, fi)]) = self.trait_fns.get(name).map(Vec::as_slice) {
+                } else if let Some([(k, fi)]) =
+                    self.trait_fns_at(call.name_pos, name).map(Vec::as_slice)
+                {
                     (params(&file.traits[*k].functions[*fi]), true)
                 } else {
                     return Vec::new();
@@ -5227,7 +5234,7 @@ impl<'a> Typed<'a> {
                 if let Some(effect) = defs.effect_named(name) {
                     return Callee::Handle(effect);
                 }
-                defs.trait_fns[name][0]
+                defs.trait_fns_at(call.name_pos, name).expect("checked")[0]
             }
             Some((q, at)) => {
                 if let Some(e) = defs.enum_at(*at, q) {

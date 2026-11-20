@@ -217,8 +217,8 @@ pub(super) fn withouts(defs: &Defs, errors: &mut Vec<Error>) -> Vec<(usize, Def)
     let mut out = Vec::new();
     for w in &defs.file.withouts {
         let name = w.name.as_str();
-        let k = match defs.trait_names.get(name) {
-            Some(&k)
+        let k = match defs.trait_at(w.name_pos, name) {
+            Some(k)
                 if [
                     defs.fmt,
                     defs.repr,
@@ -259,9 +259,9 @@ pub(super) fn withouts(defs: &Defs, errors: &mut Vec<Error>) -> Vec<(usize, Def)
             }
         };
         let ty = w.ty.as_str();
-        let d = if let Some(&s) = defs.struct_names.get(ty) {
+        let d = if let Some(s) = defs.struct_at(w.ty_pos, ty) {
             Def::Struct(s)
-        } else if let Some(&e) = defs.enum_names.get(ty) {
+        } else if let Some(e) = defs.enum_at(w.ty_pos, ty) {
             Def::Enum(e)
         } else {
             errors.push(if TYPES_NOT_BUILT.contains(&ty) {
@@ -273,7 +273,7 @@ pub(super) fn withouts(defs: &Defs, errors: &mut Vec<Error>) -> Vec<(usize, Def)
                         "`without` takes a trait from a struct or an enum, and `{ty}` is neither"
                     ),
                 )
-            } else if defs.trait_names.contains_key(ty) {
+            } else if defs.trait_at(w.ty_pos, ty).is_some() {
                 Error::new(w.ty_pos, format!("`{ty}` is a trait, which is not a type"))
             } else {
                 Error::new(w.ty_pos, format!("there is no type named `{ty}`"))
@@ -312,7 +312,7 @@ pub(super) fn withouts(defs: &Defs, errors: &mut Vec<Error>) -> Vec<(usize, Def)
 /// What is known of an implementation before it is checked, if its trait
 /// and its types are known.
 pub(super) fn impl_info(defs: &Defs, im: &crate::parser::Impl) -> Option<ImplInfo> {
-    let &of = defs.trait_names.get(im.name.as_str())?;
+    let of = defs.trait_at(im.pos, im.name.as_str())?;
     let t = &defs.file.traits[of];
     let needed = t.generics.iter().filter(|g| g.default.is_none()).count();
     if im.args.len() < needed || im.args.len() > t.generics.len() {
@@ -463,7 +463,7 @@ impl<'a> Defs<'a> {
             } else {
                 Bound::Discard
             };
-        } else if let Some(&k) = self.trait_names.get(name) {
+        } else if let Some(k) = self.trait_at(t.pos, name) {
             return Bound::Trait(k);
         } else if name == "Nat" {
             Error::unsupported(t.pos, "a size parameter")
@@ -580,7 +580,7 @@ impl<'a> Defs<'a> {
                     errors.push(Error::unsupported(e.pos(), "a `requires` of this form"));
                     return None;
                 };
-                let Some(&of) = self.trait_names.get(name.as_str()) else {
+                let Some(of) = self.trait_at(*pos, name) else {
                     errors.push(if TRAITS_NOT_BUILT.contains(&name.as_str()) {
                         Error::unsupported(*pos, &format!("the trait `{name}`"))
                     } else if self.is_type(name) {
@@ -1147,7 +1147,7 @@ impl<'a> Checker<'a> {
         let defs = self.defs;
         let im = &defs.file.impls[i];
         let name = im.name.as_str();
-        let Some(&k) = defs.trait_names.get(name) else {
+        let Some(k) = defs.trait_at(im.pos, name) else {
             self.errors.push(if TRAITS_NOT_BUILT.contains(&name) {
                 Error::unsupported(im.pos, &format!("implementing `{name}`"))
             } else if defs.is_type(name) {

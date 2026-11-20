@@ -1036,8 +1036,8 @@ impl<'a> Walk<'a> {
         // What each parameter is: marked `take`, and for a function, what
         // marks its own parameters.
         let params: Option<&[Param]> = match &call.qualifier {
-            Some((q, _)) if defs.enum_names.contains_key(q.as_str()) => None,
-            Some((q, _)) => (defs.trait_names.get(q.as_str())).and_then(|&k| {
+            Some((q, at)) if defs.enum_at(*at, q).is_some() => None,
+            Some((q, at)) => defs.trait_at(*at, q).and_then(|k| {
                 let t = &defs.file.traits[k];
                 traits::trait_function(t, name).map(|fi| t.functions[fi].params.as_slice())
             }),
@@ -1049,10 +1049,10 @@ impl<'a> Walk<'a> {
             {
                 None
             }
-            None if defs.struct_names.contains_key(name) => None,
-            None => match defs.function_names.get(name) {
-                Some(&f) => Some(defs.file.functions[f].params.as_slice()),
-                None => match defs.trait_fns.get(name).map(Vec::as_slice) {
+            None if defs.struct_at(call.name_pos, name).is_some() => None,
+            None => match defs.function(call.name_pos, name) {
+                Some(f) => Some(defs.file.functions[f].params.as_slice()),
+                None => match defs.trait_fns_at(call.name_pos, name).map(Vec::as_slice) {
                     Some([(k, fi), ..]) => {
                         Some(defs.file.traits[*k].functions[*fi].params.as_slice())
                     }
@@ -1068,10 +1068,10 @@ impl<'a> Walk<'a> {
         let constructs = call
             .qualifier
             .as_ref()
-            .is_some_and(|(q, _)| defs.enum_names.contains_key(q.as_str()))
+            .is_some_and(|(q, at)| defs.enum_at(*at, q).is_some())
             || (call.qualifier.is_none()
                 && value_fn.is_none()
-                && defs.struct_names.contains_key(name));
+                && defs.struct_at(call.name_pos, name).is_some());
         if let Some(f) = value_fn.filter(|f| f.take) {
             self.spend(st, &f.name, call.pos);
         }
@@ -1182,12 +1182,12 @@ impl<'a> Walk<'a> {
         let defs = self.defs;
         let name = call.callee.as_str();
         let of_trait = match &call.qualifier {
-            Some((q, _)) => (defs.trait_names.get(q.as_str())).and_then(|&k| {
+            Some((q, at)) => defs.trait_at(*at, q).and_then(|k| {
                 let at = traits::trait_function(&defs.file.traits[k], name);
                 at.map(|fi| (k, fi))
             }),
-            None if defs.function_names.contains_key(name) => None,
-            None => match defs.trait_fns.get(name).map(Vec::as_slice) {
+            None if defs.function(call.name_pos, name).is_some() => None,
+            None => match defs.trait_fns_at(call.name_pos, name).map(Vec::as_slice) {
                 Some([(k, fi), ..]) => Some((*k, *fi)),
                 _ => None,
             },
@@ -1246,7 +1246,7 @@ impl<'a> Walk<'a> {
                 }
                 _ => return,
             }
-        } else if let Some(&f) = defs.function_names.get(name) {
+        } else if let Some(f) = defs.function(call.name_pos, name) {
             let sig = &defs.signatures[f];
             let sol = solve(&sig.params, &sig.gives, sig.scope.names.len());
             (&sig.scope, sol, format!("`{name}`"))
