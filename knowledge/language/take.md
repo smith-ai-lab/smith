@@ -86,9 +86,16 @@ This is refused at the lambda: "this lambda gives away `acc`, and the function i
 A lambda that gives away a `var` and assigns it again before it ends has given nothing away. The name holds a value when the lambda returns, as it did when the lambda began, so the function may be called any number of times.
 
 ```
-fn gather(parts: List[str]) -> str ! alloc {
+use std.text (text, append, finish)
+
+fn both(f: fn(str)) {
+  f("a")
+  f("b")
+}
+
+fn gather() -> str ! alloc {
   var page = text()
-  each(parts) fn(part) { page = append(page, part) }
+  both() fn(part) { page = append(page, part) }
   finish(page)
 }
 ```
