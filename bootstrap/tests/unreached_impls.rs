@@ -89,7 +89,7 @@ fn stages(source: &str) -> (Vec<(&'static str, Allocated)>, Compared) {
     let after = compared();
     let program: Program = program.expect("the source builds");
     let (program, inline) = allocated(|| scalar::inline(&program));
-    let (program, trim) = allocated(|| scalar::trim(&program));
+    let (program, trim) = allocated(|| scalar::trim(program));
     let (program, fold) = allocated(|| scalar::fold(&program));
     let (program, common) = allocated(|| scalar::common(&program));
     let (program, remove) = allocated(|| scalar::remove(program));

@@ -1582,8 +1582,8 @@ fn inlining_replaces_a_call_of_a_function_that_holds_a_call_only_up_to_the_bound
 /// the one before it gave.
 fn after_each_pass(p: &scalar::Program) -> [scalar::Program; 6] {
     let inlined = scalar::inline(p);
-    let trimmed = scalar::trim(&inlined);
-    let threaded = scalar::thread(&trimmed);
+    let trimmed = scalar::trim(inlined.clone());
+    let threaded = scalar::thread(trimmed.clone());
     let folded = scalar::fold(&threaded);
     let shared = scalar::common(&folded);
     let removed = scalar::remove(shared.clone());
@@ -1771,8 +1771,8 @@ fn the_passes_give_the_same_program_every_time_and_never_a_larger_one() {
     let size = |p: &scalar::Program| -> usize { p.functions.iter().map(scalar::size).sum() };
     for (_, s) in taken() {
         let [inlined, trimmed, threaded, folded, shared, removed] = after_each_pass(s);
-        assert_eq!(trimmed, scalar::trim(&inlined));
-        assert_eq!(threaded, scalar::thread(&trimmed));
+        assert_eq!(trimmed, scalar::trim(inlined.clone()));
+        assert_eq!(threaded, scalar::thread(trimmed.clone()));
         assert_eq!(folded, scalar::fold(&threaded));
         assert_eq!(shared, scalar::common(&folded));
         assert_eq!(removed, scalar::remove(shared.clone()));

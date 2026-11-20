@@ -432,8 +432,8 @@ fn no_pass_makes_a_place_the_program_did_not_have() {
     type Pass = fn(&Program) -> Program;
     let passes: [(&str, Pass); 8] = [
         ("inline", scalar::inline),
-        ("trim", scalar::trim),
-        ("thread", scalar::thread),
+        ("trim", |p| scalar::trim(p.clone())),
+        ("thread", |p| scalar::thread(p.clone())),
         ("fold", scalar::fold),
         ("fuse", scalar::fuse),
         ("common", scalar::common),
