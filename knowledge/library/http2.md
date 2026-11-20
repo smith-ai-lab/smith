@@ -5,7 +5,6 @@ description: std.http2, which reads and writes the frames of HTTP/2 and the comp
 status: partial
 built:
   - "`frame` and `write_frame`, which read and write every frame of RFC 9113, with the refusals below, and `decoder`, `decode`, `encoder`, and `encode`, which read and write the headers of RFC 7541 with its static table, its dynamic table, and its short code, written in Smith in `std/http2.smith`"
-  - "`Read`, which is `std.http1`'s and is in `std.http2` until `std.http1` is written"
 ---
 
 # HTTP/2 frames and headers

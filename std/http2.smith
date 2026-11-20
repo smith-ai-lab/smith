@@ -1,15 +1,8 @@
 use std.bits (bit_and, bit_or, shift_left, shift_right, u32, u64)
+use std.http1 (Read)
 use std.int (saturating_sub, wrapping_add, wrapping_mul, wrapping_narrow, wrapping_sub)
 use std.list (freeze, push)
 use std.utf8 (utf8)
-
-// What a reader of bytes gives. It is here until `std.http1`, whose page
-// describes it, is written.
-pub enum Read[T] {
-  complete: (T, Nat)
-  incomplete
-  refused: str
-}
 
 // The frames.
 
