@@ -777,6 +777,8 @@ struct Defs<'a> {
     hash: usize,
     convert: usize,
     bits: usize,
+    /// The prelude's `Function`, which every function with a name is given.
+    function: usize,
     /// The standard library's `Serialize` and `Writer`, which `std.serialize`
     /// defines, and its `Deserialize` and `Reader`, which `std.deserialize`
     /// defines, by their places in the file's traits, when the program has
@@ -2088,6 +2090,7 @@ fn check_file(
         hash: prelude_item(&file, Kind::Trait, "Hash"),
         convert: prelude_item(&file, Kind::Trait, "Convert"),
         bits: prelude_item(&file, Kind::Trait, "Bits"),
+        function: prelude_item(&file, Kind::Trait, "Function"),
         serialize: library_item(&file, &items, "std.serialize", Kind::Trait, "Serialize"),
         writer: library_item(&file, &items, "std.serialize", Kind::Trait, "Writer"),
         deserialize: library_item(&file, &items, "std.deserialize", Kind::Trait, "Deserialize"),
@@ -2573,7 +2576,16 @@ fn reach(file: &File, names: &Names, roots: &[Item], contracts: bool) -> Reached
             );
         };
         match queue[i] {
-            Item::Fn(f) => function(&file.functions[f], &mut found),
+            Item::Fn(f) => {
+                function(&file.functions[f], &mut found);
+                // The struct of its arguments is reached with a function
+                // that has one, which `Function` is given to.
+                if let Some((_, made)) =
+                    (file.args.iter()).find(|(function, _)| *function == file.functions[f].name)
+                {
+                    built(made, &mut found);
+                }
+            }
             Item::Struct(si) => {
                 let s = &file.structs[si];
                 for field in &s.fields {
@@ -4822,7 +4834,9 @@ fn warnings(file: &File, reached: &[Item]) -> Vec<Error> {
     {
         dead(Item::Fn(i), f.pos, &|| format!("the function `{}`", f.name));
     }
-    for (i, s) in file.structs.iter().enumerate() {
+    // The struct of the arguments of a function is made for `Function`, and is
+    // not written, so it is nothing for the program to delete.
+    for (i, s) in (file.structs.iter().enumerate()).filter(|(_, s)| !s.name.contains('.')) {
         dead(Item::Struct(i), s.pos, &|| {
             format!("the struct `{}`", s.name)
         });
@@ -5254,8 +5268,9 @@ enum Template {
     Free(usize),
     Impl(usize, usize),
     /// The implementation of a trait a type is given automatically, by the
-    /// trait's place. Its copy's one type is the type.
-    Given(usize),
+    /// trait's place, and the place of the function of the trait it is. Its
+    /// copy's one type is the type.
+    Given(usize, usize),
 }
 
 /// A copy of a function, for a choice of its type parameters.
@@ -5437,7 +5452,7 @@ impl<'a> Defs<'a> {
     /// parameters, which those of a copy of it replace.
     fn params(&self, t: Template) -> Vec<(String, Ty)> {
         match t {
-            Template::Given(k) => self.trait_sigs[k][0].params.clone(),
+            Template::Given(k, fi) => self.trait_sigs[k][fi].params.clone(),
             t => self.view(t).params,
         }
     }
@@ -5445,7 +5460,7 @@ impl<'a> Defs<'a> {
     fn view(&self, t: Template) -> View<'_> {
         let file = self.file;
         match t {
-            Template::Given(_) => unreachable!("a given implementation has no body"),
+            Template::Given(..) => unreachable!("a given implementation has no body"),
             Template::Free(f) => {
                 let sig = &self.signatures[f];
                 let def = &file.functions[f];
@@ -5621,6 +5636,18 @@ impl<'a> Typed<'a> {
                     let sig = &defs.signatures[f];
                     let args = solve(&sig.params, sig.scope.names.len());
                     let args = defaulted(args, sig.param_defaults.clone());
+                    // What only a requirement names is what its implementation
+                    // says.
+                    let args = if sig.scope.requires.is_empty() {
+                        args
+                    } else {
+                        let mut some: Vec<Option<Ty>> = args
+                            .into_iter()
+                            .map(|t| (t != Ty::Unknown).then_some(t))
+                            .collect();
+                        defs.complete_outs(&sig.scope.requires, &mut some, &Scope::default());
+                        some.into_iter().map(|t| t.unwrap_or(Ty::Unknown)).collect()
+                    };
                     let gives = sig.gives.subst(&args);
                     let template = Template::Free(f);
                     return Callee::Run(Instance { template, args }, gives);
@@ -5664,7 +5691,7 @@ impl<'a> Typed<'a> {
     fn env_of(&self, callee: &Callee) -> Vec<Ty> {
         match callee {
             Callee::Run(instance, _) => match instance.template {
-                Template::Free(_) | Template::Given(_) => instance.args.clone(),
+                Template::Free(_) | Template::Given(..) => instance.args.clone(),
                 Template::Impl(i, _) => {
                     let info = self.defs.impls[i].as_ref().expect("known");
                     info.args.iter().map(|t| t.subst(&instance.args)).collect()
@@ -5725,8 +5752,8 @@ impl<'a> Typed<'a> {
     /// A given implementation has no body, so its calls are at `at`, where
     /// it is run.
     fn calls_of(&self, instance: &Instance, at: Pos) -> (Vec<(Pos, Instance)>, Vec<Pos>) {
-        if let Template::Given(k) = instance.template {
-            let calls = self.defs.given_calls(k, &instance.args);
+        if let Template::Given(k, fi) = instance.template {
+            let calls = self.defs.given_calls(k, fi, &instance.args);
             return (calls.into_iter().map(|c| (at, c)).collect(), Vec::new());
         }
         let view = self.defs.view(instance.template);
@@ -5783,7 +5810,7 @@ impl<'a> Typed<'a> {
         for (pos, callee) in calls {
             let size = |i: &Instance| i.args.iter().map(Ty::size).sum::<usize>();
             let grows = |p: &Instance| {
-                !matches!(callee.template, Template::Given(_)) && size(&callee) > size(p)
+                !matches!(callee.template, Template::Given(..)) && size(&callee) > size(p)
             };
             let endless = (path.get(&callee.template).into_iter().flatten())
                 .any(|p| *p == callee || grows(p));

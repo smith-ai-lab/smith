@@ -123,11 +123,11 @@ impl<'a> Lowering<'a> {
         context: &[(HandlerId, Rc<HandlerDef<'a>>)],
     ) -> form::Function {
         let defs = self.typed.defs;
-        if let Template::Given(k) = instance.template {
-            let name = self.given_name(k);
+        if let Template::Given(k, fi) = instance.template {
+            let name = self.given_name(k, fi);
             let ty = defs.text(&instance.args[0], &Scope::default());
             return self
-                .given(k, &instance.args)
+                .given(k, fi, &instance.args)
                 .named(spaceless(format!("<{name}[{ty}]>")));
         }
         let view = defs.view(instance.template);
@@ -236,7 +236,7 @@ impl<'a> Lowering<'a> {
                     .collect();
                 (f.pos, &f.name, types)
             }
-            Template::Given(_) => unreachable!("a given implementation is named by its kind"),
+            Template::Given(..) => unreachable!("a given implementation is named by its kind"),
         };
         let module = if of_prelude(pos) {
             "prelude"

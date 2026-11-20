@@ -27,8 +27,11 @@ impl<'a> Lowering<'a> {
     /// and `Eq` says whether two values are the same case with equal parts,
     /// by each part's own `Eq`. `Ord` orders by the first part where two
     /// values differ, as `ordered` says.
-    pub(super) fn given(&mut self, k: usize, given: &[Ty]) -> form::Function {
+    pub(super) fn given(&mut self, k: usize, fi: usize, given: &[Ty]) -> form::Function {
         let defs = self.typed.defs;
+        if k == defs.function {
+            return self.function_of(fi, &given[0]);
+        }
         if defs.serialize == Some(k) {
             return self.serialized(&given[0], &given[1]);
         }
@@ -61,6 +64,50 @@ impl<'a> Lowering<'a> {
             (vec![same], self.scalars(&defs.bool_ty()))
         };
         out.blocks[out.current].end = form::End::Return(result);
+        form::Function {
+            types: out.types,
+            results,
+            blocks: out.blocks,
+            cold: false,
+            name: String::new(),
+        }
+    }
+
+    /// The function `fi` of `Function` given to the type of the name of a
+    /// function: `name` and `about` give a constant text, and `call` calls the
+    /// function with the scalars of its arguments, which are those of the
+    /// struct that holds them, in the order of the parameters.
+    fn function_of(&mut self, fi: usize, ty: &Ty) -> form::Function {
+        let defs = self.typed.defs;
+        let Ty::Named(f) = ty else {
+            unreachable!("`Function` is given to the name of a function")
+        };
+        let mut out = Out::new();
+        let (values, results) = match fi {
+            0 | 1 => {
+                let text = if fi == 0 {
+                    written_name(&defs.file.functions[*f].name)
+                } else {
+                    defs.about_of(*f)
+                };
+                (
+                    self.text(&mut out, text.as_bytes()),
+                    self.scalars(&Ty::Text),
+                )
+            }
+            _ => {
+                let args = Ty::Struct(defs.args_of(*f).expect("made for it"), Vec::new());
+                let args = out.params(&self.scalars(&args));
+                let results = self.scalars(&defs.signatures[*f].gives);
+                let function = self.place(Body::Copy(Instance {
+                    template: Template::Free(*f),
+                    args: Vec::new(),
+                }));
+                let values = out.emit(form::Op::Call { function, args }, results.clone());
+                (values, results)
+            }
+        };
+        out.blocks[out.current].end = form::End::Return(values);
         form::Function {
             types: out.types,
             results,
