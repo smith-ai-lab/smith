@@ -1345,7 +1345,7 @@ fn file_with_check_errors(g: &mut Gen) -> (String, Vec<(Pos, String)>) {
                     expected.push((at, "`console` effect".to_string()));
                 }
             }
-            "main" => expected.push((at, "not supported yet".to_string())),
+            "main" => expected.push((at, "needs a `decreases`".to_string())),
             _ => expected.push((at, "no function named `prin`".to_string())),
         }
         source.push_str(")\n}\n");

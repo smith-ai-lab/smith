@@ -2,7 +2,10 @@
 type: specification
 title: Recursion
 description: A tail call compiles to a loop, any other recursion keeps its frames in the arena, and so recursion cannot overflow the stack.
-status: planned
+status: partial
+built:
+  - "a function whose every call of itself is a tail call, the last expression of its body or of a block of an `if` or a `match` that is itself in that place, or what a `return` gives, and which has a `decreases` that `arith` proves smaller at each call, is a loop with no frame for each call"
+  - "not a call of itself that is not a tail call, which keeps a frame, and not functions that call each other"
 ---
 
 # Recursion

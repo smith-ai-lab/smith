@@ -1,15 +1,16 @@
 //! `decreases` on a function, and what a function that calls itself is
 //! asked: it calls itself last, as the last expression of its body or of a
 //! block of an `if` or a `match` that is in that place, or as what a `return`
-//! gives, and it has a `decreases`. Whether the measure gets smaller at each
-//! call is for `arith` to prove, which is not built yet, so no function that
-//! calls itself compiles, and what is tested is what each is refused for. The
-//! refusals are of the kind that says it is not supported yet, as that is
-//! what they are until the proof is built.
+//! gives, and it has a `decreases` that `arith` proves is not below zero and
+//! smaller at each of the calls. Such a function is a loop in the scalar form.
+//! A call that is not the last thing a function does, and functions that call
+//! each other, are not supported yet.
 
+use smith::scalar::{self, Op, Outcome};
 use smith::{check, lower};
 
 use crate::Test;
+use crate::targets::{runnable, runs_as};
 
 pub const ONCE: &[Test] = &[
     (
@@ -29,14 +30,31 @@ pub const ONCE: &[Test] = &[
         a_function_has_one_decreases,
     ),
     (
-        "a_function_that_calls_itself_last_is_refused_and_the_error_says_what_it_lacks",
-        a_function_that_calls_itself_last_is_refused_and_the_error_says_what_it_lacks,
+        "a_function_that_calls_itself_last_needs_a_decreases",
+        a_function_that_calls_itself_last_needs_a_decreases,
+    ),
+    (
+        "a_function_whose_decreases_is_smaller_at_each_call_of_itself_is_a_loop_that_does_what_the_calls_did",
+        a_function_whose_decreases_is_smaller_at_each_call_of_itself_is_a_loop_that_does_what_the_calls_did,
+    ),
+    (
+        "a_call_of_itself_where_the_decreases_is_not_proven_smaller_is_refused_with_the_goal",
+        a_call_of_itself_where_the_decreases_is_not_proven_smaller_is_refused_with_the_goal,
+    ),
+    (
+        "a_decreases_of_two_parts_is_compared_as_words_in_a_dictionary_are",
+        a_decreases_of_two_parts_is_compared_as_words_in_a_dictionary_are,
     ),
     (
         "a_call_of_itself_that_is_not_the_last_thing_a_function_does_is_not_supported_yet",
         a_call_of_itself_that_is_not_the_last_thing_a_function_does_is_not_supported_yet,
     ),
 ];
+
+pub const MACHINE: &[Test] = &[(
+    "an_executable_of_a_function_that_calls_itself_fifty_million_times_prints_the_count_and_its_stack_does_not_grow",
+    an_executable_of_a_function_that_calls_itself_fifty_million_times_prints_the_count_and_its_stack_does_not_grow,
+)];
 
 /// The messages of the errors a program is refused with, or none if it
 /// compiles.
@@ -112,38 +130,144 @@ fn a_function_has_one_decreases() {
     );
 }
 
-fn a_function_that_calls_itself_last_is_refused_and_the_error_says_what_it_lacks() {
-    // The last expression, an arm of an `if`, an arm of a `match`, and what a
-    // `return` gives.
-    let bodies = [
+/// The four places a call of itself may be the last thing `count` does: the
+/// last expression, an arm of an `if`, an arm of a `match`, and what a
+/// `return` gives.
+fn bodies() -> [String; 4] {
+    [
         TAIL.to_string(),
         "if n == 0 { return acc }\n  count(n - 1, wrapping_add(acc, 1))".to_string(),
         "if n == 0 { acc } else { return count(n - 1, wrapping_add(acc, 1)) }".to_string(),
         "match n {\n    0 { acc }\n    _ { count(n - 1, wrapping_add(acc, 1)) }\n  }".to_string(),
-    ];
-    for body in &bodies {
+    ]
+}
+
+fn a_function_that_calls_itself_last_needs_a_decreases() {
+    for body in &bodies() {
         let source = counting("", body);
+        let errors = refused(&source);
+        assert!(
+            errors.iter().any(|e| e.contains("needs a `decreases`")),
+            "{errors:?} for {source}"
+        );
+        // It is an error that says what to write, and not one of what is not
+        // built.
+        assert!(
+            !errors.iter().any(|e| e.contains("not supported yet")),
+            "{errors:?} for {source}"
+        );
+    }
+}
+
+/// Whether the function `count` of the program calls itself.
+fn calls_itself(program: &scalar::Program, name: &str) -> bool {
+    program.functions.iter().enumerate().any(|(k, f)| {
+        f.name.ends_with(name)
+            && (f.blocks.iter().flat_map(|b| &b.instructions))
+                .any(|i| matches!(&i.op, Op::Call { function, .. } if *function == k))
+    })
+}
+
+fn a_function_whose_decreases_is_smaller_at_each_call_of_itself_is_a_loop_that_does_what_the_calls_did(
+) {
+    // A `match` on the number gives `arith` nothing to prove from in its second
+    // arm, so it is the last of the four and is not asked for a proof here.
+    for body in &bodies()[..3] {
+        let source = counting("\n  decreases n", body);
+        assert_eq!(refused(&source), Vec::<String>::new(), "for {source}");
+        for n in [0, 1, 5, 40] {
+            let source = source.replace("count(5, 0)", &format!("count({n}, 0)"));
+            let lowered = lower(source.as_bytes()).unwrap();
+            // `lower` keeps the call, and the passes make a loop of it.
+            assert!(calls_itself(&lowered, "count"), "{source}");
+            let passed = scalar::passes(&lowered);
+            assert!(!calls_itself(&passed, "count"), "{source}");
+            let said = scalar::run(&lowered);
+            assert_eq!(said.stdout, format!("{n}\n").into_bytes(), "{source}");
+            assert_eq!(scalar::run(&passed), said, "{source}");
+        }
+    }
+}
+
+/// A call of `count` from itself with the arguments `args`, under the
+/// measure `decreases`.
+fn calling(decreases: &str, args: &str) -> String {
+    counting(
+        decreases,
+        &format!("if n == 0 {{ acc }} else {{ count({args}) }}"),
+    )
+}
+
+fn a_call_of_itself_where_the_decreases_is_not_proven_smaller_is_refused_with_the_goal() {
+    for (decreases, args, goal) in [
+        // The measure stays where it was.
+        ("\n  decreases n", "n, acc", "`n` is smaller at this call"),
+        ("\n  decreases n", "n - 0, acc", "`n` is smaller at this call"),
+        // It goes up.
+        ("\n  decreases n", "n, acc", "`n` is smaller at this call"),
+        // It is a measure that nothing says is smaller.
+        ("\n  decreases acc", "n - 1, wrapping_add(acc, 1)", "`acc` is smaller at this call"),
+        ("\n  decreases n - n", "n - 1, acc", "`n - n` is smaller at this call"),
+    ] {
+        let source = calling(decreases, args);
         let errors = refused(&source);
         assert!(
             errors
                 .iter()
-                .any(|e| e.contains("needs a `decreases`") && e.contains("not supported yet")),
+                .any(|e| e.contains(goal) && e.contains("`count` may not end")),
             "{errors:?} for {source}"
         );
-        // With one, the call is still refused, as what `arith` proves of it is
-        // not built, and no longer for lacking one.
-        let with = counting("\n  decreases n", body);
-        let errors = refused(&with);
-        assert!(
-            errors
-                .iter()
-                .any(|e| e.contains("`decreases`") && e.contains("not supported yet")),
-            "{errors:?} for {with}"
-        );
-        assert!(
-            !errors.iter().any(|e| e.contains("needs a `decreases`")),
-            "{errors:?} for {with}"
-        );
+    }
+    // The goal that fails when the measure may go below zero is said too, as a
+    // call that does not check what it takes off.
+    let below = counting(
+        "\n  decreases n",
+        "if n == 1 { acc } else { count(n - 2, acc) }",
+    );
+    let errors = refused(&below);
+    assert!(errors.iter().any(|e| e.contains("may not")), "{errors:?} for {below}");
+}
+
+/// `f(n, m)` that ends when `m` goes down to 0 and then takes one off `n` and
+/// starts `m` again, so that each of its calls makes `(n, m)` smaller as words
+/// in a dictionary are, and no one of the parts alone goes down at each.
+fn two_parts(measure: &str, inner: &str) -> String {
+    format!(
+        "use std.bits (u64)\nuse std.console (console, print)\n\nfn f(n: u64, m: u64) -> u64\n  decreases {measure}\n{{\n  if m > 0 {{\n    {inner}\n  }} else if n > 0 {{\n    f(n - 1, 5)\n  }} else {{\n    0\n  }}\n}}\n\nfn main() ! console, alloc {{\n  print(\"{{f(3, 4)}}\")\n}}\n"
+    )
+}
+
+fn a_decreases_of_two_parts_is_compared_as_words_in_a_dictionary_are() {
+    let good = two_parts("n, m", "f(n, m - 1)");
+    assert_eq!(refused(&good), Vec::<String>::new(), "for {good}");
+    let lowered = lower(good.as_bytes()).unwrap();
+    assert_eq!(scalar::run(&lowered).stdout, b"0\n".to_vec());
+    assert!(!calls_itself(&scalar::passes(&lowered), "f"));
+    // One part alone does not get smaller at the first call.
+    let one_part = two_parts("m", "f(n, m - 1)");
+    let errors = refused(&one_part);
+    assert!(errors.iter().any(|e| e.contains("`m` is smaller at this call")), "{errors:?}");
+    // The parts in the wrong order: `m` first, which goes up at the second.
+    let wrong = two_parts("m, n", "f(n, m - 1)");
+    let errors = refused(&wrong);
+    assert!(errors.iter().any(|e| e.contains("`m, n` is smaller at this call")), "{errors:?}");
+    // The first part stays and the second does not get smaller.
+    let stuck = two_parts("n, m", "f(n, m)");
+    let errors = refused(&stuck);
+    assert!(errors.iter().any(|e| e.contains("`n, m` is smaller at this call")), "{errors:?}");
+}
+
+/// The program of the issue: `count(50000000, 0)` prints `50000000`, in an
+/// executable whose stack does not grow with the number of calls, which a stack
+/// of frames would not hold.
+fn an_executable_of_a_function_that_calls_itself_fifty_million_times_prints_the_count_and_its_stack_does_not_grow() {
+    let source = counting("\n  decreases n", TAIL).replace("count(5, 0)", "count(50000000, 0)");
+    let said = Outcome {
+        stdout: b"50000000\n".to_vec(),
+        status: 0,
+    };
+    for target in runnable() {
+        runs_as(source.as_bytes(), target, &said);
     }
 }
 
