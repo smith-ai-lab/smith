@@ -361,6 +361,10 @@ enum Ty {
     /// A function: the types of its parameters, followed by the type it
     /// gives.
     Fn(Vec<Ty>),
+    /// The type whose one value is the function with the name, by its place
+    /// among the file's functions, where a function's name is written where a
+    /// type is expected.
+    Named(usize),
     /// A type parameter of the function, the implementation, the struct,
     /// or the trait the type is written in, by its place among them.
     Param(usize),
@@ -1084,6 +1088,13 @@ impl<'a> Defs<'a> {
                 (_, None) => Ty::Text,
             };
         }
+        // The name of a function, where a type is expected, is the type whose
+        // one value it is.
+        if t.args.is_empty()
+            && let Some(f) = self.function(t.pos, name)
+        {
+            return Ty::Named(f);
+        }
         errors.push(if self.trait_at(t.pos, name).is_some() {
             Error::new(t.pos, format!("`{name}` is a trait, which is not a type"))
         } else if TYPES_NOT_BUILT.contains(&name) {
@@ -1273,6 +1284,15 @@ impl<'a> Defs<'a> {
         }
     }
 
+    /// Whether a trait other than `Copy` and `Discard` bounds the type
+    /// parameter `p` of `scope`.
+    fn bounded(&self, scope: &Scope, p: usize) -> bool {
+        scope.requires.iter().any(|r| {
+            r.types.contains(&Ty::Param(p))
+                && !matches!(self.file.traits[r.of].name.as_str(), "Copy" | "Discard")
+        })
+    }
+
     /// How a type is written, with the type parameters of `scope`.
     fn text(&self, ty: &Ty, scope: &Scope) -> String {
         match ty {
@@ -1298,6 +1318,7 @@ impl<'a> Defs<'a> {
                 function_text(&items)
             }
             Ty::Param(p) => scope.names[*p].clone(),
+            Ty::Named(f) => written_name(&self.file.functions[*f].name).to_string(),
             Ty::Nothing => "()".to_string(),
             Ty::Unknown => "nothing".to_string(),
             Ty::Flex(_) => "number".to_string(),
@@ -2136,6 +2157,7 @@ fn check_file(
         settled: false,
         value_calls: Set::default(),
         fn_values: Map::default(),
+        named: Set::default(),
         no_impl: false,
         refusals: 0,
         deciding: None,
@@ -2189,6 +2211,7 @@ fn check_file(
         widened: checker.widened,
         value_calls: checker.value_calls,
         fn_values: checker.fn_values,
+        named: checker.named,
     };
     let mut errors = Vec::new();
     typed.copies(
@@ -5459,6 +5482,9 @@ struct Typed<'a> {
     /// The names of functions passed as values, by their addresses, with
     /// the function each names.
     fn_values: Map<usize, usize>,
+    /// Which of those were given for a type parameter that a trait bounds,
+    /// and so are the type whose one value the function is.
+    named: Set<usize>,
 }
 
 impl<'a> Typed<'a> {
@@ -5476,6 +5502,7 @@ impl<'a> Typed<'a> {
             let arg = &call.args[i].value;
             match self.widened.get(&addr(arg)) {
                 Some(wide) => Ty::Int(*wide),
+                None if self.named.contains(&addr(arg)) => Ty::Named(self.fn_values[&addr(arg)]),
                 None => self.type_of(arg, env),
             }
         };
@@ -5765,6 +5792,8 @@ struct Checker<'a> {
     /// The names of functions passed as values, by their addresses, with
     /// the function each names.
     fn_values: Map<usize, usize>,
+    /// Which of those were given for a type parameter that a trait bounds.
+    named: Set<usize>,
     /// Whether the call of a trait's function being checked has types no
     /// implementation is for, which is already reported.
     no_impl: bool,
@@ -6403,6 +6432,20 @@ impl<'a> Checker<'a> {
             (Ty::Int(g), Ty::Param(p))
                 if self.comparing
                     && matches!(&sol[*p], Some(Ty::Int(x)) if x != g && x.hull(*g).is_none()) => {}
+            // The name of a function, given for a type parameter that a trait
+            // bounds, is the type whose one value that function is.
+            (Ty::Fn(_), Ty::Param(p))
+                if self.fn_values.contains_key(&addr(value)) && defs.bounded(vars, *p) =>
+            {
+                let named = Ty::Named(self.fn_values[&addr(value)]);
+                self.named.insert(addr(value));
+                if !unify(pattern, &named, sol) {
+                    let needed = defs.describe_pattern(pattern, sol, vars, body.scope);
+                    let message =
+                        self.mismatch(body, value, defs.describe(&named, body.scope), needed);
+                    self.errors.push(Error::new(value.pos(), message));
+                }
+            }
             (given, pattern) => {
                 use_at(value.pos());
                 // What is needed is said as it is before the types are matched,

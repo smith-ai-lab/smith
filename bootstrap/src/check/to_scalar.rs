@@ -690,7 +690,7 @@ impl<'a> Lowering<'a> {
                     put(place);
                 }
             }
-            Ty::Param(_) | Ty::Fn(_) | Ty::Nothing | Ty::Unknown | Ty::Flex(_) => {}
+            Ty::Param(_) | Ty::Fn(_) | Ty::Named(_) | Ty::Nothing | Ty::Unknown | Ty::Flex(_) => {}
         }
     }
 
