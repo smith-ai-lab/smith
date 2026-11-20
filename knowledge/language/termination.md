@@ -7,7 +7,8 @@ built:
   - "`loop decreases e` on an open-ended loop, where `e` is an expression of whole numbers that `arith` proves not below zero and smaller at every place the loop goes round again, and which is never computed"
   - "`diverge` on an open-ended `loop`, which its callers inherit, and a function whose every `loop` is over a range"
   - "`decreases` on a function, of one part or more separated by commas, each a whole number of an unsigned type over the parameters, which is never computed; a function that calls itself and has none is refused, and at every call of itself, the last thing the function does or not, `arith` proves that no part is below zero and that the measure is smaller, as words are in a dictionary"
-  - "not functions that call each other, which are refused as not supported yet, and not a call of a function from itself in a lambda"
+  - "functions that call each other, each with a `decreases` of the same number of parts: a function in a circle with none is refused with an error that names the circle, so is a circle whose measures have different numbers of parts, and each call from one to another is proven by `arith` to leave no part below zero and the measure, as the callee states it, smaller than the caller's own"
+  - "not a call of a function from itself in a lambda"
 ---
 
 # Termination

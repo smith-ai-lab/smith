@@ -5,7 +5,8 @@
 //! smaller at each of the calls. Such a function is a loop in the scalar form.
 //! A call that is not the last thing a function does is held to the same rule,
 //! and keeps a frame, so the function carries `alloc`. Functions that call each
-//! other are not supported yet.
+//! other in a circle each have a `decreases` of the same number of parts, and a
+//! call from one to another is held to the measure the callee states.
 
 use smith::scalar::{self, Op, Outcome};
 use smith::{check, lower};
@@ -55,8 +56,12 @@ pub const ONCE: &[Test] = &[
         a_call_of_itself_that_is_not_the_last_thing_a_function_does_needs_alloc_and_a_measure_proven_smaller,
     ),
     (
-        "functions_that_call_each_other_and_a_call_of_itself_in_a_lambda_are_not_supported_yet",
-        functions_that_call_each_other_and_a_call_of_itself_in_a_lambda_are_not_supported_yet,
+        "functions_that_call_each_other_give_what_the_calls_gave_to_any_depth_with_a_measure_of_one_part_or_three",
+        functions_that_call_each_other_give_what_the_calls_gave_to_any_depth_with_a_measure_of_one_part_or_three,
+    ),
+    (
+        "a_circle_of_functions_needs_a_decreases_of_the_same_parts_in_each_and_a_call_proven_smaller_and_alloc_where_a_frame_is_kept",
+        a_circle_of_functions_needs_a_decreases_of_the_same_parts_in_each_and_a_call_proven_smaller_and_alloc_where_a_frame_is_kept,
     ),
 ];
 
@@ -68,6 +73,10 @@ pub const MACHINE: &[Test] = &[
     (
         "an_executable_of_a_function_that_calls_itself_a_million_deep_not_last_prints_the_depth",
         an_executable_of_a_function_that_calls_itself_a_million_deep_not_last_prints_the_depth,
+    ),
+    (
+        "an_executable_of_functions_that_call_each_other_a_million_deep_prints_the_sum_and_one_that_calls_last_needs_no_alloc",
+        an_executable_of_functions_that_call_each_other_a_million_deep_prints_the_sum_and_one_that_calls_last_needs_no_alloc,
     ),
 ];
 
@@ -347,11 +356,86 @@ fn a_call_of_itself_that_is_not_the_last_thing_a_function_does_needs_alloc_and_a
     assert!(errors.iter().any(|e| e.contains("needs a `decreases`")), "{errors:?}");
 }
 
-fn functions_that_call_each_other_and_a_call_of_itself_in_a_lambda_are_not_supported_yet() {
-    let circle = "use std.bits (u64)\nuse std.console (console, print)\n\nfn a(n: u64) -> u64 ! alloc\n  decreases n\n{\n  if n == 0 { 0 } else { 1 + b(n - 1) }\n}\n\nfn b(n: u64) -> u64 ! alloc\n  decreases n\n{\n  if n == 0 { 0 } else { 1 + a(n - 1) }\n}\n\nfn main() ! console, alloc {\n  print(\"{a(3)}\")\n}\n";
-    let errors = refused(circle);
-    assert!(
-        errors.iter().any(|e| e.contains("calls itself") && e.contains("not supported yet")),
-        "{errors:?}"
-    );
+/// A program of `even` and `odd`, which call each other and add 1 and 2, with
+/// `header` after both signatures and a `decreases` of `even_measure` and
+/// `odd_measure`, and a `main` that prints `even` at each of `at`.
+fn ring(header: &str, even_measure: &str, odd_measure: &str, at: &[u64]) -> String {
+    let prints: String = at.iter().map(|n| format!("  print(\"{{even({n})}}\")\n")).collect();
+    format!(
+        "use std.bits (u64)\nuse std.console (console, print)\nuse std.int (wrapping_add)\n\nfn even(n: u64) -> u64{header}{even_measure}\n{{\n  if n == 0 {{ 0 }} else {{ wrapping_add(odd(n - 1), 1) }}\n}}\n\nfn odd(n: u64) -> u64{header}{odd_measure}\n{{\n  if n == 0 {{ 0 }} else {{ wrapping_add(even(n - 1), 2) }}\n}}\n\nfn main() ! console, alloc {{\n{prints}}}\n"
+    )
+}
+
+/// What `even(n)` gives: 1 for each of the calls at an even distance, and 2 for
+/// the others.
+fn ring_gives(n: u64) -> u64 {
+    n / 2 * 3 + n % 2
+}
+
+/// A circle of three functions with a measure of two parts, as `sum`,
+/// `product`, and `atom` of the page are: the first part stays and the second
+/// goes from 2 to 1 to 0, and then the first gets smaller.
+fn parts(n: u64) -> String {
+    format!(
+        "use std.bits (u64)\nuse std.console (console, print)\nuse std.int (wrapping_add)\n\nfn sum(n: u64) -> u64 ! alloc\n  decreases n, 2\n{{\n  if n == 0 {{ 0 }} else {{ wrapping_add(product(n), 1) }}\n}}\n\nfn product(n: u64) -> u64 ! alloc\n  decreases n, 1\n{{\n  wrapping_add(atom(n), 1)\n}}\n\nfn atom(n: u64) -> u64 ! alloc\n  decreases n, 0\n{{\n  if n == 0 {{ 0 }} else {{ wrapping_add(sum(n - 1), 1) }}\n}}\n\nfn main() ! console, alloc {{\n  print(\"{{sum({n})}}\")\n}}\n"
+    )
+}
+
+fn functions_that_call_each_other_give_what_the_calls_gave_to_any_depth_with_a_measure_of_one_part_or_three() {
+    for n in [0u64, 1, 2, 7, 100, 10_000] {
+        let source = ring(" ! alloc", "\n  decreases n", "\n  decreases n", &[n]);
+        assert_eq!(refused(&source), Vec::<String>::new(), "for {source}");
+        let lowered = lower(source.as_bytes()).unwrap();
+        let said = scalar::run(&lowered);
+        assert_eq!(said.stdout, format!("{}\n", ring_gives(n)).into_bytes(), "{source}");
+        assert_eq!(scalar::run(&scalar::passes(&lowered)), said, "{source}");
+        // Three functions, of a measure of two parts: each call is 1 more.
+        let source = parts(n);
+        assert_eq!(refused(&source), Vec::<String>::new(), "for {source}");
+        let said = scalar::run(&lower(source.as_bytes()).unwrap());
+        assert_eq!(said.stdout, format!("{}\n", 3 * n).into_bytes(), "{source}");
+    }
+}
+
+fn an_executable_of_functions_that_call_each_other_a_million_deep_prints_the_sum_and_one_that_calls_last_needs_no_alloc() {
+    let source = ring(" ! alloc", "\n  decreases n", "\n  decreases n", &[3, 1_000_000]);
+    let said = Outcome {
+        stdout: format!("{}\n{}\n", ring_gives(3), ring_gives(1_000_000)).into_bytes(),
+        status: 0,
+    };
+    for target in runnable() {
+        runs_as(source.as_bytes(), target, &said);
+    }
+    // Two functions that call each other last are loops, and carry nothing.
+    let last = "use std.bits (u64)\nuse std.console (console, print)\n\nfn even(n: u64) -> u64\n  decreases n\n{\n  if n == 0 { 0 } else { odd(n - 1) }\n}\n\nfn odd(n: u64) -> u64\n  decreases n\n{\n  if n == 0 { 1 } else { even(n - 1) }\n}\n\nfn main() ! console, alloc {\n  print(\"{even(5000000)}\")\n  print(\"{odd(5000000)}\")\n}\n";
+    assert_eq!(refused(last), Vec::<String>::new());
+    let said = Outcome {
+        stdout: b"0\n1\n".to_vec(),
+        status: 0,
+    };
+    for target in runnable() {
+        runs_as(last.as_bytes(), target, &said);
+    }
+}
+
+fn a_circle_of_functions_needs_a_decreases_of_the_same_parts_in_each_and_a_call_proven_smaller_and_alloc_where_a_frame_is_kept() {
+    let said = |errors: &[String], what: &str| {
+        assert!(errors.iter().any(|e| e.contains(what)), "{errors:?} lacks {what}");
+    };
+    // A function of the circle with no `decreases` is refused, and the error names the circle.
+    let errors = refused(&ring(" ! alloc", "\n  decreases n", "", &[3]));
+    said(&errors, "`even`, `odd` call each other");
+    said(&errors, "`odd` has not");
+    // Measures of different numbers of parts.
+    let errors = refused(&ring(" ! alloc", "\n  decreases n", "\n  decreases n, 0", &[3]));
+    said(&errors, "the same number of parts");
+    said(&errors, "`even` has 1, `odd` has 2");
+    // A call that does not make the measure smaller is refused where it is, with the goal.
+    let stuck = ring(" ! alloc", "\n  decreases n", "\n  decreases n", &[3])
+        .replace("wrapping_add(odd(n - 1), 1)", "wrapping_add(odd(n), 1)");
+    said(&refused(&stuck), "`n` is smaller at this call");
+    // A circle that keeps a frame needs `alloc` in each function of it.
+    let errors = refused(&ring("", "\n  decreases n", "\n  decreases n", &[3]));
+    said(&errors, "needs the `alloc` effect, which `even` does not declare");
+    said(&errors, "needs the `alloc` effect, which `odd` does not declare");
 }

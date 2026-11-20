@@ -6,7 +6,8 @@ status: partial
 built:
   - "a function whose every call of itself is a tail call, the last expression of its body or of a block of an `if` or a `match` that is itself in that place, or what a `return` gives, and which has a `decreases` that `arith` proves smaller at each call, is a loop with no frame for each call"
   - "a function that calls itself where the call is not the last thing it does, which carries `alloc` and has a `decreases` that `arith` proves smaller at each call, and keeps its frames on a stack of its own that goes on in a fresh block of at least 64 KB asked of `alloc` when one is full, so no depth of calls overflows the stack"
-  - "not functions that call each other, not a call of itself in a lambda, and not recursion under an installed handler of `alloc`"
+  - "functions that call each other in a circle, each with a `decreases` of the same number of parts, which carry `alloc` when one of the calls is not the last thing a function does, and keep their frames on a stack of their own as a function that calls itself does; a circle whose calls are all the last thing a function does is a loop and carries nothing"
+  - "not a call of itself in a lambda, and not recursion under an installed handler of `alloc`"
 ---
 
 # Recursion

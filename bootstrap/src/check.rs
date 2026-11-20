@@ -2298,6 +2298,10 @@ fn check_file(
         refusals: 0,
         zero_divisors: Vec::new(),
         deciding: None,
+        cross: Vec::new(),
+        walking: Vec::new(),
+        walked_calls: Vec::new(),
+        circles: Vec::new(),
     };
     checker.main(main);
     for &item in &reached {
@@ -5937,24 +5941,23 @@ impl<'a> Typed<'a> {
             .push(instance.clone());
         let (calls, cycles) = self.calls_of(instance, at);
         errors.extend(cycles.into_iter().map(default_cycle));
-        let mine = path[&instance.template].len() - 1;
         for (pos, callee) in calls {
             let size = |i: &Instance| i.args.iter().map(Ty::size).sum::<usize>();
             let grows = |p: &Instance| {
                 !matches!(callee.template, Template::Given(..)) && size(&callee) > size(p)
             };
-            // A call of the copy from itself is a loop and needs no other copy,
-            // and `recursion` has already said whether it may be one.
+            // A call of the copy from itself, or from a copy of a circle of
+            // functions to another that is being walked, needs no other copy,
+            // and `recursion` says whether it may be one.
             let itself = callee == *instance;
-            let endless = (path.get(&callee.template).into_iter().flatten())
-                .enumerate()
-                .any(|(k, p)| (*p == callee && !(itself && k == mine)) || grows(p));
+            let walking = (path.get(&callee.template).into_iter().flatten()).any(|p| *p == callee);
+            let endless = (path.get(&callee.template).into_iter().flatten()).any(grows);
             if endless {
                 errors.push(Error::unsupported(
                     pos,
                     "a function that calls itself, directly or through others,",
                 ));
-            } else if !itself && !done.contains(&callee) {
+            } else if !itself && !walking && !done.contains(&callee) {
                 self.copies(&callee, pos, path, done, errors);
             }
         }
@@ -6029,6 +6032,17 @@ struct Checker<'a> {
     /// While a number literal is checked against the type the uses of its
     /// name decided, the place of the use that decided it.
     deciding: Option<Pos>,
+    /// The calls of a function that has a `decreases` from another that has,
+    /// where the measure of the call was not proven smaller, with the
+    /// functions the call is from and to. They are the mistake of the program
+    /// only when the two are in a circle of calls, which `recursion` finds.
+    cross: Vec<(usize, usize, Error)>,
+    /// The functions `recursion` is walking, and the places of the calls that
+    /// lead from each to the next.
+    walking: Vec<usize>,
+    walked_calls: Vec<Pos>,
+    /// The circles of functions already reported, each in order.
+    circles: Vec<Vec<usize>>,
 }
 
 /// What is expected of an expression's value.
