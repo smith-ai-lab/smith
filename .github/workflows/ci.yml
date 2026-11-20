@@ -110,21 +110,47 @@ jobs:
           # No ref is the merge of the change into its base for a pull request.
           ref: ${{ github.event.merge_group.head_sha }}
           fetch-depth: 0
-      - id: decide
+      # The commit the change is based on. What is made of it, its fingerprint
+      # and its compiler, depends on that commit alone, so it is kept by it:
+      # `base-results` runs on `main` for each commit, and a run that finds it
+      # builds only this change's compiler. A run that does not builds both, as
+      # before, and keeps what it made for its own reruns.
+      - id: base
         env:
           BASE: ${{ github.event.merge_group.base_sha }}
         run: |
           set -eu
-          BASE=${BASE:-$(git rev-parse HEAD^1)}
-          git worktree add --detach "$RUNNER_TEMP/base" "$BASE"
-          # The two builds below run side by side, and each would install the
-          # toolchain the repository names if it is missing. Two installs at
-          # once break each other, so it is installed here, once, first.
-          (cd bootstrap && cargo --version)
-          (cd "$RUNNER_TEMP/base/bootstrap" && cargo --version)
-          sh .github/fingerprint.sh "$PWD" > head.fingerprint &
-          sh .github/fingerprint.sh "$RUNNER_TEMP/base" > base.fingerprint &
-          wait
+          echo "sha=${BASE:-$(git rev-parse HEAD^1)}" >> "$GITHUB_OUTPUT"
+      - id: kept
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/base-results
+          key: base-results-${{ runner.os }}-${{ runner.arch }}-${{ steps.base.outputs.sha }}
+      - id: decide
+        env:
+          BASE: ${{ steps.base.outputs.sha }}
+          KEPT: ${{ steps.kept.outputs.cache-hit }}
+        run: |
+          set -eu
+          kept="$RUNNER_TEMP/base-results"
+          if [ "$KEPT" = true ]; then
+            echo "the fingerprint and the compiler of $BASE were kept"
+            (cd bootstrap && cargo --version)
+            sh .github/fingerprint.sh "$PWD" > head.fingerprint
+            cp "$kept/fingerprint" base.fingerprint
+            echo "BASE_SMITH=$kept/smith" >> "$GITHUB_ENV"
+          else
+            git worktree add --detach "$RUNNER_TEMP/base" "$BASE"
+            # The two builds below run side by side, and each would install the
+            # toolchain the repository names if it is missing. Two installs at
+            # once break each other, so it is installed here, once, first.
+            (cd bootstrap && cargo --version)
+            (cd "$RUNNER_TEMP/base/bootstrap" && cargo --version)
+            sh .github/fingerprint.sh "$PWD" > head.fingerprint &
+            sh .github/fingerprint.sh "$RUNNER_TEMP/base" > base.fingerprint &
+            wait
+            echo "BASE_SMITH=$RUNNER_TEMP/base/bootstrap/target/debug/smith" >> "$GITHUB_ENV"
+          fi
           echo "== the base"; cat base.fingerprint
           echo "== this change"; cat head.fingerprint
           machines=$(sh .github/needs-machines.sh base.fingerprint head.fingerprint |
@@ -136,14 +162,24 @@ jobs:
       # changes, and by the machine tests, which build the same cases on each
       # kind of machine and compare the bytes with these.
       - name: Hash every case with both compilers
+        env:
+          KEPT: ${{ steps.kept.outputs.cache-hit }}
         run: |
           set -eu
-          (cd bootstrap && cargo build --locked) &
-          (cd "$RUNNER_TEMP/base/bootstrap" && cargo build --locked) &
-          wait
+          if [ "$KEPT" = true ]; then
+            (cd bootstrap && cargo build --locked)
+          else
+            (cd bootstrap && cargo build --locked) &
+            (cd "$RUNNER_TEMP/base/bootstrap" && cargo build --locked) &
+            wait
+            mkdir -p "$RUNNER_TEMP/base-results"
+            cp base.fingerprint "$RUNNER_TEMP/base-results/fingerprint"
+            cp "$BASE_SMITH" "$RUNNER_TEMP/base-results/smith"
+          fi
           sh .github/hash-cases.sh bootstrap/target/debug/smith bootstrap/tests/cases > case-hashes
-          sh .github/hash-cases.sh "$RUNNER_TEMP/base/bootstrap/target/debug/smith" \
-            bootstrap/tests/cases > "$RUNNER_TEMP/base-case-hashes"
+          sh .github/hash-cases.sh "$BASE_SMITH" bootstrap/tests/cases > "$RUNNER_TEMP/base-case-hashes"
+          echo "== the hashes of what was made"
+          sha256sum base.fingerprint head.fingerprint case-hashes "$RUNNER_TEMP/base-case-hashes"
       - name: Say which cases this change builds to other bytes
         if: github.event_name == 'pull_request'
         env:
