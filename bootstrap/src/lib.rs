@@ -2,6 +2,7 @@
 //! dependencies, and is retired once Smith compiles itself.
 
 mod check;
+mod comments;
 pub mod diag;
 mod divide;
 mod hash;
@@ -27,6 +28,47 @@ pub fn compile(source: &[u8], target: Target) -> Result<Vec<u8>, Vec<diag::Error
 /// Smith, in `compiler/`, prints, or the errors of the lexer.
 pub fn lex_plain(source: &[u8]) -> Result<String, Vec<diag::Error>> {
     lexer::lex(source).map(|tokens| lexer::plain(&tokens))
+}
+
+/// The comment on each item of a source file that has one, as the item named
+/// by where it is: a function `f`, its parameter `f.a`, a struct `S`, its field
+/// `S.a`, an enum `E`, its case `E.a`, in the order they are written. It is
+/// what `knowledge/language/functions.md` says a comment belongs to, found by
+/// the line the item starts on.
+pub fn item_comments(source: &[u8]) -> Result<Vec<(String, String)>, Vec<diag::Error>> {
+    let tokens = lexer::lex(source).map_err(in_order)?;
+    let file = parser::parse(&tokens).map_err(in_order)?;
+    let text = std::str::from_utf8(source).unwrap_or_default();
+    let mut found: Vec<(usize, String, String)> = Vec::new();
+    let mut add = |name: String, line: usize| {
+        let comment = comments::above(text, line);
+        if !comment.is_empty() {
+            found.push((line, name, comment));
+        }
+    };
+    for f in file.functions.iter() {
+        add(f.name.clone(), f.pos.line);
+        for p in &f.params {
+            add(format!("{}.{}", f.name, p.name), p.pos.line);
+        }
+    }
+    for s in &file.structs {
+        add(s.name.clone(), s.pos.line);
+        for f in &s.fields {
+            add(format!("{}.{}", s.name, f.name), f.pos.line);
+        }
+    }
+    for e in &file.enums {
+        add(e.name.clone(), e.pos.line);
+        for c in &e.cases {
+            add(format!("{}.{}", e.name, c.name), c.pos.line);
+        }
+    }
+    found.sort_by_key(|(line, ..)| *line);
+    Ok(found
+        .into_iter()
+        .map(|(_, name, comment)| (name, comment))
+        .collect())
 }
 
 /// How many tokens a source file has, or the errors of the lexer. It is what
