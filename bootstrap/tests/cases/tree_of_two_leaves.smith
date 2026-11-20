@@ -1,0 +1,18 @@
+use std.bits (u8)
+use std.console (console, print)
+
+struct Node {
+  value: u8
+  kids: List[Node]
+}
+
+fn main() ! console, alloc {
+  first = Node(value: 1, kids: [])
+  second = Node(value: 2, kids: [])
+  kids: List[Node] = [first, second]
+  root = Node(value: 0, kids: kids)
+  xs = root.kids
+  if 0 < xs.size {
+    print("{xs.size} {xs[0].kids.size}")
+  }
+}
