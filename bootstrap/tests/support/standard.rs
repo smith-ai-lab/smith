@@ -451,6 +451,23 @@ pub fn check_ledger(
     check_sentences(&sentences(rfc, wanted), ledger, tests)
 }
 
+/// Whether `name` is a test: one of `tests`, or one that is split into parts,
+/// which is the tests `{name}_part_{k}_of_{n}` for every `k` from 1 to `n`. A
+/// ledger names a test as it was written before it was split, and what holds
+/// a rule is then all of its parts and not one.
+fn is_a_test(tests: &[&str], name: &str) -> bool {
+    tests.contains(&name)
+        || tests.iter().any(|test| {
+            let parts = test
+                .strip_prefix(name)
+                .and_then(|rest| rest.strip_prefix("_part_1_of_"))
+                .and_then(|n| n.parse::<usize>().ok());
+            parts.is_some_and(|n| {
+                n >= 2 && (1..=n).all(|k| tests.contains(&format!("{name}_part_{k}_of_{n}").as_str()))
+            })
+        })
+}
+
 /// What the ledger gives for each of `sentences`, as `check_ledger` says it
 /// for those of a standard, and an error for a sentence that two lines name.
 pub fn check_sentences(
@@ -480,7 +497,7 @@ pub fn check_sentences(
                     errors.push(format!("names a sentence that a line before it names: {line}"));
                 }
                 if let Some(name) = holds.strip_prefix("test ") {
-                    if !tests.contains(&name.trim()) {
+                    if !is_a_test(tests, name.trim()) {
                         errors.push(format!("names a test that does not exist: {line}"));
                     }
                 } else if holds.strip_prefix("reason ").is_none_or(|r| r.trim().is_empty()) {
