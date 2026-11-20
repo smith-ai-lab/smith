@@ -328,3 +328,5 @@ pub fn check_standard_library() -> Vec<diag::Error> {
 pub fn check_library(modules: &[(&str, &str)]) -> Vec<diag::Error> {
     in_order(check::check_library(&check::Library::new(modules)))
 }
+
+// A comment that changes no executable: scratch, for the pull request of the fingerprint.
