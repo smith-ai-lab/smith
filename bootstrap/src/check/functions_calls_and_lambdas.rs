@@ -12,28 +12,36 @@ impl<'a> Checker<'a> {
     /// function must carry `alloc`. Every call of a function that has no
     /// `decreases` is refused where `recursion` looks for them, and is not
     /// looked at here.
+    ///
+    /// A call of another function that has a `decreases` is held to the same
+    /// rule, with the measure the callee states, and the goal that cannot be
+    /// proven is kept: it is a mistake only when the callee calls the function
+    /// back, as `recursion` finds.
     fn call_decreases(&mut self, body: &mut Body<'a>, call: &Call, callee: usize, sig: &Signature) {
         let defs = self.defs;
         let Some(own) = body.f else { return };
-        if !std::ptr::eq(own, &*defs.file.functions[callee]) {
-            return;
-        }
-        if body.lambdas > 0 && !body.contract {
-            self.errors.push(Error::unsupported(
-                call.pos,
-                "a call of a function from itself inside a lambda",
-            ));
-            return;
-        }
-        if !tail_positions(own).contains(&call.pos) && !body.contract {
-            self.needs(
-                body,
-                "alloc",
-                call.pos,
-                "a call of itself that is not the last thing the function does",
-            );
+        let target = &*defs.file.functions[callee];
+        let itself = std::ptr::eq(own, target);
+        if itself {
+            if body.lambdas > 0 && !body.contract {
+                self.errors.push(Error::unsupported(
+                    call.pos,
+                    "a call of a function from itself inside a lambda",
+                ));
+                return;
+            }
+            if !tail_positions(own).contains(&call.pos) && !body.contract {
+                self.needs(
+                    body,
+                    "alloc",
+                    call.pos,
+                    "a call of itself that is not the last thing the function does",
+                );
+            }
         }
         if own.decreases.is_empty()
+            || target.decreases.is_empty()
+            || (!itself && own.decreases.len() != target.decreases.len())
             || body.lambdas > 0
             || body.contract
             || matches!(body.numbers, Numbers::Finding(_))
@@ -44,18 +52,18 @@ impl<'a> Checker<'a> {
         let Some(places) = params_of(&sig.params, &call.args) else {
             return;
         };
-        let mut given: Vec<Option<&Expr>> = vec![None; own.params.len()];
+        let mut given: Vec<Option<&Expr>> = vec![None; target.params.len()];
         for (arg, place) in call.args.iter().zip(places) {
             given[place] = Some(&arg.value);
         }
         // What a parameter is at the call is its argument, or its default when
         // the call leaves it out.
-        let args: Vec<(&str, &Expr)> = (own.params.iter().zip(&given))
+        let args: Vec<(&str, &Expr)> = (target.params.iter().zip(&given))
             .filter_map(|(p, g)| g.or(p.default.as_ref()).map(|e| (p.name.as_str(), e)))
             .collect();
         let outcome = match (
             self.measure_of(body, &own.decreases, &[]),
-            self.measure_of(body, &own.decreases, &args),
+            self.measure_of(body, &target.decreases, &args),
         ) {
             (Some(before), Some(after)) => self.decreased_by(body, &own.decreases, &before, &after),
             _ => Err(proof::Unproven::Smaller(
@@ -73,16 +81,28 @@ impl<'a> Checker<'a> {
                 format!("`{m}` is not below zero at this call")
             }
         };
-        self.errors.push(
-            Error::new(
-                call.pos,
-                format!("cannot prove that {goal}, so `{}` may not end", own.name),
-            )
-            .with_fix(
-                "check what the call needs first with an `if`, or make each call make the \
-                 measure smaller",
-            ),
+        let error = Error::new(
+            call.pos,
+            format!("cannot prove that {goal}, so `{}` may not end", own.name),
+        )
+        .with_fix(
+            "check what the call needs first with an `if`, or make each call make the \
+             measure smaller",
         );
+        if itself {
+            self.errors.push(error);
+        } else if let Some(from) = defs
+            .file
+            .functions
+            .iter()
+            .position(|f| std::ptr::eq(&**f, own))
+            && !self
+                .cross
+                .iter()
+                .any(|(a, b, e)| (*a, *b) == (from, callee) && *e == error)
+        {
+            self.cross.push((from, callee, error));
+        }
     }
 
     /// Checks the parts of the `decreases` of a function: each is a whole number
@@ -1155,6 +1175,106 @@ impl<'a> Checker<'a> {
         sol
     }
 
+    /// Checks a circle of functions that call each other, which the call at
+    /// `pos` from `f` to `callee` closes among the functions being walked: each has a
+    /// `decreases` of as many parts as the others, each call between two of
+    /// them was proven smaller by the measure the callee states, and when one
+    /// of the calls is not the last thing a function does, each carries `alloc`,
+    /// as the frames are kept in its memory.
+    fn circle(&mut self, f: usize, callee: usize, pos: Pos) {
+        let defs = self.defs;
+        let at = self.walking.iter().position(|&m| m == callee);
+        let Some(at) = at else { return };
+        let mut members: Vec<usize> = self.walking[at..].to_vec();
+        members.push(f);
+        let calls: Vec<Pos> = self.walked_calls[at..]
+            .iter()
+            .copied()
+            .chain([pos])
+            .collect();
+        let mut sorted = members.clone();
+        sorted.sort_unstable();
+        if self.circles.contains(&sorted) {
+            return;
+        }
+        self.circles.push(sorted);
+        let name = |m: usize| format!("`{}`", defs.file.functions[m].name);
+        let names = members
+            .iter()
+            .map(|&m| name(m))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let without: Vec<String> = (members.iter())
+            .filter(|&&m| defs.file.functions[m].decreases.is_empty())
+            .map(|&m| name(m))
+            .collect();
+        if !without.is_empty() {
+            self.errors.push(
+                Error::new(
+                    pos,
+                    format!(
+                        "{names} call each other, and a function in a circle of functions needs a `decreases`, which {} has not",
+                        without.join(", ")
+                    ),
+                )
+                .with_fix(
+                    "write `decreases` after the signature, with a whole number that is smaller at each call, and as many parts as the other functions of the circle have",
+                ),
+            );
+            return;
+        }
+        let parts = defs.file.functions[members[0]].decreases.len();
+        if members
+            .iter()
+            .any(|&m| defs.file.functions[m].decreases.len() != parts)
+        {
+            let counts = (members.iter())
+                .map(|&m| format!("{} has {}", name(m), defs.file.functions[m].decreases.len()))
+                .collect::<Vec<_>>()
+                .join(", ");
+            self.errors.push(
+                Error::new(
+                    pos,
+                    format!(
+                        "{names} call each other, and the `decreases` of each must have the same number of parts: {counts}"
+                    ),
+                )
+                .with_fix("give each function of the circle a measure of the same number of parts"),
+            );
+            return;
+        }
+        for k in 0..members.len() {
+            let (from, to) = (members[k], members[(k + 1) % members.len()]);
+            let found: Vec<Error> = (self.cross.iter())
+                .filter(|(a, b, _)| (*a, *b) == (from, to))
+                .map(|(_, _, e)| e.clone())
+                .collect();
+            self.errors.extend(found);
+        }
+        let keeps_a_frame = members
+            .iter()
+            .zip(&calls)
+            .any(|(&m, call)| !tail_positions(&defs.file.functions[m]).contains(call));
+        if keeps_a_frame {
+            for &m in &members {
+                let f = &defs.file.functions[m];
+                if !f.effects.iter().any(|(e, _)| e == "alloc") {
+                    self.errors.push(
+                        Error::new(
+                            f.pos,
+                            format!(
+                                "{} is in a circle of functions that call each other, which keeps a frame at a call that is not the last thing a function does, so it needs the `alloc` effect, which `{}` does not declare",
+                                name(m),
+                                f.name
+                            ),
+                        )
+                        .with_fix(format!("add `alloc` to the effects of `{}`", f.name)),
+                    );
+                }
+            }
+        }
+    }
+
     /// Reports each call that closes a cycle of calls between functions
     /// written on their own, in a walk of the calls from `f`. `path` is the
     /// functions being walked, and `done` those already walked.
@@ -1210,12 +1330,13 @@ impl<'a> Checker<'a> {
                     );
                 }
             } else if path.contains(&Item::Fn(callee)) {
-                self.errors.push(Error::unsupported(
-                    pos,
-                    "a function that calls itself, directly or through others,",
-                ));
+                self.circle(f, callee, pos);
             } else if !done.contains(&Item::Fn(callee)) {
+                self.walking.push(f);
+                self.walked_calls.push(pos);
                 self.recursion(callee, path, done);
+                self.walked_calls.pop();
+                self.walking.pop();
             }
         }
         path.remove(&Item::Fn(f));

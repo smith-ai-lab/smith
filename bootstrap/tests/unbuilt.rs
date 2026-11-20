@@ -92,11 +92,6 @@ const UNBUILT: &[Unbuilt] = &[
         parsed: true,
     },
     Unbuilt {
-        declares: "fn u{i}(n: Int) -> Int { v{i}(n) }\nfn v{i}(n: Int) -> Int { @u{i}(n) }\n",
-        call: "u{i}(1)",
-        parsed: false,
-    },
-    Unbuilt {
         declares: "fn u{i}() -> Int ! @fs { 1 }\n",
         call: "u{i}()",
         parsed: false,
