@@ -32,15 +32,16 @@ use super::{Block, End, Function, Jump, Op, Program, Value};
 /// as only they leave work that the steps before them could not see.
 pub const WALKS: usize = 4;
 
-/// The program with what nothing uses removed from every function.
-pub fn remove(program: &Program) -> Program {
+/// The program with what nothing uses removed from every function. A function
+/// is changed where it is, and what it holds that nothing changes is not copied.
+pub fn remove(program: Program) -> Program {
     remove_counting(program).0
 }
 
 /// `remove`, and how many walks it made over the function it made most over.
-pub fn remove_counting(program: &Program) -> (Program, usize) {
+pub fn remove_counting(program: Program) -> (Program, usize) {
     let mut most = 0;
-    let functions = (program.functions.iter())
+    let functions = (program.functions.into_iter())
         .map(|f| {
             let (f, walks) = removed(f);
             most = most.max(walks);
@@ -49,7 +50,7 @@ pub fn remove_counting(program: &Program) -> (Program, usize) {
         .collect();
     (
         Program {
-            data: program.data.clone(),
+            data: program.data,
             functions,
             main: program.main,
         },
@@ -57,8 +58,7 @@ pub fn remove_counting(program: &Program) -> (Program, usize) {
     )
 }
 
-fn removed(f: &Function) -> (Function, usize) {
-    let mut f = f.clone();
+fn removed(mut f: Function) -> (Function, usize) {
     let mut walks = 0;
     while walks < WALKS {
         walks += 1;
