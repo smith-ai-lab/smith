@@ -244,6 +244,10 @@ pub(super) struct Naming {
     /// traits, and, when the module is read whole, those it defines. A type is
     /// written as the module wrote it, and found by what the module calls it.
     pub(super) types: super::Set<String>,
+    /// The names the module lists that are the names of effects, and the
+    /// effects it defines, which are written as the file that is built names
+    /// them, as a function was before it was found by the module that wrote it.
+    pub(super) effects: super::Set<String>,
 }
 
 impl Naming {
@@ -259,10 +263,14 @@ impl Naming {
     }
 
     /// What the name the module writes is written as in the file, when it is
-    /// not as the module writes it. `own` says whether the module defines the
-    /// name, and whether it defines it as a struct, an enum, or a trait, which
-    /// is not rewritten: it is found by the name the module wrote.
+    /// not as the module writes it, which only the name of an effect is. A
+    /// function, a struct, an enum, and a trait are found by the name the
+    /// module wrote. `own` says whether the module defines the name, and
+    /// whether it defines it as a struct, an enum, or a trait.
     pub(super) fn rename(&self, name: &str, own: impl FnOnce() -> (bool, bool)) -> Option<String> {
+        if !self.effects.contains(name) {
+            return None;
+        }
         if let Some((_, to, _)) = self.imports.iter().find(|(from, _, _)| from == name) {
             return (!self.types.contains(name)).then(|| to.clone());
         }
@@ -325,13 +333,46 @@ pub(super) struct Resolution {
     /// of a token. Only a debug build keeps it.
     pub(super) written: HashMap<(crate::diag::Pos, String), String>,
     /// What each module calls what, by the module's number.
-    pub(super) modules: super::Map<usize, std::rc::Rc<Naming>>,
+    pub(super) modules: Modules,
+}
+
+/// What each module calls what, by the module's number, which is small, so
+/// that it is found by a place in a list and not by a hash.
+#[derive(Default)]
+pub(super) struct Modules(Vec<Option<std::rc::Rc<Naming>>>);
+
+impl Modules {
+    pub(super) fn get(&self, number: &usize) -> Option<&std::rc::Rc<Naming>> {
+        self.0.get(*number)?.as_ref()
+    }
+
+    pub(super) fn insert(&mut self, number: usize, naming: std::rc::Rc<Naming>) {
+        if self.0.len() <= number {
+            self.0.resize(number + 1, None);
+        }
+        self.0[number] = Some(naming);
+    }
+}
+
+impl<'m> IntoIterator for &'m Modules {
+    type Item = (usize, &'m std::rc::Rc<Naming>);
+    type IntoIter = Box<dyn Iterator<Item = (usize, &'m std::rc::Rc<Naming>)> + 'm>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        Box::new(
+            (self.0.iter().enumerate()).filter_map(|(number, m)| m.as_ref().map(|m| (number, m))),
+        )
+    }
 }
 
 impl Resolution {
     /// The name as the module wrote it at `pos`, where `text` is what the
     /// tokens say.
     pub(super) fn written_at<'s>(&'s self, pos: crate::diag::Pos, text: &'s str) -> &'s str {
+        // Only a debug build keeps what was rewritten.
+        if self.written.is_empty() {
+            return text;
+        }
         self.written
             .get(&(pos, text.to_string()))
             .map_or(text, String::as_str)
@@ -354,32 +395,77 @@ impl Resolution {
         }
     }
 
+    /// What `get` finds for the name `text` at `pos`, asked as `key` asks for the
+    /// key and without making it as a string unless it is very long.
+    pub(super) fn find<R>(
+        &self,
+        pos: crate::diag::Pos,
+        text: &str,
+        get: &dyn Fn(&str) -> Option<R>,
+    ) -> Option<R> {
+        // The file that is built writes each name as it is.
+        if pos.line < super::STEP && self.written.is_empty() {
+            return get(text);
+        }
+        let written = self.written_at(pos, text);
+        let Some(module) = self.modules.get(&(pos.line / super::STEP)) else {
+            return get(written);
+        };
+        if let Some((_, to, _)) = module.imports.iter().find(|(from, _, _)| from == written) {
+            return get(to);
+        }
+        if module.standard && written.starts_with("__") {
+            return get(written);
+        }
+        // The name the module defines it as, made in a buffer, which is the
+        // name of most of what a module calls that is not listed: one that the
+        // file writes as it is, or with `as`, is asked for after it.
+        let mut buffer = [0u8; 160];
+        let (a, b) = (written.as_bytes(), module.name.as_bytes());
+        let n = a.len() + 1 + b.len();
+        if n <= buffer.len() {
+            buffer[..a.len()].copy_from_slice(a);
+            buffer[a.len()] = b'@';
+            buffer[a.len() + 1..n].copy_from_slice(b);
+            if let Some(found) = std::str::from_utf8(&buffer[..n]).ok().and_then(get) {
+                return Some(found);
+            }
+        } else if let Some(found) = get(&module.final_name(written)) {
+            return Some(found);
+        }
+        match module.aliased.iter().find(|(from, _)| from == written) {
+            Some((_, alias)) => get(alias).or_else(|| get(written)),
+            None => get(written),
+        }
+    }
+
     /// What the name `text` at `pos` is called in the file that holds every
     /// module, from what the module that wrote it calls what, where it names
     /// what is not a type. `exists` says whether the file has an item of a
     /// kind that is wanted with the name it is asked about, which tells a name
     /// the module defines from one it does not.
-    pub(super) fn key(
-        &self,
+    pub(super) fn key<'s>(
+        &'s self,
         pos: crate::diag::Pos,
-        text: &str,
+        text: &'s str,
         exists: &dyn Fn(&str) -> bool,
-    ) -> String {
+    ) -> std::borrow::Cow<'s, str> {
+        use std::borrow::Cow;
         let written = self.written_at(pos, text);
         let Some(module) = self.modules.get(&(pos.line / super::STEP)) else {
-            return written.to_string();
+            return Cow::Borrowed(written);
         };
         if let Some((_, to, _)) = module.imports.iter().find(|(from, _, _)| from == written) {
-            return to.clone();
+            return Cow::Borrowed(to);
         }
         if module.standard && written.starts_with("__") {
-            return written.to_string();
+            return Cow::Borrowed(written);
         }
         let own = module.final_name(written);
-        if exists(&own) {
-            own
+        if own != written && exists(&own) {
+            Cow::Owned(own)
         } else {
-            written.to_string()
+            Cow::Borrowed(written)
         }
     }
 }

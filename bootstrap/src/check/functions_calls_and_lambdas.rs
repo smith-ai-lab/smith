@@ -659,7 +659,7 @@ impl<'a> Checker<'a> {
         if let Some(narrowing) = narrowing(defs, call) {
             return self.narrow(body, call, narrowing, want);
         }
-        if let Some(provided) = defs.provided_by_name(name) {
+        if let Some(provided) = defs.provided_by_name(call.name_pos, name) {
             let print = (provided.signature)();
             if self.effect_in_default(body, call, &print) {
                 return self.unknown_call(body, call);
@@ -669,7 +669,7 @@ impl<'a> Checker<'a> {
         }
         if let (Some(effect), false) = (
             defs.effect_named(name),
-            defs.function_names.contains_key(name),
+            defs.function(call.name_pos, name).is_some(),
         ) {
             return self.handler_call(body, call, effect);
         }
