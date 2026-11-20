@@ -70,8 +70,16 @@ pub const ONCE: &[Test] = &[
         arith_proves_a_sum_of_a_range_exactly_when_it_fits_the_range,
     ),
     (
-        "a_range_is_taken_in_every_place_a_type_is_needed",
-        a_range_is_taken_in_every_place_a_type_is_needed,
+        "a_range_is_taken_in_every_place_a_type_is_needed_part_1_of_3",
+        || a_range_is_taken_in_every_place_a_type_is_needed(0),
+    ),
+    (
+        "a_range_is_taken_in_every_place_a_type_is_needed_part_2_of_3",
+        || a_range_is_taken_in_every_place_a_type_is_needed(1),
+    ),
+    (
+        "a_range_is_taken_in_every_place_a_type_is_needed_part_3_of_3",
+        || a_range_is_taken_in_every_place_a_type_is_needed(2),
     ),
     (
         "a_minus_before_a_number_gives_the_range_of_its_negation_and_groups_tighter_than_a_product",
@@ -82,8 +90,28 @@ pub const ONCE: &[Test] = &[
         a_name_is_a_bound_in_a_result_and_in_a_binding_and_what_it_says_is_known,
     ),
     (
-        "a_range_has_every_trait_a_whole_number_has_in_every_place_and_what_the_number_gives",
-        a_range_has_every_trait_a_whole_number_has_in_every_place_and_what_the_number_gives,
+        "a_range_has_every_trait_a_whole_number_has_in_every_place_and_what_the_number_gives_part_1_of_6",
+        || a_range_has_every_trait_a_whole_number_has_in_every_place_and_what_the_number_gives(0),
+    ),
+    (
+        "a_range_has_every_trait_a_whole_number_has_in_every_place_and_what_the_number_gives_part_2_of_6",
+        || a_range_has_every_trait_a_whole_number_has_in_every_place_and_what_the_number_gives(1),
+    ),
+    (
+        "a_range_has_every_trait_a_whole_number_has_in_every_place_and_what_the_number_gives_part_3_of_6",
+        || a_range_has_every_trait_a_whole_number_has_in_every_place_and_what_the_number_gives(2),
+    ),
+    (
+        "a_range_has_every_trait_a_whole_number_has_in_every_place_and_what_the_number_gives_part_4_of_6",
+        || a_range_has_every_trait_a_whole_number_has_in_every_place_and_what_the_number_gives(3),
+    ),
+    (
+        "a_range_has_every_trait_a_whole_number_has_in_every_place_and_what_the_number_gives_part_5_of_6",
+        || a_range_has_every_trait_a_whole_number_has_in_every_place_and_what_the_number_gives(4),
+    ),
+    (
+        "a_range_has_every_trait_a_whole_number_has_in_every_place_and_what_the_number_gives_part_6_of_6",
+        || a_range_has_every_trait_a_whole_number_has_in_every_place_and_what_the_number_gives(5),
     ),
     (
         "a_sum_a_difference_and_a_product_give_the_exact_range_and_no_narrower_one",
@@ -573,7 +601,7 @@ fn a_sum_a_difference_and_a_product_give_the_exact_range_and_no_narrower_one() {
 /// of a list, each also inside another. A narrower range is taken as
 /// it is, a wider one where a condition shows that it fits, and one not shown to
 /// fit is refused with what could not be proven.
-fn a_range_is_taken_in_every_place_a_type_is_needed() {
+fn a_range_is_taken_in_every_place_a_type_is_needed(part: u64) {
     // The declarations, the type the place is, how the place is made of an
     // expression, what it is made of when it is left out, and how it is read.
     // A place is a binding, a `var`, an argument, a result, an item of a case, a
@@ -654,10 +682,13 @@ fn a_range_is_taken_in_every_place_a_type_is_needed() {
         "enum E {\n  pair: (Byte, 0..10)\n  none\n}\n\nfn tup(b: Byte) -> (Byte, 0..10) {\n  if b >= 48 and b <= 57 { (b - 48, b - 48) } else { (0, 0) }\n}\n\nfn case(b: Byte) -> E {\n  if b >= 48 and b <= 57 { .pair((b - 48, b - 48)) } else { .none }\n}\n\nfn deep(b: Byte) -> ((Byte, 0..10), Byte) {\n  if b >= 48 and b <= 57 { ((b - 48, b - 48), b - 48) } else { ((0, 0), 0) }\n}\n\nfn main() ! console, alloc {\n  match tup(50) {\n    (x, y) { print(\"{x} {y}\") }\n  }\n  match case(50) {\n    .pair((x, y)) { print(\"{x} {y}\") }\n    .none { print(\"none\") }\n  }\n  match deep(50) {\n    ((x, y), z) { print(\"{x} {y} {z}\") }\n  }\n}\n"
             .to_string(),
     );
-    assert_eq!(stdout(&items), "2 2\n2 2\n2 2 2\n", "for\n{items}");
-    generate::check(
+    if part == 0 {
+        assert_eq!(stdout(&items), "2 2\n2 2\n2 2 2\n", "for\n{items}");
+    }
+    generate::check_cases(
         4008,
-        6,
+        2 * part,
+        2,
         |g: &mut Gen| (g.below(200) as i128, g.below(40) as i128 + 1),
         |&(low, by)| {
             for (decls, ty, make, none, read) in PLACES {
@@ -776,7 +807,7 @@ fn a_name_is_a_bound_in_a_result_and_in_a_binding_and_what_it_says_is_known() {
 /// `Option` and `Result`, as the element of a list, and for a type parameter
 /// bounded by the trait. A trait that the `Int` is not given in a place, such
 /// as the order of a struct, is not asked of the range.
-fn a_range_has_every_trait_a_whole_number_has_in_every_place_and_what_the_number_gives() {
+fn a_range_has_every_trait_a_whole_number_has_in_every_place_and_what_the_number_gives(part: u64) {
     // The declarations, the type of the place with `N` for the number's type,
     // and how it is made of `x`.
     const PLACES: [(&str, &str, &str); 8] = [
@@ -807,9 +838,12 @@ fn a_range_has_every_trait_a_whole_number_has_in_every_place_and_what_the_number
             "print(\"{ask(p)}\")",
         ),
     ];
-    generate::check(
+    // Each case of the seed is two parts, one of the places that are an even
+    // number from the first, and one of those that are an odd number.
+    generate::check_cases(
         4012,
-        3,
+        part % 3,
+        1,
         |g: &mut Gen| {
             let (low, high) = range(g);
             (low, high, g.below(3))
@@ -817,7 +851,7 @@ fn a_range_has_every_trait_a_whole_number_has_in_every_place_and_what_the_number
         |&(low, high, at)| {
             let value = [low, low + (high - low) / 2, high][at];
             let ours = format!("{low}..{}", high + 1);
-            for (decls, place, make) in PLACES {
+            for (decls, place, make) in PLACES.into_iter().skip(part as usize / 3).step_by(2) {
                 for (ask, uses) in TRAITS {
                     let (imports, func) = match ask.split_once("\n\n") {
                         Some((uses, rest)) if ask.starts_with("use ") => (format!("{uses}\n\n"), rest),

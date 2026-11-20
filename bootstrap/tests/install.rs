@@ -17,12 +17,20 @@ pub const ONCE: &[Test] = &[
         the_installer_picks_the_file_for_the_machine_and_refuses_every_other,
     ),
     (
-        "a_file_that_does_not_match_its_hash_installs_nothing",
-        a_file_that_does_not_match_its_hash_installs_nothing,
+        "a_file_that_does_not_match_its_hash_installs_nothing_part_1_of_2",
+        || a_file_that_does_not_match_its_hash_installs_nothing(0),
     ),
     (
-        "a_download_that_fails_part_way_installs_nothing",
-        a_download_that_fails_part_way_installs_nothing,
+        "a_file_that_does_not_match_its_hash_installs_nothing_part_2_of_2",
+        || a_file_that_does_not_match_its_hash_installs_nothing(1),
+    ),
+    (
+        "a_download_that_fails_part_way_installs_nothing_part_1_of_2",
+        || a_download_that_fails_part_way_installs_nothing(0),
+    ),
+    (
+        "a_download_that_fails_part_way_installs_nothing_part_2_of_2",
+        || a_download_that_fails_part_way_installs_nothing(1),
     ),
     (
         "running_the_installer_again_installs_the_newer_release",
@@ -33,8 +41,12 @@ pub const ONCE: &[Test] = &[
         the_installer_says_so_only_when_the_folder_is_not_on_the_path,
     ),
     (
-        "a_script_cut_off_part_way_installs_the_whole_compiler_or_changes_nothing",
-        a_script_cut_off_part_way_installs_the_whole_compiler_or_changes_nothing,
+        "a_script_cut_off_part_way_installs_the_whole_compiler_or_changes_nothing_part_1_of_2",
+        || a_script_cut_off_part_way_installs_the_whole_compiler_or_changes_nothing(0),
+    ),
+    (
+        "a_script_cut_off_part_way_installs_the_whole_compiler_or_changes_nothing_part_2_of_2",
+        || a_script_cut_off_part_way_installs_the_whole_compiler_or_changes_nothing(1),
     ),
     (
         "the_installer_holds_no_version_and_no_hash",
@@ -272,10 +284,8 @@ fn supported(g: &mut Gen) -> Machine {
     }
 }
 
-fn a_file_that_does_not_match_its_hash_installs_nothing() {
-    generate::check(
-        42,
-        12,
+fn a_file_that_does_not_match_its_hash_installs_nothing(part: u64) {
+    generate::check_cases(42, 6 * part, 6,
         |g| (supported(g), damage(g)),
         |(machine, how)| {
             let setup = Setup::new("hash", machine);
@@ -299,8 +309,8 @@ fn a_file_that_does_not_match_its_hash_installs_nothing() {
     );
 }
 
-fn a_download_that_fails_part_way_installs_nothing() {
-    generate::check(43, 12, supported, |machine| {
+fn a_download_that_fails_part_way_installs_nothing(part: u64) {
+    generate::check_cases(43, 6 * part, 6, supported, |machine| {
         let setup = Setup::new("part", machine);
         let old = setup.home.join("old");
         release(&old, "0.1.0");
@@ -388,11 +398,9 @@ fn cut(g: &mut Gen) -> usize {
     1 + g.below(length)
 }
 
-fn a_script_cut_off_part_way_installs_the_whole_compiler_or_changes_nothing() {
+fn a_script_cut_off_part_way_installs_the_whole_compiler_or_changes_nothing(part: u64) {
     let script = std::fs::read(format!("{}/../install.sh", env!("CARGO_MANIFEST_DIR"))).unwrap();
-    generate::check(
-        46,
-        20,
+    generate::check_cases(46, 10 * part, 10,
         |g| (supported(g), cut(g)),
         |(machine, length)| {
             let setup = Setup::new("cut", machine);

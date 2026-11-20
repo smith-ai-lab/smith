@@ -22,16 +22,40 @@ pub const ONCE: &[Test] = &[
         a_certificate_with_an_extension_marked_critical_that_is_not_read_is_an_error,
     ),
     (
-        "a_time_is_read_as_the_seconds_since_1970_in_both_forms_and_nothing_else_is",
-        a_time_is_read_as_the_seconds_since_1970_in_both_forms_and_nothing_else_is,
+        "a_time_is_read_as_the_seconds_since_1970_in_both_forms_and_nothing_else_is_part_1_of_4",
+        || a_time_is_read_as_the_seconds_since_1970_in_both_forms_and_nothing_else_is(0),
+    ),
+    (
+        "a_time_is_read_as_the_seconds_since_1970_in_both_forms_and_nothing_else_is_part_2_of_4",
+        || a_time_is_read_as_the_seconds_since_1970_in_both_forms_and_nothing_else_is(1),
+    ),
+    (
+        "a_time_is_read_as_the_seconds_since_1970_in_both_forms_and_nothing_else_is_part_3_of_4",
+        || a_time_is_read_as_the_seconds_since_1970_in_both_forms_and_nothing_else_is(2),
+    ),
+    (
+        "a_time_is_read_as_the_seconds_since_1970_in_both_forms_and_nothing_else_is_part_4_of_4",
+        || a_time_is_read_as_the_seconds_since_1970_in_both_forms_and_nothing_else_is(3),
     ),
     (
         "a_certificate_that_is_damaged_in_any_way_is_a_value_or_an_error_and_nothing_else",
         a_certificate_that_is_damaged_in_any_way_is_a_value_or_an_error_and_nothing_else,
     ),
     (
-        "pem_reads_a_file_of_several_certificates_to_the_bytes_of_each",
-        pem_reads_a_file_of_several_certificates_to_the_bytes_of_each,
+        "pem_reads_a_file_of_several_certificates_to_the_bytes_of_each_part_1_of_3",
+        || pem_reads_a_file_of_several_certificates_to_the_bytes_of_each(0),
+    ),
+    (
+        "pem_reads_a_file_of_several_certificates_to_the_bytes_of_each_part_2_of_3",
+        || pem_reads_a_file_of_several_certificates_to_the_bytes_of_each(1),
+    ),
+    (
+        "pem_reads_a_file_of_several_certificates_to_the_bytes_of_each_part_3_of_3",
+        || pem_reads_a_file_of_several_certificates_to_the_bytes_of_each(2),
+    ),
+    (
+        "what_pem_gives_is_what_certificate_reads",
+        what_pem_gives_is_what_certificate_reads,
     ),
     (
         "the_certificates_that_rfc_7468_gives_as_examples_are_read_to_their_bytes",
@@ -506,10 +530,11 @@ fn fixed_times() -> Vec<(Time, Time)> {
     .collect()
 }
 
-fn a_time_is_read_as_the_seconds_since_1970_in_both_forms_and_nothing_else_is() {
-    generate::check(
+fn a_time_is_read_as_the_seconds_since_1970_in_both_forms_and_nothing_else_is(part: u64) {
+    generate::check_cases(
         5,
-        4,
+        part,
+        1,
         |g| {
             let mut cases = fixed_times();
             cases.extend((0..10).map(|_| (time_cases(g), time_cases(g))));
@@ -996,7 +1021,11 @@ fn block(der: &[u8], width: usize, ending: &str, label: &str) -> String {
     out + &format!("-----END {label}-----{ending}")
 }
 
-fn pem_reads_a_file_of_several_certificates_to_the_bytes_of_each() {
+/// The five texts that `pem` is given, and the certificates it reads from each:
+/// the four texts of every certificate, with text between them and a block of
+/// another kind that is not read, and one certificate with no ending to the
+/// last line and blanks at the ends of lines.
+fn pem_reads_a_file_of_several_certificates_to_the_bytes_of_each(part: usize) {
     let ders: Vec<Vec<u8>> = CERTIFICATES.iter().map(|n| certificate_file(n, "der")).collect();
     let mut inputs = Vec::new();
     for (width, ending) in [(64, "\n"), (64, "\r\n"), (76, "\r"), (1000, "\n")] {
@@ -1007,16 +1036,20 @@ fn pem_reads_a_file_of_several_certificates_to_the_bytes_of_each() {
             text += &format!("some words between{ending}");
         }
         text += &block(b"not a certificate", width, ending, "PRIVATE KEY");
-        inputs.push(text.into_bytes());
+        inputs.push((text.into_bytes(), pem_line(Ok(ders.clone()))));
     }
     // One certificate, with no ending to the last line, and with blanks at the ends of lines.
     let one = block(&ders[0], 64, " \t\n", "CERTIFICATE");
-    inputs.push(one.trim_end().as_bytes().to_vec());
-    let lines = run(&pem_program(&inputs));
-    let expected: Vec<String> = inputs.iter().map(|_| pem_line(Ok(ders.clone()))).collect();
-    assert_eq!(lines[..4], expected[..4]);
-    assert_eq!(lines[4], pem_line(Ok(vec![ders[0].clone()])));
-    // What `pem` gives is what `certificate` reads.
+    inputs.push((one.trim_end().as_bytes().to_vec(), pem_line(Ok(vec![ders[0].clone()]))));
+    // The parts are the texts at 0 and 1, at 2 and 3, and the last.
+    let (from, to) = [(0, 2), (2, 4), (4, 5)][part];
+    let (texts, expected): (Vec<Vec<u8>>, Vec<String>) = inputs[from..to].iter().cloned().unzip();
+    assert_eq!(run(&pem_program(&texts)), expected);
+}
+
+/// What `pem` gives is what `certificate` reads.
+fn what_pem_gives_is_what_certificate_reads() {
+    let ders: Vec<Vec<u8>> = CERTIFICATES.iter().map(|n| certificate_file(n, "der")).collect();
     let reads = run(&certificates_program(&ders));
     assert!(reads.iter().all(|l| l.starts_with("ok ")), "{reads:?}");
 }
