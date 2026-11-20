@@ -147,6 +147,8 @@ struct Frame {
     outer: Vec<(String, Pos)>,
     own: HashSet<String>,
     gives: Vec<(String, Pos, Option<Ty>)>,
+    /// The names that are gone where each `return` of the lambda leaves it.
+    leaves: Vec<Vec<String>>,
 }
 
 /// Whether the parameter that receives a lambda owns it.
@@ -691,6 +693,11 @@ impl<'a> Walk<'a> {
                     self.eval(st, value, Flow::Returned);
                 }
                 self.dropped(st);
+                if let (Some(moved), Some(frame)) = (st.as_ref(), self.inside.last_mut()) {
+                    frame
+                        .leaves
+                        .push(moved.gone.iter().map(|(p, _)| p.0.clone()).collect());
+                }
                 *st = None;
                 None
             }
@@ -980,7 +987,24 @@ impl<'a> Walk<'a> {
                 .held
                 .retain(|h| frame.outer.iter().any(|(n, p)| *n == h.name && *p == h.pos));
         }
-        let frame = self.inside.pop().unwrap_or_default();
+        let mut frame = self.inside.pop().unwrap_or_default();
+        // A `var` the lambda gives away and assigns again on every path out of
+        // it holds a value when it returns, as it did when it began: nothing
+        // was given away.
+        let var = |name: &str| {
+            (statements(&self.f.body).into_iter())
+                .any(|s| matches!(s, Stmt::Define { name: n, var: true, .. } if n == name))
+        };
+        let gone_at_end: Vec<&str> = (st.as_ref())
+            .map(|m| m.gone.iter().map(|(p, _)| p.0.as_str()).collect())
+            .unwrap_or_default();
+        let leaves = std::mem::take(&mut frame.leaves);
+        frame.gives.retain(|(name, ..)| {
+            let paid = var(name)
+                && !gone_at_end.contains(&name.as_str())
+                && leaves.iter().all(|gone| !gone.contains(name));
+            !paid
+        });
         if frame.gives.is_empty() {
             return;
         }
