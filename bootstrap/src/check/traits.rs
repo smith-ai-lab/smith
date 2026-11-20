@@ -72,7 +72,7 @@ pub(super) fn split_functions_needs(functions: &mut [std::sync::Arc<Function>], 
 
 /// The type a type written as an expression is, where `Name[Name, ...]` is
 /// the one form of `f[n](x)` that a `requires` takes for a type.
-fn expr_type(e: &Expr) -> Option<Type> {
+pub(super) fn expr_type(e: &Expr) -> Option<Type> {
     match e {
         Expr::Name { name, pos } => Some(Type {
             name: name.clone(),
@@ -1297,20 +1297,6 @@ impl<'a> Checker<'a> {
             self.params(f, &defs.trait_sigs[k][i].scope);
             self.defaults(f, &defs.trait_sigs[k][i]);
             self.effects(&f.effects);
-            for g in t.generics.iter().filter(|g| g.out.is_none()) {
-                let named = (f.params.iter().map(|p| &p.ty))
-                    .chain(&f.result)
-                    .any(|t| type_names(t).iter().any(|(n, _)| *n == g.name));
-                if !named {
-                    self.errors.push(Error::unsupported(
-                        f.pos,
-                        &format!(
-                            "a function of a trait whose parameters' and result's types do not name `{}`",
-                            g.name
-                        ),
-                    ));
-                }
-            }
         }
     }
 
@@ -1558,6 +1544,7 @@ impl<'a> Checker<'a> {
         let mistakes = self.errors.len();
         let mut sol = self.arguments(body, call, sig, false, Some((k, want)), None);
         let reported = std::mem::replace(&mut self.no_impl, outer);
+        self.call_type_args(body, call, k, &mut sol);
         if reported || self.refusals != refused || self.function_for_parameter(&sol, call.pos) {
             return Ty::Unknown;
         }
@@ -1577,6 +1564,28 @@ impl<'a> Checker<'a> {
         // already reported, so only one that the result alone names is
         // reported here.
         let only_result = |r: usize| !sig.params.iter().any(|(_, p)| p.mentions(r));
+        // A type that nothing but the brackets of the call can name.
+        if call.type_args.is_empty()
+            && (sol.iter().zip(outs).enumerate()).any(|(i, (t, out))| {
+                !out && t.is_none() && !sig.gives.mentions(i) && only_result(i)
+            })
+            && self.errors.len() == mistakes
+        {
+            self.errors.push(
+                Error::new(
+                    call.pos,
+                    format!(
+                        "`{}` is for a type that nothing it is given names, and the call writes it",
+                        call.callee
+                    ),
+                )
+                .with_fix(format!(
+                    "write the type after the trait, as in `{}[T].{}(...)`",
+                    defs.file.traits[k].name, call.callee
+                )),
+            );
+            return Ty::Unknown;
+        }
         if matches!(want, Want::Any | Want::Unused)
             && (sol.iter().zip(outs).enumerate())
                 .any(|(i, (t, out))| !out && t.is_none() && only_result(i))
@@ -1650,6 +1659,61 @@ impl<'a> Checker<'a> {
             }
             Found::Unknown => Ty::Unknown,
         }
+    }
+
+    /// Fills in `sol` the types the call writes in brackets after its trait,
+    /// as `Describe[Note].describe(d)` does, which are those of the trait in
+    /// order, and notes them for the call's copy. One that the arguments
+    /// settled differently is reported.
+    fn call_type_args(
+        &mut self,
+        body: &mut Body<'a>,
+        call: &Call,
+        k: usize,
+        sol: &mut [Option<Ty>],
+    ) {
+        if call.type_args.is_empty() {
+            return;
+        }
+        let defs = self.defs;
+        let arity = defs.outs[k].len();
+        if call.type_args.len() != arity && call.type_args.len() != 1 {
+            self.errors.push(Error::new(
+                call.pos,
+                format!(
+                    "`{}` takes {}, and this gives {}",
+                    defs.file.traits[k].name,
+                    count(arity, "type"),
+                    call.type_args.len()
+                ),
+            ));
+            return;
+        }
+        let mut types: Vec<Ty> = Vec::new();
+        for e in &call.type_args {
+            let Some(t) = expr_type(e) else {
+                self.errors.push(Error::new(e.pos(), "this is not a type"));
+                return;
+            };
+            types.push(defs.resolve(&t, body.scope, &mut self.errors));
+        }
+        for (i, t) in types.iter().enumerate() {
+            if t.unknown() {
+                continue;
+            }
+            match &sol[i] {
+                None => sol[i] = Some(t.clone()),
+                Some(s) if agrees(s, t) => {}
+                Some(_) => self.errors.push(Error::new(
+                    call.type_args[i].pos(),
+                    format!(
+                        "the type written for `{}` is not the type its arguments give",
+                        defs.file.traits[k].name
+                    ),
+                )),
+            }
+        }
+        self.type_args.insert(addr(call), types);
     }
 
     /// Reports the types a call gives the type parameters of the trait's

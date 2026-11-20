@@ -52,6 +52,7 @@ pub(super) fn split(pos: Pos, operand: Expr) -> Expr {
     Expr::Match(Box::new(Match {
         pos,
         of: Expr::Call(Call {
+            type_args: Vec::new(),
             qualifier: Some(("Try".to_string(), pos)),
             callee: "split".to_string(),
             pos,
