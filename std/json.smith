@@ -485,6 +485,21 @@ pub fn to_json[T: Serialize](value: T) -> str ! alloc {
   render(value, Json(cases: .key, names: .written))
 }
 
+// A text as a string of JSON, between its quotes.
+pub fn json_string(s: str) -> str ! alloc {
+  w = quote(Out(settings: Json(cases: .key, names: .written), bytes: text(), depth: 0, comma: false, tagged: false, opens: [], top: 0), s)
+  finish(w.bytes)
+}
+
+// The name of a field as `to_json_as` writes it with the settings.
+pub fn written_member(name: str, json: Json) -> str ! alloc {
+  camel = match json.names {
+    .written { false }
+    .camel { true }
+  }
+  written_name(name, camel)
+}
+
 // Reading.
 //
 // Everything below the reader walks the bytes of the input with a position

@@ -144,6 +144,13 @@ fn around(h: &Hidden, takes: bool) -> (String, String) {
 }
 ",
         ),
+        "JsonSchema" => (
+            "JsonSchema, json_schema",
+            "fn main() ! alloc {
+  f(json_schema(Json(cases: .key, names: .written)))
+}
+",
+        ),
         "Html" => ("Html, render", "fn main() ! alloc {
   f(render() { })
 }
@@ -167,7 +174,16 @@ fn around(h: &Hidden, takes: bool) -> (String, String) {
     } else {
         "fn main() {\n  x = f()\n}\n".to_string()
     };
-    (format!("use std.{} ({names})\n\n", h.module), main)
+    // The settings that `json_schema` takes are of another module.
+    let more = if h.name == "JsonSchema" {
+        "use std.json (Json)\n"
+    } else {
+        ""
+    };
+    (
+        format!("use std.{} ({names})\n{more}\n", h.module),
+        main,
+    )
 }
 
 fn library_fields_a_private_field_is_refused_when_built_or_read_at_its_place() {

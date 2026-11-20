@@ -12,7 +12,7 @@ built:
 
 # Describe
 
-`Describe` is how a type says what it is made of. [`Serialize`](serialize.md) walks a value, and a description is wanted where there is none: what a function takes is told to whoever may call it before any call is made. A format for descriptions, as JSON Schema, is a type that has `Describer`, and one format describes every type.
+`Describe` is how a type says what it is made of. [`Serialize`](serialize.md) walks a value, and a description is wanted where there is none: what a function takes is told to whoever may call it before any call is made. A format for descriptions, as [JSON Schema](jsonschema.md), is a type that has `Describer`, and one format describes every type.
 
 ```
 struct Note {
