@@ -5,13 +5,14 @@ description: The names that are in scope in every file without a use, and what a
 status: partial
 built:
   - "every name below, `Int` and `Byte` among them, in scope in every file with no import"
+  - "not a prelude without functions: today the functions of these traits, as `add`, `div`, `compare`, and `convert`, are bare names in every file, so a file's own function of one of those names is refused"
   - "not `Pos`"
   - "a name of the standard library outside the table, such as `print`, `console`, `push`, `narrow`, a `wrapping_` function, or the name of a size, is refused where a file uses it with no `use`, and the error names the module to import it from"
 ---
 
 # The prelude
 
-A small set of names is in scope in every file with no `use`. It is called the prelude, and it is as small as it can be: a name is in it only when the syntax of the language means that name, or, for `Int`, `Nat`, `Pos`, and `Byte`, when it says what a number is for. There is no other way in, and so no name is in it for convenience.
+A small set of names is in scope in every file with no `use`. It is called the prelude, and it is as small as it can be: a name is in it only when the syntax of the language means that name, or, for `Int`, `Nat`, `Pos`, and `Byte`, when it says what a number is for. There is no other way in, and so no name is in it for convenience. The syntax means types, traits, and effects, and never a function, so no function is in it.
 
 ```
 use std.console (console, print)
@@ -29,17 +30,31 @@ No syntax means `print`, or the `console` effect it needs, so a program that pri
 | --- | --- |
 | `Int`, `Nat`, `Pos`, `Byte`, the float types, `bool`, `str` | A literal, the size of an array, and a byte of a text |
 | `List`, `Slice` | A list written in brackets, as `[1, 2, 3]`, and the piece of one written `x[a..b]`, which is a `Slice`, as a `str` is |
-| `Option`, `Result`, `Flow` with its two types, and `Try` with its `split` | `try` |
-| `Order`, `Eq`, and `Ord`, with `eq` and `compare` | `==`, `!=`, `<`, `<=`, `>`, and `>=` |
-| `Add`, `Sub`, `Mul`, `Div`, `Rem`, `Pow`, and `Neg`, with their functions | The arithmetic operators |
-| `Index`, with `valid` and `at` | `x[i]` |
-| `Iterate` with `each`, and `Flow` | `loop v in x`, `break`, and `return` in one |
-| `Exit` with `exit` | What `main` returns |
-| `Fmt` and `Repr`, with their functions | An expression in a string's braces |
-| `Convert` with `convert` | Two types that meet in an operator, and a failure that `try` converts |
+| `Option`, `Result`, `Flow` with its two types, and `Try` | `try` |
+| `Order`, `Eq`, and `Ord` | `==`, `!=`, `<`, `<=`, `>`, and `>=` |
+| `Add`, `Sub`, `Mul`, `Div`, `Rem`, `Pow`, and `Neg` | The arithmetic operators |
+| `Index` | `x[i]` |
+| `Iterate`, and `Flow` | `loop v in x`, `break`, and `return` in one |
+| `Exit` | What `main` returns |
+| `Fmt` and `Repr` | An expression in a string's braces |
+| `Convert` | Two types that meet in an operator, and a failure that `try` converts |
 | `Hash`, `Copy`, and `Discard` | The traits a type is given with no `impl` |
 | `FromInt`, `FromFloat`, `FromString`, and `FromArray` | The literals |
 | `alloc`, `diverge`, and the other effects the compiler gives | A string that holds an expression, an open-ended `loop`, and the rest of [the built-in effects](provided-effects.md#built-in) |
+
+## A trait's function is written with the trait's name
+
+The syntax means a trait, and what the syntax does is call the trait's function. A program that calls that function itself writes it with the trait's name, which is in scope.
+
+```
+fn total(a: Int, b: Int) -> Int { Add.add(a, b) }
+
+fn nearer(a: str, b: str) -> Order { Ord.compare(a, b) }
+```
+
+`Add.add(a, b)` is what `a + b` means, and `Ord.compare(a, b)` is what the comparisons ask. An `impl` names its function inside itself, so `impl Add[Rect] { fn add(a: Rect, b: Rect) -> Rect { ... } }` needs nothing in scope but `Add`.
+
+So `add`, `sub`, `div`, `compare`, `convert`, and the others are not names a file has, and a program or a library gives them to its own functions: `div` is an element of [`std.html`](../library/html.md), and a file that imports it divides with `/` as before.
 
 ## Everything else is imported
 
@@ -63,23 +78,21 @@ A name used and not imported is refused, and the error names the module to impor
 A bare name has exactly one meaning in a file. So a file cannot define, or import, a name that it already has, and the names of the prelude are names it already has.
 
 ```
-struct Rect {
-  w: Int
-  h: Int
+struct Option {
+  on: bool
 }
-
-fn add(a: Rect, b: Rect) -> Rect { Rect(w: a.w + b.w, h: a.h + b.h) }
 ```
 
-This is refused, as `add` is the function of `Add`, which `+` means. A `Rect` is given `+` by an `impl Add[Rect]`, and a function of the file's own takes another name. The same holds for a type named `Option` and for a name that a `use` already brought in.
+This is refused, as `Option` is the type that `try` means. The same holds for a name that a `use` already brought in. A function named `add` is not refused, as no function is in the prelude: it is the file's own, and `+` still means `Add.add`.
 
-Two different functions never share a bare name. Where two traits each have a function of one name, a call is written with the trait's name, as [Traits](traits.md#when-two-traits-share-a-name) shows, and where two modules export one name, one is given another name or reached through its module, as [Importing with use](use.md#two-names-that-are-the-same) shows. A trait's function is still one function for every type that has an `impl`: `add` of two `Rect`s and `add` of two numbers are both `Add.add`.
+Two different functions never share a bare name. Where two traits each have a function of one name, a call is written with the trait's name, as [Traits](traits.md#when-two-traits-share-a-name) shows, and where two modules export one name, one is given another name or reached through its module, as [Importing with use](use.md#two-names-that-are-the-same) shows. A trait's function is still one function for every type that has an `impl`: `Add.add` of two `Rect`s and of two numbers are one function.
 
 ## The forms
 
 | A name | Needs a `use`? |
 | --- | --- |
-| A type, trait, or function that some syntax means | No |
+| A type or trait that some syntax means | No |
+| A function of such a trait, as `Add.add` | No, and it is written with the trait's name |
 | `alloc`, `diverge`, and the other built-in effects | No |
 | `push`, `wrapping_add`, `u32`, `sum`, `Map`, and every other name of `std` | Yes |
 | `console`, `fs`, `net`, `time`, `ui`, and their operations, `print` among them | Yes |
