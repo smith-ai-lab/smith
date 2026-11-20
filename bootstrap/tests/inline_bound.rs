@@ -64,7 +64,7 @@ fn is_called(program: &Program) -> bool {
 /// first, so its size is not that of the lowering.
 fn most_that_fit() -> usize {
     let mut lines = 0;
-    while !is_called(&scalar::inline(&built(lines + 1))) {
+    while !is_called(&scalar::inline(built(lines + 1))) {
         lines += 1;
         assert!(lines < 1000, "no function is too large to be inlined");
     }
@@ -74,10 +74,10 @@ fn most_that_fit() -> usize {
 fn a_function_called_from_three_places_is_inlined_when_no_larger_than_the_bound_and_not_when_larger() {
     let fits = most_that_fit();
     assert!(fits > 0, "a function with nothing in it is called");
-    assert!(!is_called(&scalar::inline(&built(fits))));
+    assert!(!is_called(&scalar::inline(built(fits))));
     // The function that is called is larger than the bound, by the size
     // that the rule counts.
-    let after = scalar::inline(&built(fits + 1));
+    let after = scalar::inline(built(fits + 1));
     let grow = after.functions.iter().enumerate().find(|(n, f)| {
         *n != after.main
             && (f.blocks.iter().flat_map(|b| &b.instructions))
@@ -95,10 +95,10 @@ fn a_program_with_a_function_of_any_size_prints_what_it_printed_before_inlining(
         |lines| {
             let program = built(*lines);
             let said = scalar::run(&program);
-            let inlined = scalar::inline(&program);
+            let inlined = scalar::inline(program.clone());
             scalar::check(&inlined).unwrap();
             assert_eq!(scalar::run(&inlined), said, "for {}", source(*lines));
-            assert_eq!(scalar::inline(&program), inlined, "twice, for {}", source(*lines));
+            assert_eq!(scalar::inline(program.clone()), inlined, "twice, for {}", source(*lines));
             assert_eq!(scalar::run(&scalar::passes(&program)), said, "for {}", source(*lines));
         },
     );

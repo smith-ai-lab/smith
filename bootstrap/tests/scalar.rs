@@ -1432,7 +1432,7 @@ fn calls_of(p: &scalar::Program) -> Vec<(usize, usize)> {
 fn inlining_gives_a_well_formed_program_that_does_what_it_did() {
     let limits = [0, 1, 7, 40, 200, 4096, usize::MAX];
     for (l, s) in taken() {
-        let after = scalar::inline(s);
+        let after = scalar::inline(s.clone());
         if let Err(malformed) = scalar::check(&after) {
             panic!("{malformed:?} in {after:?}");
         }
@@ -1446,7 +1446,7 @@ fn inlining_gives_a_well_formed_program_that_does_what_it_did() {
 
 fn inlining_leaves_no_call_the_rule_replaces_and_no_function_nothing_calls() {
     for (_, s) in taken() {
-        let after = scalar::inline(s);
+        let after = scalar::inline(s.clone());
         let calls = calls_of(&after);
         for &(_, callee) in &calls {
             let sites = calls.iter().filter(|(_, c)| *c == callee).count();
@@ -1468,8 +1468,8 @@ fn inlining_leaves_no_call_the_rule_replaces_and_no_function_nothing_calls() {
 
 fn inlining_gives_the_same_program_every_time_and_grows_it_by_a_bounded_amount() {
     for (_, s) in taken() {
-        let after = scalar::inline(s);
-        assert_eq!(after, scalar::inline(s));
+        let after = scalar::inline(s.clone());
+        assert_eq!(after, scalar::inline(s.clone()));
         let size = |p: &scalar::Program| -> usize { p.functions.iter().map(scalar::size).sum() };
         // Each call is replaced by at most one function's worth of the
         // size the rule allows, so the work is a walk over the program it
@@ -1481,7 +1481,7 @@ fn inlining_gives_the_same_program_every_time_and_grows_it_by_a_bounded_amount()
             size(&after),
             size(s)
         );
-        assert_eq!(scalar::inline(&after), after);
+        assert_eq!(scalar::inline(after.clone()), after);
     }
 }
 
@@ -1513,16 +1513,16 @@ fn caller_of(callee_size: usize, calls: usize) -> scalar::Program {
 fn inlining_replaces_calls_of_small_functions_and_of_functions_called_once() {
     // A function that is called once is replaced however large.
     let big = scalar::LEAF_BOUND * 10;
-    let once = scalar::inline(&caller_of(big, 1));
+    let once = scalar::inline(caller_of(big, 1));
     assert!(calls_of(&once).is_empty());
     assert_eq!(once.functions.len(), 1);
     // One that is called more often is replaced only when it is small, and
     // one that calls nothing is small up to a larger size. A function of
     // size n holds n - 1 instructions and one end.
-    let small = scalar::inline(&caller_of(scalar::LEAF_BOUND, 3));
+    let small = scalar::inline(caller_of(scalar::LEAF_BOUND, 3));
     assert!(calls_of(&small).is_empty());
     assert_eq!(small.functions.len(), 1);
-    let large = scalar::inline(&caller_of(scalar::LEAF_BOUND + 1, 3));
+    let large = scalar::inline(caller_of(scalar::LEAF_BOUND + 1, 3));
     assert_eq!(calls_of(&large).len(), 3);
     assert_eq!(large.functions.len(), 2);
     for p in [once, small, large] {
@@ -1568,7 +1568,7 @@ fn inlining_replaces_a_call_of_a_function_that_holds_a_call_only_up_to_the_bound
             main: 0,
         };
         scalar::check(&program).unwrap();
-        let after = scalar::inline(&program);
+        let after = scalar::inline(program.clone());
         scalar::check(&after).unwrap();
         let from_main = calls_of(&after).iter().filter(|(holder, _)| *holder == after.main).count();
         // Replaced, `main` calls `leaf` twice for each of its three calls
@@ -1581,7 +1581,7 @@ fn inlining_replaces_a_call_of_a_function_that_holds_a_call_only_up_to_the_bound
 /// The program after each pass, in order, so that each is checked on what
 /// the one before it gave.
 fn after_each_pass(p: &scalar::Program) -> [scalar::Program; 6] {
-    let inlined = scalar::inline(p);
+    let inlined = scalar::inline(p.clone());
     let trimmed = scalar::trim(inlined.clone());
     let threaded = scalar::thread(trimmed.clone());
     let folded = scalar::fold(&threaded);
@@ -1788,7 +1788,7 @@ fn the_passes_give_the_same_program_every_time_and_never_a_larger_one() {
 fn removal_makes_at_most_four_walks_and_leaves_no_work() {
     assert_eq!(scalar::WALKS, 4);
     for (_, s) in taken() {
-        let shared = scalar::common(&scalar::fold(&scalar::inline(s)));
+        let shared = scalar::common(&scalar::fold(&scalar::inline(s.clone())));
         let (removed, walks) = scalar::remove_counting(shared);
         assert!(walks <= scalar::WALKS, "{walks} walks over {s:?}");
         let (again, more) = scalar::remove_counting(removed.clone());
@@ -2368,7 +2368,7 @@ fn reads(p: &scalar::Program) -> usize {
 fn sharing_never_replaces_a_read_through_an_address() {
     let mut some = 0;
     for (_, s) in taken() {
-        let folded = scalar::fold(&scalar::inline(s));
+        let folded = scalar::fold(&scalar::inline(s.clone()));
         let shared = scalar::common(&folded);
         assert_eq!(reads(&shared), reads(&folded));
         some += reads(&shared);

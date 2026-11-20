@@ -431,7 +431,7 @@ fn places_of(program: &Program) -> std::collections::HashSet<(u32, u32, u32, u32
 fn no_pass_makes_a_place_the_program_did_not_have() {
     type Pass = fn(&Program) -> Program;
     let passes: [(&str, Pass); 8] = [
-        ("inline", scalar::inline),
+        ("inline", |p| scalar::inline(p.clone())),
         ("trim", |p| scalar::trim(p.clone())),
         ("thread", |p| scalar::thread(p.clone())),
         ("fold", scalar::fold),

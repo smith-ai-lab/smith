@@ -525,7 +525,7 @@ fn every_pass_keeps_what_a_generated_function_of_vectors_gives() {
         let want = scalar::run(program);
         let mut p = program.clone();
         let stages: [(&str, Pass); 6] = [
-            ("inline", scalar::inline),
+            ("inline", |p| scalar::inline(p.clone())),
             ("trim", |p| scalar::trim(p.clone())),
             ("thread", |p| scalar::thread(p.clone())),
             ("fold", scalar::fold),

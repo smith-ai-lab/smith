@@ -27,24 +27,27 @@ pub fn size(f: &Function) -> usize {
 }
 
 /// The program with every call that the rule replaces replaced, and every
-/// function that nothing calls left out.
-pub fn inline(program: &Program) -> Program {
-    let order = callees_first(program);
+/// function that nothing calls left out. A function with no call that is
+/// replaced is the one it was, not a copy.
+pub fn inline(program: Program) -> Program {
+    let order = callees_first(&program);
     let mut sites = vec![0usize; program.functions.len()];
     for &f in &order {
         for callee in calls(&program.functions[f]) {
             sites[callee] += 1;
         }
     }
-    let mut done: Vec<Option<Function>> = vec![None; program.functions.len()];
+    let (data, main) = (program.data, program.main);
+    let mut pending: Vec<Option<Function>> = program.functions.into_iter().map(Some).collect();
+    let mut done: Vec<Option<Function>> = pending.iter().map(|_| None).collect();
     for &f in &order {
-        let function = inlined(&program.functions[f], &done, &sites);
+        let function = inlined(pending[f].take().unwrap(), &mut done, &sites);
         done[f] = Some(function);
     }
     // What is left is what `main` still calls, in the order of the program.
-    let mut kept = vec![false; program.functions.len()];
-    kept[program.main] = true;
-    let mut stack = vec![program.main];
+    let mut kept = vec![false; done.len()];
+    kept[main] = true;
+    let mut stack = vec![main];
     while let Some(f) = stack.pop() {
         for callee in calls(done[f].as_ref().unwrap()) {
             if !kept[callee] {
@@ -74,9 +77,9 @@ pub fn inline(program: &Program) -> Program {
         })
         .collect();
     Program {
-        data: program.data.clone(),
+        data,
         functions,
-        main: place[program.main],
+        main: place[main],
     }
 }
 
@@ -125,76 +128,110 @@ pub(super) fn calls(f: &Function) -> Vec<usize> {
 /// was: what came before jumps to a copy of the callee's blocks, which
 /// return by jumping to a block that takes the call's results and holds
 /// what came after.
-fn inlined(f: &Function, done: &[Option<Function>], sites: &[usize]) -> Function {
-    let mut types = f.types.clone();
+fn inlined(f: Function, done: &mut [Option<Function>], sites: &[usize]) -> Function {
+    // Whether a call of the function is replaced.
+    let replaced = |done: &[Option<Function>], function: usize| {
+        let callee = done[function].as_ref().unwrap();
+        !(callee.cold || (sites[function] != 1 && !is_small(callee)))
+    };
+    if !(f.blocks.iter().flat_map(|b| &b.instructions))
+        .any(|i| matches!(&i.op, Op::Call { function, .. } if replaced(done, *function)))
+    {
+        return f;
+    }
+    let Function {
+        mut types,
+        results,
+        blocks: old,
+        cold,
+        name,
+    } = f;
     let mut blocks: Vec<Block> = Vec::new();
     // Where each block of `f` starts in `blocks`, and which blocks end as a
     // block of `f` does, with jumps to blocks of `f`.
-    let mut first = Vec::with_capacity(f.blocks.len());
-    let mut original_ends = Vec::with_capacity(f.blocks.len());
-    for block in &f.blocks {
+    let mut first = Vec::with_capacity(old.len());
+    let mut original_ends = Vec::with_capacity(old.len());
+    for block in old {
+        let Block {
+            params,
+            instructions,
+            end,
+        } = block;
         let mut at = blocks.len();
         first.push(at);
         blocks.push(Block {
-            params: block.params.clone(),
+            params,
             instructions: Vec::new(),
             end: End::Return(Vec::new()),
         });
-        for instruction in &block.instructions {
-            let Op::Call { function, args } = &instruction.op else {
-                blocks[at].instructions.push(instruction.clone());
-                continue;
+        for instruction in instructions {
+            let Instruction {
+                results: call_results,
+                op,
+                at: place,
+            } = instruction;
+            let (function, args) = match op {
+                Op::Call { function, args } if replaced(done, function) => (function, args),
+                op => {
+                    blocks[at].instructions.push(Instruction {
+                        results: call_results,
+                        op,
+                        at: place,
+                    });
+                    continue;
+                }
             };
-            let callee = done[*function].as_ref().unwrap();
-            if callee.cold || (sites[*function] != 1 && !is_small(callee)) {
-                blocks[at].instructions.push(instruction.clone());
-                continue;
-            }
+            // The blocks of the callee for this call: its own when this is the only
+            // call of it, and a copy when it is not.
             let base = types.len();
-            types.extend_from_slice(&callee.types);
+            let copied = if sites[function] == 1 {
+                let callee = done[function].take().unwrap();
+                types.extend(callee.types);
+                callee.blocks
+            } else {
+                let callee = done[function].as_ref().unwrap();
+                types.extend_from_slice(&callee.types);
+                callee.blocks.clone()
+            };
             let rename = |v: Value| Value(v.0 + base);
             let entry = blocks.len();
-            let after = entry + callee.blocks.len();
-            blocks[at].end = End::Jump(Jump {
-                block: entry,
-                args: args.clone(),
-            });
-            for block in &callee.blocks {
-                let to = |j: &Jump| Jump {
-                    block: j.block + entry,
-                    args: j.args.iter().map(|v| rename(*v)).collect(),
-                };
-                let end = match &block.end {
-                    End::Jump(j) => End::Jump(to(j)),
-                    End::Switch { on, jumps } => End::Switch {
-                        on: rename(*on),
-                        jumps: jumps.iter().map(to).collect(),
-                    },
-                    End::Return(values) => End::Jump(Jump {
-                        block: after,
-                        args: values.iter().map(|v| rename(*v)).collect(),
-                    }),
-                };
-                blocks.push(Block {
-                    params: block.params.iter().map(|v| rename(*v)).collect(),
-                    instructions: (block.instructions.iter())
-                        .map(|i| Instruction {
-                            results: i.results.iter().map(|v| rename(*v)).collect(),
-                            op: renamed(&i.op, &rename),
-                            at: i.at,
+            let after = entry + copied.len();
+            blocks[at].end = End::Jump(Jump { block: entry, args });
+            for mut block in copied {
+                block.params.iter_mut().for_each(|v| *v = rename(*v));
+                for i in &mut block.instructions {
+                    i.results.iter_mut().for_each(|v| *v = rename(*v));
+                    i.op.rename(&rename);
+                }
+                block.end = match block.end {
+                    End::Return(mut values) => {
+                        values.iter_mut().for_each(|v| *v = rename(*v));
+                        End::Jump(Jump {
+                            block: after,
+                            args: values,
                         })
-                        .collect(),
-                    end,
-                });
+                    }
+                    mut end => {
+                        if let End::Switch { on, .. } = &mut end {
+                            *on = rename(*on);
+                        }
+                        for j in super::graph::jumps_mut(&mut end) {
+                            j.block += entry;
+                            j.args.iter_mut().for_each(|v| *v = rename(*v));
+                        }
+                        end
+                    }
+                };
+                blocks.push(block);
             }
             at = blocks.len();
             blocks.push(Block {
-                params: instruction.results.clone(),
+                params: call_results,
                 instructions: Vec::new(),
                 end: End::Return(Vec::new()),
             });
         }
-        blocks[at].end = block.end.clone();
+        blocks[at].end = end;
         original_ends.push(at);
     }
     for at in original_ends {
@@ -207,142 +244,16 @@ fn inlined(f: &Function, done: &[Option<Function>], sites: &[usize]) -> Function
     }
     Function {
         types,
-        results: f.results.clone(),
+        results,
         blocks,
-        cold: f.cold,
-        name: f.name.clone(),
+        cold,
+        name,
     }
 }
 
 /// The instruction with each value it reads given by `rename`.
 pub(super) fn renamed(op: &Op, rename: &impl Fn(Value) -> Value) -> Op {
-    let all = |values: &[Value]| values.iter().map(|v| rename(*v)).collect();
-    match op {
-        Op::Constant(c) => Op::Constant(*c),
-        Op::Binary { op, a, b } => Op::Binary {
-            op: *op,
-            a: rename(*a),
-            b: rename(*b),
-        },
-        Op::Overflows { op, signed, a, b } => Op::Overflows {
-            op: *op,
-            signed: *signed,
-            a: rename(*a),
-            b: rename(*b),
-        },
-        Op::Compare { op, a, b } => Op::Compare {
-            op: *op,
-            a: rename(*a),
-            b: rename(*b),
-        },
-        Op::FloatBinary { op, a, b } => Op::FloatBinary {
-            op: *op,
-            a: rename(*a),
-            b: rename(*b),
-        },
-        Op::FloatFused { op, a, b, c } => Op::FloatFused {
-            op: *op,
-            a: rename(*a),
-            b: rename(*b),
-            c: rename(*c),
-        },
-        Op::VectorFloatFused { op, a, b, c } => Op::VectorFloatFused {
-            op: *op,
-            a: rename(*a),
-            b: rename(*b),
-            c: rename(*c),
-        },
-        Op::FloatNegate(value) => Op::FloatNegate(rename(*value)),
-        Op::FloatCompare { op, a, b } => Op::FloatCompare {
-            op: *op,
-            a: rename(*a),
-            b: rename(*b),
-        },
-        Op::FloatFromInt { signed, value } => Op::FloatFromInt {
-            signed: *signed,
-            value: rename(*value),
-        },
-        Op::IntFromFloat { signed, value } => Op::IntFromFloat {
-            signed: *signed,
-            value: rename(*value),
-        },
-        Op::FloatResize(value) => Op::FloatResize(rename(*value)),
-        Op::VectorBinary { op, a, b } => Op::VectorBinary {
-            op: *op,
-            a: rename(*a),
-            b: rename(*b),
-        },
-        Op::VectorFloatBinary { op, a, b } => Op::VectorFloatBinary {
-            op: *op,
-            a: rename(*a),
-            b: rename(*b),
-        },
-        Op::VectorCompare { op, signed, a, b } => Op::VectorCompare {
-            op: *op,
-            signed: *signed,
-            a: rename(*a),
-            b: rename(*b),
-        },
-        Op::VectorFloatCompare { op, a, b } => Op::VectorFloatCompare {
-            op: *op,
-            a: rename(*a),
-            b: rename(*b),
-        },
-        Op::VectorChoose {
-            mask,
-            then,
-            otherwise,
-        } => Op::VectorChoose {
-            mask: rename(*mask),
-            then: rename(*then),
-            otherwise: rename(*otherwise),
-        },
-        Op::VectorSplat(value) => Op::VectorSplat(rename(*value)),
-        Op::VectorExtract { vector, lane } => Op::VectorExtract {
-            vector: rename(*vector),
-            lane: *lane,
-        },
-        Op::VectorInsert {
-            vector,
-            lane,
-            value,
-        } => Op::VectorInsert {
-            vector: rename(*vector),
-            lane: *lane,
-            value: rename(*value),
-        },
-        Op::VectorSum(vector) => Op::VectorSum(rename(*vector)),
-        Op::VectorFirstSet(mask) => Op::VectorFirstSet(rename(*mask)),
-        Op::Widen { signed, value } => Op::Widen {
-            signed: *signed,
-            value: rename(*value),
-        },
-        Op::Narrow(value) => Op::Narrow(rename(*value)),
-        Op::Choose {
-            on,
-            then,
-            otherwise,
-        } => Op::Choose {
-            on: rename(*on),
-            then: rename(*then),
-            otherwise: rename(*otherwise),
-        },
-        Op::Load { ty, address } => Op::Load {
-            ty: *ty,
-            address: rename(*address),
-        },
-        Op::Store { ty, address, value } => Op::Store {
-            ty: *ty,
-            address: rename(*address),
-            value: rename(*value),
-        },
-        Op::Call { function, args } => Op::Call {
-            function: *function,
-            args: all(args),
-        },
-        Op::System { call, args } => Op::System {
-            call: *call,
-            args: all(args),
-        },
-    }
+    let mut op = op.clone();
+    op.rename(rename);
+    op
 }

@@ -2,7 +2,6 @@
 //! the jumps that end them, and the values that a block's parameters only
 //! copy.
 
-use super::inline::renamed;
 use super::{End, Function, Jump, Value};
 
 /// The jumps a block's end makes, in order.
@@ -42,7 +41,7 @@ pub(super) fn reverse_postorder(f: &Function) -> Vec<usize> {
 pub(super) fn rename(f: &mut Function, by: &impl Fn(Value) -> Value) {
     for block in &mut f.blocks {
         for i in &mut block.instructions {
-            i.op = renamed(&i.op, by);
+            i.op.rename(by);
         }
         rename_end(&mut block.end, by);
     }
