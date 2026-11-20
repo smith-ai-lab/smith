@@ -162,12 +162,7 @@ fn forgotten(q: Pair) -> Byte {
 
 `kept(Pair(a: 5, b: 1))` is `105`. `forgotten` is refused, as `p.a + 100` may be above 255, since `p.a` was assigned after `p.a < 100` was known. The same holds in a loop, a lambda, and an arm of an `if` or a `match` as outside one, and a `var` that the loop or lambda assigns is not known from before it.
 
-**A bit operation.** What [`bit_and`, `bit_or`, `bit_xor`, `shift_right`, and `shift_left`](bits.md) give is known from what is known of the numbers they are given, as far as it is true of every value.
-
-- `bit_and(a, b)` of unsigned numbers is at most `a` and at most `b`.
-- `bit_or(a, b)` and `bit_xor(a, b)` of unsigned numbers are below the least power of two that is above both what is known of `a` and what is known of `b`.
-- `shift_right(a, k)` of an unsigned `a` by a number `k` is `a` divided by two to the `k`, rounded down, so it is at most that of the greatest `a` and at least that of the least.
-- `shift_left(a, k)` by a number `k` is `a` times two to the `k`, when `arith` proves that this fits the type, since no bit is dropped then. Otherwise nothing is known of it but the range of its type.
+**A bit operation.** What [`bit_and`, `bit_or`, `bit_xor`, `shift_right`, and `shift_left`](bits.md#a-number-that-is-not-negative) give for numbers that are not negative has the exact range that page says, from what is known of the numbers they are given.
 
 ```
 use std.bits (bit_and, bit_or, shift_left, shift_right)
@@ -185,7 +180,7 @@ fn up(x: Byte) -> Byte { if x < 64 { shift_left(x, 2) + 3 } else { 0 } }
 
 `low(255)` is `231`, `join(7, 1)` is `255`, `high(255)` is `255`, and `up(63)` is `255`. `bit_and(x, 31)` is at most 31, so `+ 200` fits. Both numbers of `bit_or` are below 8, so it is below 8. `shift_right(x, 3)` is at most 31. `shift_left(x, 2)` is `x * 4`, which is below 256 when `x < 64`.
 
-It claims no more. `bit_and(x, 63) + 200` is refused, since 63 + 200 does not fit a `u8`, and so is `bit_or(x, y) + 248` with `x < 8` and `y < 9`, which is below 16. Nothing is known of what these give for a signed number, except `shift_left`, and a shift by a number that is not below the bits of the type is refused, as [Bit operations](bits.md) says.
+It claims no more. `bit_and(x, 63) + 200` is refused, since 63 + 200 does not fit a `u8`, and so is `bit_or(x, y) + 248` with `x < 8` and `y < 9`, which is below 16. Nothing is known of what these give for a number that may be negative but the range of its size, and a shift by an amount that is not proven is refused, as [Bit operations](bits.md) says.
 
 **A contract.** The function's own `requires`, and the `ensures` of a function that was called, are facts. [Contracts](contracts.md) says how.
 

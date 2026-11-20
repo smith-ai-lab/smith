@@ -34,7 +34,7 @@ The files are a tour. Read them in the order below: each one uses only what the 
 - [literals.md](literals.md): how a number, a character, a text, `true`, `false`, or an array is written, the trait that backs each, and how a whole number is the range that holds it alone.
 - [number-types.md](number-types.md): every whole number as a range `a..b`, the floats, the names `Int`, `Nat`, and `Byte`, and the names of sizes in `std.bits`.
 - [arithmetic.md](arithmetic.md): the exact range that `+`, `-`, `*`, and `/` give, the proof asked where a value enters a narrower range, `narrow` and `clamp` where nothing proves it, and `wrapping_` for a range that fills a size.
-- [bits.md](bits.md): the functions that and, or, xor, and not the bits of a range that fills a size and shift them, with a shift proven to stay inside the range.
+- [bits.md](bits.md): the functions that and, or, xor, and shift the bits of a whole number and give the exact range of what they make, as arithmetic does, and what a number that may be negative and `bit_not` ask of a range.
 - [conversion.md](conversion.md): the `Convert` trait, which turns a value of one type into another where nothing is lost, how it lets two types meet in an operator, and why two whole numbers need none.
 
 ## Functions as values, and leaving early

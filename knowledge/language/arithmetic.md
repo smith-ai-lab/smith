@@ -239,7 +239,7 @@ fn share_of(total: Nat, n: 0..101) -> Nat {
 
 ## Wrapping
 
-Nothing wraps unless a function that wraps is called. `wrapping_add`, `wrapping_sub`, and `wrapping_mul` keep the low bits of the result, and they are functions of the ranges that fill a size exactly, `0..256`, `0..65536`, and the others that [Bit operations](bits.md#the-ranges-that-fill-a-size) lists.
+Nothing wraps unless a function that wraps is called. `wrapping_add`, `wrapping_sub`, and `wrapping_mul` keep the low bits of the result, and they are functions of the ranges that fill a size exactly, `0..256`, `0..65536`, and the others that [Bit operations](bits.md#a-number-that-may-be-negative-and-bit_not) lists.
 
 ```
 use std.console (console, print)
