@@ -40,8 +40,20 @@ pub const ONCE: &[Test] = &[
         a_read_or_a_write_that_is_not_through_an_address_or_not_of_its_type_is_refused,
     ),
     (
-        "a_program_ends_with_a_failing_status_when_the_system_refuses_memory",
-        a_program_ends_with_a_failing_status_when_the_system_refuses_memory,
+        "a_program_ends_with_a_failing_status_when_the_system_refuses_memory_part_1_of_4",
+        || a_program_ends_with_a_failing_status_when_the_system_refuses_memory(0),
+    ),
+    (
+        "a_program_ends_with_a_failing_status_when_the_system_refuses_memory_part_2_of_4",
+        || a_program_ends_with_a_failing_status_when_the_system_refuses_memory(1),
+    ),
+    (
+        "a_program_ends_with_a_failing_status_when_the_system_refuses_memory_part_3_of_4",
+        || a_program_ends_with_a_failing_status_when_the_system_refuses_memory(2),
+    ),
+    (
+        "a_program_ends_with_a_failing_status_when_the_system_refuses_memory_part_4_of_4",
+        || a_program_ends_with_a_failing_status_when_the_system_refuses_memory(3),
     ),
     (
         "joining_texts_gives_the_texts_one_after_another",
@@ -128,8 +140,20 @@ pub const ONCE: &[Test] = &[
         inlining_replaces_a_call_of_a_function_that_holds_a_call_only_up_to_the_bound,
     ),
     (
-        "the_passes_give_a_well_formed_program_that_does_what_it_did",
-        the_passes_give_a_well_formed_program_that_does_what_it_did,
+        "the_passes_give_a_well_formed_program_that_does_what_it_did_part_1_of_4",
+        || the_passes_give_a_well_formed_program_that_does_what_it_did(0),
+    ),
+    (
+        "the_passes_give_a_well_formed_program_that_does_what_it_did_part_2_of_4",
+        || the_passes_give_a_well_formed_program_that_does_what_it_did(1),
+    ),
+    (
+        "the_passes_give_a_well_formed_program_that_does_what_it_did_part_3_of_4",
+        || the_passes_give_a_well_formed_program_that_does_what_it_did(2),
+    ),
+    (
+        "the_passes_give_a_well_formed_program_that_does_what_it_did_part_4_of_4",
+        || the_passes_give_a_well_formed_program_that_does_what_it_did(3),
     ),
     (
         "folding_leaves_no_instruction_whose_inputs_are_all_constants",
@@ -317,6 +341,11 @@ fn lowered_from(source: &[u8], stdout: Option<Vec<u8>>) -> Lowered {
 /// Every generated program, in the scalar form.
 fn taken() -> Vec<(&'static Lowered, &'static scalar::Program)> {
     lowered().iter().map(|l| (l, &l.scalar)).collect()
+}
+
+/// Every generated program of one slice: the programs at `part` of every `parts`.
+fn taken_part(part: usize, parts: usize) -> Vec<(&'static Lowered, &'static scalar::Program)> {
+    taken().into_iter().skip(part).step_by(parts).collect()
 }
 
 /// Every function of every generated program, in the scalar form.
@@ -1229,12 +1258,12 @@ fn a_read_or_a_write_that_is_not_through_an_address_or_not_of_its_type_is_refuse
     }
 }
 
-fn a_program_ends_with_a_failing_status_when_the_system_refuses_memory() {
+fn a_program_ends_with_a_failing_status_when_the_system_refuses_memory(part: usize) {
     let mut refused = 0;
     let limits: Vec<usize> = (0..48)
         .chain([64, 100, 128, 256, 1000, 4096, 1 << 16])
         .collect();
-    for (l, s) in taken() {
+    for (l, s) in taken_part(part, 4) {
         let all = scalar::run(s);
         if let Some(stdout) = &l.stdout {
             assert_eq!(all.stdout, *stdout, "{:?}", l.scalar);
@@ -1590,9 +1619,9 @@ fn after_each_pass(p: &scalar::Program) -> [scalar::Program; 6] {
     [inlined, trimmed, threaded, folded, shared, removed]
 }
 
-fn the_passes_give_a_well_formed_program_that_does_what_it_did() {
+fn the_passes_give_a_well_formed_program_that_does_what_it_did(part: usize) {
     let limits = [0, 1, 7, 40, 200, 4096, usize::MAX];
-    for (l, s) in taken() {
+    for (l, s) in taken_part(part, 4) {
         let [inlined, trimmed, threaded, folded, shared, removed] = after_each_pass(s);
         if let Err(malformed) = scalar::check(&threaded) {
             panic!("{malformed:?} in {threaded:?}");

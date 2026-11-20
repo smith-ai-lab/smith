@@ -39,8 +39,12 @@ pub const ONCE: &[Test] = &[
         a_parameter_that_arrives_in_a_register_stays_there_when_it_may,
     ),
     (
-        "allocating_twice_gives_the_same_homes",
-        allocating_twice_gives_the_same_homes,
+        "allocating_twice_gives_the_same_homes_part_1_of_2",
+        || allocating_twice_gives_the_same_homes(0),
+    ),
+    (
+        "allocating_twice_gives_the_same_homes_part_2_of_2",
+        || allocating_twice_gives_the_same_homes(1),
     ),
     (
         "copying_as_if_all_at_once_leaves_every_place_with_what_it_was_to_get",
@@ -426,10 +430,11 @@ fn a_parameter_that_arrives_in_a_register_stays_there_when_it_may() {
     });
 }
 
-fn allocating_twice_gives_the_same_homes() {
-    for_every_allocation(|f, _, registers, a| {
+fn allocating_twice_gives_the_same_homes(part: u64) {
+    for case in cases().iter().skip(part as usize).step_by(2) {
+        let (f, registers, a) = (&case.f, case.registers, &case.allocation);
         assert_eq!(*a, allocate(f, registers, &vec![false; f.types.len()]));
-    });
+    }
 }
 
 /// Does the steps on places that hold a number each, with one more place
