@@ -144,6 +144,10 @@ fn around(h: &Hidden, takes: bool) -> (String, String) {
 }
 ",
         ),
+        "Html" => ("Html, render", "fn main() ! alloc {
+  f(render() { })
+}
+"),
         "Text" => ("Text, text", "fn main() {
   f(text())
 }

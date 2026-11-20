@@ -4,7 +4,8 @@
 //! The generator builds the texts and the reference that says what each must
 //! become is written here, so the tests share nothing with the library.
 
-use smith::{lower, scalar};
+use smith::target::Target;
+use smith::{compile, lower, scalar};
 
 use crate::Test;
 use crate::generate::{self, Gen};
@@ -33,6 +34,18 @@ pub const ONCE: &[Test] = &[
     (
         "what_text_writes_holds_no_byte_of_markup_that_the_text_did_not_have_as_an_entity",
         what_text_writes_holds_no_byte_of_markup_that_the_text_did_not_have_as_an_entity,
+    ),
+    (
+        "the_examples_of_the_page_give_the_pages_the_page_says",
+        the_examples_of_the_page_give_the_pages_the_page_says,
+    ),
+    (
+        "a_text_given_to_an_element_or_an_attribute_is_escaped_as_the_reference_escapes_it",
+        a_text_given_to_an_element_or_an_attribute_is_escaped_as_the_reference_escapes_it,
+    ),
+    (
+        "the_examples_of_the_page_build_for_every_target",
+        the_examples_of_the_page_build_for_every_target,
     ),
 ];
 
@@ -197,6 +210,12 @@ const HANDLER: &str = "fn show(body: fn() ! markup) ! console, alloc {
       }
       acc = \"{acc}{s}\"
     },
+    include: fn(page) {
+      if open {
+        acc = \"{acc}>\"
+        open = false
+      }
+    },
     void: {
       if open {
         acc = \"{acc}>\"
@@ -228,7 +247,7 @@ fn written(blocks: &[Vec<String>]) -> Vec<String> {
         body += "  }\n";
     }
     let source = format!(
-        "use std.console (console, print)\nuse std.html (attribute, emit, end, markup, start, text, void)\n\n{HANDLER}\nfn main() ! console, alloc {{\n{body}}}\n"
+        "use std.console (console, print)\nuse std.html (attribute, emit, end, include, markup, start, text, void)\n\n{HANDLER}\nfn main() ! console, alloc {{\n{body}}}\n"
     );
     let lowered = lower(source.as_bytes()).unwrap_or_else(|e| panic!("{e:?} for {source}"));
     let outcome = scalar::run(&lowered);
@@ -276,4 +295,251 @@ fn what_text_writes_holds_no_byte_of_markup_that_the_text_did_not_have_as_an_ent
             }
         },
     );
+}
+
+/// The elements and the effect that the programs below use.
+const IMPORTS: &str = "use std.console (console, print)
+use std.html (a, article, attribute, b, body, br, emit, end, h1, h2, head, html, include, input, li, markup, p, span, start, text, title, ul, void)
+";
+
+/// The lines a program prints that has the functions `functions` and, for each
+/// of `calls`, gives `HANDLER` the call to write. When a program can read an
+/// `Html`, this is the one function that changes: a call is `render() { call }`
+/// and its page is read.
+fn shown(functions: &str, calls: &[String]) -> Vec<String> {
+    let mut body = String::new();
+    for call in calls {
+        body += &format!("  show() {{\n    {call}\n  }}\n");
+    }
+    let source = format!("{IMPORTS}\n{HANDLER}\n{functions}\nfn main() ! console, alloc {{\n{body}}}\n");
+    let lowered = lower(source.as_bytes()).unwrap_or_else(|e| panic!("{e:?} for {source}"));
+    let outcome = scalar::run(&lowered);
+    assert_eq!(outcome.status, 0, "for {source}");
+    let printed = String::from_utf8(outcome.stdout).unwrap();
+    let lines: Vec<String> = printed.lines().map(str::to_string).collect();
+    assert_eq!(lines.len(), calls.len(), "for {source}");
+    lines
+}
+
+/// The functions of the examples of the page, each a component, and a call
+/// of each with what the page says it writes.
+const EXAMPLES: &str = "struct Note {
+  title: str
+  body: str
+  pinned: bool
+}
+
+fn hello(name: str) ! markup, alloc {
+  html() {
+    head() {
+      title(\"Hello\")
+    }
+    body() {
+      h1(\"Hello, {name}\")
+      p(\"This page is written in Smith.\")
+    }
+  }
+}
+
+fn mixed(name: str) ! markup, alloc {
+  p() {
+    text(\"Hello, \")
+    b(name)
+    text(\"!\")
+  }
+}
+
+fn links() ! markup, alloc {
+  a(\"Open\", href: \"/notes/7\", class: \"button\")
+  input(name: \"title\", placeholder: \"Title\")
+  br()
+}
+
+fn note_card(note: Note) ! markup, alloc {
+  article(class: \"card\") {
+    h2(note.title)
+    p(note.body)
+    if note.pinned {
+      span(\"Pinned\", class: \"badge\")
+    }
+  }
+}
+
+fn notes(all: List[Note]) ! markup, alloc {
+  ul() {
+    loop note in all {
+      li() {
+        note_card(note)
+      }
+    }
+  }
+}
+
+fn layout(heading: str, inside: fn() ! markup) ! markup, alloc {
+  html() {
+    head() {
+      title(heading)
+    }
+    body() {
+      h1(heading)
+      inside()
+    }
+  }
+}
+
+fn about() ! markup, alloc {
+  layout(\"About\") {
+    p(\"Smith is a programming language.\")
+  }
+}
+";
+
+fn the_examples_of_the_page_give_the_pages_the_page_says() {
+    let calls: Vec<String> = [
+        "hello(\"Ana\")",
+        "mixed(\"Ana\")",
+        "links()",
+        "notes([Note(title: \"a\", body: \"x\", pinned: true), Note(title: \"b\", body: \"y\", pinned: false)])",
+        "about()",
+    ]
+    .map(String::from)
+    .to_vec();
+    assert_eq!(
+        shown(EXAMPLES, &calls),
+        [
+            "<html><head><title>Hello</title></head><body><h1>Hello, Ana</h1><p>This page is written in Smith.</p></body></html>",
+            "<p>Hello, <b>Ana</b>!</p>",
+            "<a href=\"/notes/7\" class=\"button\">Open</a><input name=\"title\" placeholder=\"Title\"><br>",
+            "<ul><li><article class=\"card\"><h2>a</h2><p>x</p><span class=\"badge\">Pinned</span></article></li><li><article class=\"card\"><h2>b</h2><p>y</p></article></li></ul>",
+            "<html><head><title>About</title></head><body><h1>About</h1><p>Smith is a programming language.</p></body></html>",
+        ]
+    );
+}
+
+fn a_text_given_to_an_element_or_an_attribute_is_escaped_as_the_reference_escapes_it() {
+    generate::check(
+        8305,
+        6,
+        |g| (0..6).map(|_| any_text(g)).collect::<Vec<_>>(),
+        |texts| {
+            let mut calls = Vec::new();
+            let mut expected = Vec::new();
+            for t in texts {
+                let (lit, e) = (literal(t), reference_escape(t));
+                calls.push(format!("h1({lit})"));
+                expected.push(format!("<h1>{e}</h1>"));
+                // A text that is empty is what a parameter has by default, so it writes nothing.
+                let attribute = |name: &str| if t.is_empty() { String::new() } else { format!(" {name}=\"{e}\"") };
+                calls.push(format!("p(\"x\", class: {lit})"));
+                expected.push(format!("<p{}>x</p>", attribute("class")));
+                calls.push(format!("a({lit}, href: {lit}, id: {lit})"));
+                expected.push(format!("<a{}{}>{e}</a>", attribute("href"), attribute("id")));
+            }
+            // An attribute that is the empty text is not written.
+            calls.push("p(\"x\", class: \"\")".to_string());
+            expected.push("<p>x</p>".to_string());
+            assert_eq!(shown("", &calls), expected);
+        },
+    );
+}
+
+/// The examples of the page, written with `render` as the page writes them,
+/// and `main` reaching each, so that every target builds them.
+fn the_examples_of_the_page_build_for_every_target() {
+    let source = "use std.html (Html, a, article, b, body, br, h1, h2, head, html, input, insert, li, markup, p, render, span, text, title, ul)
+
+struct Note {
+  title: str
+  body: str
+  pinned: bool
+}
+
+fn hello(name: str) -> Html ! alloc {
+  render() {
+    html() {
+      head() {
+        title(\"Hello\")
+      }
+      body() {
+        h1(\"Hello, {name}\")
+        p(\"This page is written in Smith.\")
+      }
+    }
+  }
+}
+
+fn links() -> Html ! alloc {
+  render() {
+    p() {
+      text(\"Hello, \")
+      b(\"Ana\")
+    }
+    a(\"Open\", href: \"/notes/7\", class: \"button\")
+    input(name: \"title\", placeholder: \"Title\")
+    br()
+  }
+}
+
+fn note_card(note: Note) ! markup, alloc {
+  article(class: \"card\") {
+    h2(note.title)
+    p(note.body)
+    if note.pinned {
+      span(\"Pinned\", class: \"badge\")
+    }
+  }
+}
+
+fn notes(all: List[Note]) -> Html ! alloc {
+  render() {
+    ul() {
+      loop note in all {
+        li() {
+          note_card(note)
+        }
+      }
+    }
+  }
+}
+
+fn layout(heading: str, inside: fn() ! markup) -> Html ! alloc {
+  render() {
+    html() {
+      head() {
+        title(heading)
+      }
+      body() {
+        h1(heading)
+        inside()
+      }
+    }
+  }
+}
+
+fn about() -> Html ! alloc {
+  layout(\"About\") {
+    p(\"Smith is a programming language.\")
+  }
+}
+
+fn frame(inside: Html) -> Html ! alloc {
+  render() {
+    span(class: \"frame\") {
+      insert(inside)
+    }
+  }
+}
+
+fn main() ! alloc {
+  one = hello(\"Ana\")
+  two = links()
+  three = notes([])
+  four = frame(about())
+}
+";
+    for target in Target::ALL {
+        if let Err(e) = compile(source.as_bytes(), *target) {
+            panic!("{e:?} on {target:?}");
+        }
+    }
 }
