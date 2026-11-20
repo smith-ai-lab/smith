@@ -127,6 +127,8 @@ trait Wrapping[T] {
   fn wrapping_add(a: T, b: T) -> T
   fn wrapping_sub(a: T, b: T) -> T
   fn wrapping_mul(a: T, b: T) -> T
+  fn wrapping_div(a: T, b: T) -> T
+  fn wrapping_rem(a: T, b: T) -> T
   fn wrapping_shift_left(a: T, by: u8) -> T
 }
 
@@ -140,6 +142,8 @@ trait Checked[T] {
   fn checked_add(a: T, b: T) -> Option[T]
   fn checked_sub(a: T, b: T) -> Option[T]
   fn checked_mul(a: T, b: T) -> Option[T]
+  fn checked_div(a: T, b: T) -> Option[T]
+  fn checked_rem(a: T, b: T) -> Option[T]
 }
 
 trait Bits[T] {
@@ -172,6 +176,8 @@ impl Wrapping[i8] {
   fn wrapping_add(a: i8, b: i8) -> i8 { __wrapping_add(a, b) }
   fn wrapping_sub(a: i8, b: i8) -> i8 { __wrapping_sub(a, b) }
   fn wrapping_mul(a: i8, b: i8) -> i8 { __wrapping_mul(a, b) }
+  fn wrapping_div(a: i8, b: i8) -> i8 { __wrapping_div(a, b) }
+  fn wrapping_rem(a: i8, b: i8) -> i8 { __wrapping_rem(a, b) }
   fn wrapping_shift_left(a: i8, by: u8) -> i8 { __shift_left(a, by) }
 }
 
@@ -185,6 +191,12 @@ impl Checked[i8] {
   fn checked_add(a: i8, b: i8) -> Option[i8] { __checked_add(a, b) }
   fn checked_sub(a: i8, b: i8) -> Option[i8] { __checked_sub(a, b) }
   fn checked_mul(a: i8, b: i8) -> Option[i8] { __checked_mul(a, b) }
+  fn checked_div(a: i8, b: i8) -> Option[i8] {
+    if b == 0 or (b == -1 and a == -128) { .none } else { .some(a / b) }
+  }
+  fn checked_rem(a: i8, b: i8) -> Option[i8] {
+    if b == 0 { .none } else if b == -1 { .some(0) } else { .some(a % b) }
+  }
 }
 
 impl Convert[i8, i16] {
@@ -228,6 +240,8 @@ impl Wrapping[i16] {
   fn wrapping_add(a: i16, b: i16) -> i16 { __wrapping_add(a, b) }
   fn wrapping_sub(a: i16, b: i16) -> i16 { __wrapping_sub(a, b) }
   fn wrapping_mul(a: i16, b: i16) -> i16 { __wrapping_mul(a, b) }
+  fn wrapping_div(a: i16, b: i16) -> i16 { __wrapping_div(a, b) }
+  fn wrapping_rem(a: i16, b: i16) -> i16 { __wrapping_rem(a, b) }
   fn wrapping_shift_left(a: i16, by: u8) -> i16 { __shift_left(a, by) }
 }
 
@@ -241,6 +255,12 @@ impl Checked[i16] {
   fn checked_add(a: i16, b: i16) -> Option[i16] { __checked_add(a, b) }
   fn checked_sub(a: i16, b: i16) -> Option[i16] { __checked_sub(a, b) }
   fn checked_mul(a: i16, b: i16) -> Option[i16] { __checked_mul(a, b) }
+  fn checked_div(a: i16, b: i16) -> Option[i16] {
+    if b == 0 or (b == -1 and a == -32768) { .none } else { .some(a / b) }
+  }
+  fn checked_rem(a: i16, b: i16) -> Option[i16] {
+    if b == 0 { .none } else if b == -1 { .some(0) } else { .some(a % b) }
+  }
 }
 
 impl Convert[i16, i32] {
@@ -280,6 +300,8 @@ impl Wrapping[i32] {
   fn wrapping_add(a: i32, b: i32) -> i32 { __wrapping_add(a, b) }
   fn wrapping_sub(a: i32, b: i32) -> i32 { __wrapping_sub(a, b) }
   fn wrapping_mul(a: i32, b: i32) -> i32 { __wrapping_mul(a, b) }
+  fn wrapping_div(a: i32, b: i32) -> i32 { __wrapping_div(a, b) }
+  fn wrapping_rem(a: i32, b: i32) -> i32 { __wrapping_rem(a, b) }
   fn wrapping_shift_left(a: i32, by: u8) -> i32 { __shift_left(a, by) }
 }
 
@@ -293,6 +315,12 @@ impl Checked[i32] {
   fn checked_add(a: i32, b: i32) -> Option[i32] { __checked_add(a, b) }
   fn checked_sub(a: i32, b: i32) -> Option[i32] { __checked_sub(a, b) }
   fn checked_mul(a: i32, b: i32) -> Option[i32] { __checked_mul(a, b) }
+  fn checked_div(a: i32, b: i32) -> Option[i32] {
+    if b == 0 or (b == -1 and a == -2147483648) { .none } else { .some(a / b) }
+  }
+  fn checked_rem(a: i32, b: i32) -> Option[i32] {
+    if b == 0 { .none } else if b == -1 { .some(0) } else { .some(a % b) }
+  }
 }
 
 impl Convert[i32, i64] {
@@ -328,6 +356,8 @@ impl Wrapping[i64] {
   fn wrapping_add(a: i64, b: i64) -> i64 { __wrapping_add(a, b) }
   fn wrapping_sub(a: i64, b: i64) -> i64 { __wrapping_sub(a, b) }
   fn wrapping_mul(a: i64, b: i64) -> i64 { __wrapping_mul(a, b) }
+  fn wrapping_div(a: i64, b: i64) -> i64 { __wrapping_div(a, b) }
+  fn wrapping_rem(a: i64, b: i64) -> i64 { __wrapping_rem(a, b) }
   fn wrapping_shift_left(a: i64, by: u8) -> i64 { __shift_left(a, by) }
 }
 
@@ -341,6 +371,12 @@ impl Checked[i64] {
   fn checked_add(a: i64, b: i64) -> Option[i64] { __checked_add(a, b) }
   fn checked_sub(a: i64, b: i64) -> Option[i64] { __checked_sub(a, b) }
   fn checked_mul(a: i64, b: i64) -> Option[i64] { __checked_mul(a, b) }
+  fn checked_div(a: i64, b: i64) -> Option[i64] {
+    if b == 0 or (b == -1 and a == -9223372036854775808) { .none } else { .some(a / b) }
+  }
+  fn checked_rem(a: i64, b: i64) -> Option[i64] {
+    if b == 0 { .none } else if b == -1 { .some(0) } else { .some(a % b) }
+  }
 }
 
 impl Bits[i64] {
@@ -372,6 +408,8 @@ impl Wrapping[u8] {
   fn wrapping_add(a: u8, b: u8) -> u8 { __wrapping_add(a, b) }
   fn wrapping_sub(a: u8, b: u8) -> u8 { __wrapping_sub(a, b) }
   fn wrapping_mul(a: u8, b: u8) -> u8 { __wrapping_mul(a, b) }
+  fn wrapping_div(a: u8, b: u8) -> u8 { __wrapping_div(a, b) }
+  fn wrapping_rem(a: u8, b: u8) -> u8 { __wrapping_rem(a, b) }
   fn wrapping_shift_left(a: u8, by: u8) -> u8 { __shift_left(a, by) }
 }
 
@@ -385,6 +423,12 @@ impl Checked[u8] {
   fn checked_add(a: u8, b: u8) -> Option[u8] { __checked_add(a, b) }
   fn checked_sub(a: u8, b: u8) -> Option[u8] { __checked_sub(a, b) }
   fn checked_mul(a: u8, b: u8) -> Option[u8] { __checked_mul(a, b) }
+  fn checked_div(a: u8, b: u8) -> Option[u8] {
+    if b == 0 { .none } else { .some(a / b) }
+  }
+  fn checked_rem(a: u8, b: u8) -> Option[u8] {
+    if b == 0 { .none } else { .some(a % b) }
+  }
 }
 
 impl Convert[u8, i16] {
@@ -440,6 +484,8 @@ impl Wrapping[u16] {
   fn wrapping_add(a: u16, b: u16) -> u16 { __wrapping_add(a, b) }
   fn wrapping_sub(a: u16, b: u16) -> u16 { __wrapping_sub(a, b) }
   fn wrapping_mul(a: u16, b: u16) -> u16 { __wrapping_mul(a, b) }
+  fn wrapping_div(a: u16, b: u16) -> u16 { __wrapping_div(a, b) }
+  fn wrapping_rem(a: u16, b: u16) -> u16 { __wrapping_rem(a, b) }
   fn wrapping_shift_left(a: u16, by: u8) -> u16 { __shift_left(a, by) }
 }
 
@@ -453,6 +499,12 @@ impl Checked[u16] {
   fn checked_add(a: u16, b: u16) -> Option[u16] { __checked_add(a, b) }
   fn checked_sub(a: u16, b: u16) -> Option[u16] { __checked_sub(a, b) }
   fn checked_mul(a: u16, b: u16) -> Option[u16] { __checked_mul(a, b) }
+  fn checked_div(a: u16, b: u16) -> Option[u16] {
+    if b == 0 { .none } else { .some(a / b) }
+  }
+  fn checked_rem(a: u16, b: u16) -> Option[u16] {
+    if b == 0 { .none } else { .some(a % b) }
+  }
 }
 
 impl Convert[u16, i32] {
@@ -500,6 +552,8 @@ impl Wrapping[u32] {
   fn wrapping_add(a: u32, b: u32) -> u32 { __wrapping_add(a, b) }
   fn wrapping_sub(a: u32, b: u32) -> u32 { __wrapping_sub(a, b) }
   fn wrapping_mul(a: u32, b: u32) -> u32 { __wrapping_mul(a, b) }
+  fn wrapping_div(a: u32, b: u32) -> u32 { __wrapping_div(a, b) }
+  fn wrapping_rem(a: u32, b: u32) -> u32 { __wrapping_rem(a, b) }
   fn wrapping_shift_left(a: u32, by: u8) -> u32 { __shift_left(a, by) }
 }
 
@@ -513,6 +567,12 @@ impl Checked[u32] {
   fn checked_add(a: u32, b: u32) -> Option[u32] { __checked_add(a, b) }
   fn checked_sub(a: u32, b: u32) -> Option[u32] { __checked_sub(a, b) }
   fn checked_mul(a: u32, b: u32) -> Option[u32] { __checked_mul(a, b) }
+  fn checked_div(a: u32, b: u32) -> Option[u32] {
+    if b == 0 { .none } else { .some(a / b) }
+  }
+  fn checked_rem(a: u32, b: u32) -> Option[u32] {
+    if b == 0 { .none } else { .some(a % b) }
+  }
 }
 
 impl Convert[u32, i64] {
@@ -552,6 +612,8 @@ impl Wrapping[u64] {
   fn wrapping_add(a: u64, b: u64) -> u64 { __wrapping_add(a, b) }
   fn wrapping_sub(a: u64, b: u64) -> u64 { __wrapping_sub(a, b) }
   fn wrapping_mul(a: u64, b: u64) -> u64 { __wrapping_mul(a, b) }
+  fn wrapping_div(a: u64, b: u64) -> u64 { __wrapping_div(a, b) }
+  fn wrapping_rem(a: u64, b: u64) -> u64 { __wrapping_rem(a, b) }
   fn wrapping_shift_left(a: u64, by: u8) -> u64 { __shift_left(a, by) }
 }
 
@@ -565,6 +627,12 @@ impl Checked[u64] {
   fn checked_add(a: u64, b: u64) -> Option[u64] { __checked_add(a, b) }
   fn checked_sub(a: u64, b: u64) -> Option[u64] { __checked_sub(a, b) }
   fn checked_mul(a: u64, b: u64) -> Option[u64] { __checked_mul(a, b) }
+  fn checked_div(a: u64, b: u64) -> Option[u64] {
+    if b == 0 { .none } else { .some(a / b) }
+  }
+  fn checked_rem(a: u64, b: u64) -> Option[u64] {
+    if b == 0 { .none } else { .some(a % b) }
+  }
 }
 
 impl Bits[u64] {
