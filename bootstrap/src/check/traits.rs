@@ -81,12 +81,18 @@ pub(super) fn expr_type(e: &Expr) -> Option<Type> {
             function: false,
             range: None,
         }),
-        Expr::Index { of, index, .. } => {
+        Expr::Index {
+            of,
+            index,
+            pos: bracket,
+        } => {
             let Expr::Name { name, pos } = &**of else {
                 return None;
             };
+            // Types separated by commas are a tuple that starts at the
+            // bracket, and one in parentheses is one type.
             let given: Vec<&Expr> = match &**index {
-                Expr::Tuple { items, .. } => items.iter().collect(),
+                Expr::Tuple { items, pos } if pos == bracket => items.iter().collect(),
                 one => vec![one],
             };
             Some(Type {
@@ -230,7 +236,8 @@ pub(super) fn withouts(defs: &Defs, errors: &mut Vec<Error>) -> Vec<(usize, Def)
                 ]
                 .contains(&k)
                     || defs.serialize == Some(k)
-                    || defs.deserialize == Some(k) =>
+                    || defs.deserialize == Some(k)
+                    || defs.describe == Some(k) =>
             {
                 k
             }
@@ -776,6 +783,14 @@ impl<'a> Defs<'a> {
         self.file.structs.iter().position(|s| s.name == *made)
     }
 
+    /// The comment noted for the item called `key`, which is the empty text
+    /// when it has none.
+    pub(super) fn note_of(&self, key: &str) -> &str {
+        (self.file.abouts.iter())
+            .find(|(name, _)| name == key)
+            .map_or("", |(_, about)| about.as_str())
+    }
+
     /// The comment on function `f`, if it was noted.
     pub(super) fn about_of(&self, f: usize) -> &str {
         let name = &self.file.functions[f].name;
@@ -799,7 +814,7 @@ impl<'a> Defs<'a> {
                 && self.holding(*e, args, &types[0]).len() == 1)
                 .then(Vec::new);
         }
-        if self.serialize == Some(k) || self.deserialize == Some(k) {
+        if self.serialize == Some(k) || self.deserialize == Some(k) || self.describe == Some(k) {
             let taken = |d: Def| self.withouts.contains(&(k, d));
             return match &types[0] {
                 Ty::Text | Ty::Nothing | Ty::Int(_) => Some(Vec::new()),
@@ -934,6 +949,9 @@ impl<'a> Defs<'a> {
         if self.deserialize == Some(k) {
             return self.deserialize_calls(&types[0], &types[1]);
         }
+        if self.describe == Some(k) {
+            return self.describe_calls(&types[0], &types[1]);
+        }
         let run = |k: usize, t: &Ty| self.chosen(k, 0, vec![t.clone()], Vec::new()).0;
         if k == self.fmt {
             vec![run(self.repr, &types[0])]
@@ -975,6 +993,44 @@ impl<'a> Defs<'a> {
             self.chosen(serialize, 0, vec![p.clone()], vec![w.clone()])
                 .0
         }));
+        out
+    }
+
+    /// The copies a copy of the `Describe` given to `t` runs for a describer
+    /// of type `d`: the `Describe` of each part, and the functions of the
+    /// describer's `Describer` that the shape of `t` is described with.
+    fn describe_calls(&self, t: &Ty, d: &Ty) -> Vec<Instance> {
+        let describe = self
+            .describe
+            .expect("a program that describes has the module");
+        let describer = self
+            .describer
+            .expect("a program that describes has the module");
+        let names: &[&str] = match t {
+            Ty::Int(i) if i.signed() => &["signed"],
+            Ty::Int(_) => &["unsigned"],
+            Ty::Text => &["text"],
+            Ty::Nothing => &["nothing"],
+            Ty::Tuple(_) => &["tuple"],
+            Ty::Struct(..) => &["structure", "field", "end_structure"],
+            Ty::List(_) => &["sequence"],
+            Ty::Enum(e, _) if *e == self.boolean => &["boolean"],
+            Ty::Enum(e, _) if *e == self.option => &["optional"],
+            _ => &["enumeration", "case", "end_enumeration"],
+        };
+        let mut out: Vec<Instance> = names
+            .iter()
+            .filter_map(|name| trait_function(&self.file.traits[describer], name))
+            .map(|at| self.chosen(describer, at, vec![d.clone()], Vec::new()).0)
+            .collect();
+        let parts = self
+            .given_parts(describe, std::slice::from_ref(t))
+            .expect("given");
+        out.extend(
+            parts
+                .iter()
+                .map(|p| self.chosen(describe, 0, vec![p.clone()], vec![d.clone()]).0),
+        );
         out
     }
 

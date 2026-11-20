@@ -837,6 +837,11 @@ struct Defs<'a> {
     writer: Option<usize>,
     deserialize: Option<usize>,
     reader: Option<usize>,
+    /// The standard library's `Describe` and `Describer`, which `std.describe`
+    /// defines, by their places in the file's traits, when the program has
+    /// that module.
+    describe: Option<usize>,
+    describer: Option<usize>,
     /// The `ReadError` and the `Problem` of `std.deserialize`, by their places
     /// in the file's structs and enums, when the program has that module.
     read_error: Option<usize>,
@@ -2194,6 +2199,8 @@ fn check_file(
         writer: library_item(&file, &items, "std.serialize", Kind::Trait, "Writer"),
         deserialize: library_item(&file, &items, "std.deserialize", Kind::Trait, "Deserialize"),
         reader: library_item(&file, &items, "std.deserialize", Kind::Trait, "Reader"),
+        describe: library_item(&file, &items, "std.describe", Kind::Trait, "Describe"),
+        describer: library_item(&file, &items, "std.describe", Kind::Trait, "Describer"),
         read_error: library_item(&file, &items, "std.deserialize", Kind::Struct, "ReadError"),
         problem: library_item(&file, &items, "std.deserialize", Kind::Enum, "Problem"),
         boolean: prelude_item(&file, Kind::Enum, "bool"),

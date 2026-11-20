@@ -26,6 +26,10 @@ pub const ONCE: &[Test] = &[
         a_type_written_with_no_impl_or_the_wrong_number_of_types_is_one_error,
     ),
     (
+        "a_tuple_or_unit_type_written_after_the_trait_is_one_type",
+        a_tuple_or_unit_type_written_after_the_trait_is_one_type,
+    ),
+    (
         "a_type_parameter_written_after_the_trait_runs_the_impl_of_the_type_it_stands_for",
         a_type_parameter_written_after_the_trait_runs_the_impl_of_the_type_it_stands_for,
     ),
@@ -187,4 +191,18 @@ fn every_executable_of_a_call_with_the_type_written_prints_what_the_evaluator_sa
             targets::runs_as(source.as_bytes(), target, &said);
         }
     });
+}
+
+/// A tuple in parentheses, `()`, and a tuple inside a type written, are each
+/// one type, and not the list of types that commas in the brackets make.
+fn a_tuple_or_unit_type_written_after_the_trait_is_one_type() {
+    let source = "use std.console (console, print)\n\n\
+         trait Tagged[T] {\n  fn tag(prefix: str) -> str\n}\n\n\
+         impl Tagged[()] {\n  fn tag(prefix: str) -> str { \"unit\" }\n}\n\n\
+         impl Tagged[(Int, str)] {\n  fn tag(prefix: str) -> str { \"pair\" }\n}\n\n\
+         impl Tagged[Option[(Int, str)]] {\n  fn tag(prefix: str) -> str { \"maybe\" }\n}\n\n\
+         fn main() ! console {\n  print(Tagged[()].tag(\"p\"))\n  print(Tagged[(Int, str)].tag(\"p\"))\n  print(Tagged[Option[(Int, str)]].tag(\"p\"))\n}\n";
+    let found = errors(source);
+    assert!(found.is_empty(), "{found:?}");
+    assert_eq!(outcome(source).stdout, b"unit\npair\nmaybe\n");
 }

@@ -38,6 +38,9 @@ impl<'a> Lowering<'a> {
         if defs.deserialize == Some(k) {
             return self.deserialized(&given[0], &given[1]);
         }
+        if defs.describe == Some(k) {
+            return self.described(&given[0], &given[1]);
+        }
         let ty = &given[0];
         let mut out = Out::new();
         let types = self.scalars(ty);
@@ -138,6 +141,132 @@ impl<'a> Lowering<'a> {
         }
     }
 
+    /// The function that describes the type `ty` to a describer of type `d`,
+    /// which takes the describer and gives it back. It calls the function of the
+    /// describer's `Describer` for each shape of the type, and the part's own
+    /// `Describe` for each part, and takes no value, as the type has none.
+    fn described(&mut self, ty: &Ty, d: &Ty) -> form::Function {
+        let mut out = Out::new();
+        let describer = self.scalars(d);
+        let to = out.params(&describer);
+        let to = self.describe_shape(&mut out, ty, to, d);
+        out.blocks[out.current].end = form::End::Return(to);
+        form::Function {
+            types: out.types,
+            results: describer,
+            blocks: out.blocks,
+            cold: false,
+            name: String::new(),
+        }
+    }
+
+    /// The describer after the type is described to `to` by the `Describe` of
+    /// its type, which is the one the type is given or writes itself.
+    fn described_part(
+        &mut self,
+        out: &mut Out<'a>,
+        ty: &Ty,
+        to: Vec<form::Value>,
+        d: &Ty,
+    ) -> Vec<form::Value> {
+        let defs = self.typed.defs;
+        let describe = defs
+            .describe
+            .expect("a program that describes has the module");
+        let (instance, _) = defs.chosen(describe, 0, vec![ty.clone()], vec![d.clone()]);
+        let function = self.place(Body::Copy(instance));
+        let types = self.scalars(d);
+        out.emit(form::Op::Call { function, args: to }, types)
+    }
+
+    /// The describer after the shape of the type is told to it: a whole number
+    /// with its least and greatest, text, a struct with its name, its comment,
+    /// and each field with its name, its comment, and whether it may be left
+    /// out, and an enum with its name, its comment, and each case.
+    fn describe_shape(
+        &mut self,
+        out: &mut Out<'a>,
+        ty: &Ty,
+        to: Vec<form::Value>,
+        d: &Ty,
+    ) -> Vec<form::Value> {
+        let defs = self.typed.defs;
+        let describer = defs
+            .describer
+            .expect("a program that describes has the module");
+        let call = |this: &mut Self, out: &mut Out<'a>, name: &str, to, args| {
+            this.format_call(out, describer, d, name, to, args)
+        };
+        match ty {
+            Ty::Int(t) => {
+                let fits = t.min() >= i128::from(i64::MIN) && t.max() <= i128::from(i64::MAX);
+                let name = if fits { "signed" } else { "unsigned" };
+                let least = out.int(form::Bits::B64, t.min());
+                let greatest = out.int(form::Bits::B64, t.max());
+                call(self, out, name, to, vec![vec![least], vec![greatest]])
+            }
+            Ty::Text => call(self, out, "text", to, Vec::new()),
+            Ty::Nothing => call(self, out, "nothing", to, Vec::new()),
+            Ty::Tuple(of) => {
+                let size = self.count(out, of.len());
+                let mut to = call(self, out, "tuple", to, vec![size]);
+                for t in of {
+                    to = self.described_part(out, t, to, d);
+                }
+                to
+            }
+            Ty::List(of) => {
+                let to = call(self, out, "sequence", to, Vec::new());
+                self.described_part(out, &of[0], to, d)
+            }
+            Ty::Struct(s, args) => {
+                let def = &defs.file.structs[*s];
+                let name = self.text(out, crate::check::written_name(&def.name).as_bytes());
+                let about = self.text(out, defs.note_of(&def.name).as_bytes());
+                let size = self.count(out, def.fields.len());
+                let mut to = call(self, out, "structure", to, vec![name, about, size]);
+                for (field, t) in def.fields.iter().zip(&defs.fields[*s]) {
+                    let t = t.subst(args);
+                    let name = self.text(out, field.name.as_bytes());
+                    let key = format!("{}.{}", def.name, field.name);
+                    let about = self.text(out, defs.note_of(&key).as_bytes());
+                    let may = field.default.is_some()
+                        || matches!(&t, Ty::Enum(e, _) if *e == defs.option);
+                    let may = out.int(form::Bits::B8, i128::from(may));
+                    to = call(self, out, "field", to, vec![name, about, vec![may]]);
+                    to = self.described_part(out, &t, to, d);
+                }
+                call(self, out, "end_structure", to, Vec::new())
+            }
+            Ty::Enum(e, args) => {
+                if *e == defs.boolean {
+                    return call(self, out, "boolean", to, Vec::new());
+                }
+                if *e == defs.option {
+                    let to = call(self, out, "optional", to, Vec::new());
+                    return self.described_part(out, &args[0], to, d);
+                }
+                let def = &defs.file.enums[*e];
+                let name = self.text(out, crate::check::written_name(&def.name).as_bytes());
+                let about = self.text(out, defs.note_of(&def.name).as_bytes());
+                let size = self.count(out, def.cases.len());
+                let mut to = call(self, out, "enumeration", to, vec![name, about, size]);
+                for (case, holds) in def.cases.iter().zip(&defs.cases[*e]) {
+                    let name = self.text(out, case.name.as_bytes());
+                    let key = format!("{}.{}", def.name, case.name);
+                    let about = self.text(out, defs.note_of(&key).as_bytes());
+                    let held = out.int(form::Bits::B8, i128::from(holds.is_some()));
+                    to = call(self, out, "case", to, vec![name, about, vec![held]]);
+                    if let Some(t) = holds {
+                        to = self.described_part(out, &t.subst(args), to, d);
+                    }
+                }
+                call(self, out, "end_enumeration", to, Vec::new())
+            }
+            _ => unreachable!("a type given `Describe`"),
+        }
+    }
+
     /// Calls the function `name` of the writer's `Writer`, which is given the
     /// writer and then `args`, and gives the writer back.
     fn writer_call(
@@ -148,11 +277,29 @@ impl<'a> Lowering<'a> {
         to: Vec<form::Value>,
         args: Vec<Vec<form::Value>>,
     ) -> Vec<form::Value> {
+        let writer = self
+            .typed
+            .defs
+            .writer
+            .expect("a program that writes has the module");
+        self.format_call(out, writer, w, name, to, args)
+    }
+
+    /// Calls the function `name` of trait `k`, which the format `w` has, with
+    /// the format and then `args`, and gives the format back.
+    fn format_call(
+        &mut self,
+        out: &mut Out<'a>,
+        k: usize,
+        w: &Ty,
+        name: &str,
+        to: Vec<form::Value>,
+        args: Vec<Vec<form::Value>>,
+    ) -> Vec<form::Value> {
         let defs = self.typed.defs;
-        let writer = defs.writer.expect("a program that writes has the module");
-        let at = crate::check::traits::trait_function(&defs.file.traits[writer], name)
-            .expect("a function of `Writer`");
-        let (instance, _) = defs.chosen(writer, at, vec![w.clone()], Vec::new());
+        let at = crate::check::traits::trait_function(&defs.file.traits[k], name)
+            .expect("a function of the format's trait");
+        let (instance, _) = defs.chosen(k, at, vec![w.clone()], Vec::new());
         let function = self.place(Body::Copy(instance));
         let types = self.scalars(w);
         let args = std::iter::once(to).chain(args).flatten().collect();

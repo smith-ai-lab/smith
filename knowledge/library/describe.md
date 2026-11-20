@@ -2,7 +2,12 @@
 type: specification
 title: Describe
 description: The Describe trait, by which a type says what it is made of with no value in hand, each part with its name and its comment, and Describer, which a format for descriptions has.
-status: planned
+status: partial
+built:
+  - "`std.describe`, with `Describe` and `Describer`, which a program imports with `use` and which the prelude does not hold"
+  - "`Describe`, which a whole number, `bool`, `str`, `()`, and every struct, enum, tuple, list, or `Option` is given unless a part lacks it, which `without Describe for T` takes away, and which a type's own `impl` replaces, told part by part to a `Describer` with no value in hand, as `Describe[T].describe(d)`"
+  - "the comment of a struct, a field, an enum, and a case, for the types of the file that is built and only where that file writes `Describe` or imports `std.describe`; a type of another module is described with the empty text"
+  - "not a map, which `Describe` is not given to as `Serialize` is not, so `map` of `Describer` is never called; not a float, `Slice`, or an array; not what reads a description"
 ---
 
 # Describe
@@ -30,6 +35,32 @@ trait Describe[T] {
 ```
 
 `describe` takes no value. Which type is described is the one named where it is called, as `Describe[Note].describe(d)`.
+
+## The describer
+
+A format for descriptions is a type that has `Describer`, which has a function for each shape. Each takes the describer and gives it back, and has the effect `alloc` and no other, as `Writer`'s do.
+
+```
+trait Describer[D] {
+  fn boolean(d: take D) -> D ! alloc
+  fn signed(d: take D, least: Int, greatest: Int) -> D ! alloc
+  fn unsigned(d: take D, least: u64, greatest: u64) -> D ! alloc
+  fn text(d: take D) -> D ! alloc
+  fn nothing(d: take D) -> D ! alloc
+  fn optional(d: take D) -> D ! alloc
+  fn sequence(d: take D) -> D ! alloc
+  fn tuple(d: take D, size: Nat) -> D ! alloc
+  fn structure(d: take D, name: str, about: str, fields: Nat) -> D ! alloc
+  fn field(d: take D, name: str, about: str, optional: bool) -> D ! alloc
+  fn end_structure(d: take D) -> D ! alloc
+  fn enumeration(d: take D, name: str, about: str, cases: Nat) -> D ! alloc
+  fn case(d: take D, name: str, about: str, holds: bool) -> D ! alloc
+  fn end_enumeration(d: take D) -> D ! alloc
+  fn map(d: take D) -> D ! alloc
+}
+```
+
+`signed` tells the least and the greatest value of a range when both are in `Int`, and `unsigned` when they are not. `optional`, `sequence`, and `map` are each followed by what it holds, `tuple` by its parts, `field` by what the field is, and `case` by what the case holds when `holds` is true. `structure` and `enumeration` are ended by `end_structure` and `end_enumeration`.
 
 ## The shapes
 
