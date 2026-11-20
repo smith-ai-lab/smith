@@ -6,9 +6,10 @@ status: partial
 built:
   - "`std.html` declares the effect `markup`, which a page is written through as it runs, with `text`, which writes a text with `<`, `>`, `&`, `\"`, and `'` written as `&lt;`, `&gt;`, `&amp;`, `&quot;`, and `&#39;` before any handler is given it, and `insert`, which puts an `Html` inside the page being written"
   - "`render`, the handler of `markup`, which keeps the page in a `Text` its operations append to and gives it as an `Html`, whose field is private to `std.html`, and which has `Fmt`, so `print(\"{page}\")` writes the page as its text"
+  - "the operations of `markup` are private to `std.html`: a program that imports one, or handles `markup`, is refused, so `render` is the only handler and no function writes a text as HTML"
   - "a tag stays open until something that is not an attribute is written, so an attribute follows the tag it belongs to, and a handler answers `markup` with the operations `start`, `attribute`, `emit`, `include`, `void`, and `end`"
   - "the elements `html`, `head`, `title`, `body`, `h1`, `h2`, `p`, `b`, `span`, `ul`, `li`, `article`, `a`, `br`, and `input`, each called with its text, with a block, or with both, and with its attributes as named arguments, each written only when it is given and not empty; every function that writes a page carries `alloc`"
-  - "not `div`, whose name the prelude holds for division, not `attr`, whose name is a text written in the source and checked when the program is built, which waits on functions over code, and not the operations being private to `std.html`, which waits on the compiler"
+  - "not `div`, whose name the prelude holds for division, not `attr`, whose name is a text written in the source and checked when the program is built, which waits on functions over code"
 ---
 
 # HTML
