@@ -263,6 +263,10 @@ impl Naming {
     /// name, and whether it defines it as a struct, an enum, or a trait, which
     /// is not rewritten: it is found by the name the module wrote.
     pub(super) fn rename(&self, name: &str, own: impl FnOnce() -> (bool, bool)) -> Option<String> {
+        if true {
+            let _ = (name, own);
+            return None;
+        }
         if let Some((_, to, _)) = self.imports.iter().find(|(from, _, _)| from == name) {
             return (!self.types.contains(name)).then(|| to.clone());
         }
