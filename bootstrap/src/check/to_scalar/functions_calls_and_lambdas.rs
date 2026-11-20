@@ -331,6 +331,59 @@ impl<'a> Lowering<'a> {
         }
     }
 
+    /// Runs a function a name holds, with these arguments, which gives `gives`:
+    /// a lambda's body is lowered in place, in the frame it is written in,
+    /// and a function with a name is called.
+    pub(super) fn run_func(
+        &mut self,
+        out: &mut Out<'a>,
+        func: Func<'a>,
+        args: Vec<Bound<'a>>,
+        gives: &Ty,
+        quiet: bool,
+    ) -> Vec<form::Value> {
+        let args = args.into_iter();
+        match func {
+            Func::Named(instance) => {
+                let function = self.place(Body::Copy(instance));
+                let args = args.flat_map(|a| a.values).collect();
+                let types = self.scalars(gives);
+                out.emit(form::Op::Call { function, args }, types)
+            }
+            Func::Lambda(lambda, frame, lambda_env) => {
+                let caller = std::mem::replace(&mut out.at, frame);
+                let before = out.names().len();
+                let mut limits: Vec<usize> = out.frames.iter().map(Vec::len).collect();
+                limits[frame] = before;
+                for ((name, _), mut arg) in lambda.params.iter().zip(args) {
+                    arg.name = name.clone();
+                    out.names_mut().push(arg);
+                }
+                let code = Code::Stmts(&lambda.body);
+                let result = self.leaving(out, code, &lambda_env, (gives, false), limits);
+                out.names_mut().truncate(before);
+                out.at = caller;
+                result
+            }
+            Func::Each(each, frame, each_env) => {
+                let caller = std::mem::replace(&mut out.at, frame);
+                let before = out.names().len();
+                let mut limits: Vec<usize> = out.frames.iter().map(Vec::len).collect();
+                limits[frame] = before;
+                let over = each.over.as_ref().expect("a loop over a value");
+                for mut arg in args {
+                    arg.name = over.name.clone();
+                    out.names_mut().push(arg);
+                }
+                let code = Code::Each(each, !quiet);
+                let result = self.leaving(out, code, &each_env, (gives, false), limits);
+                out.names_mut().truncate(before);
+                out.at = caller;
+                result
+            }
+        }
+    }
+
     /// Lowers a call of a name that holds a function. A lambda's body is
     /// lowered in place, in the frame it is written in, with its parameters
     /// standing for the arguments.
@@ -371,49 +424,93 @@ impl<'a> Lowering<'a> {
             let param = (String::new(), params[at].clone());
             args[at] = Some(self.argument(out, &arg.value, &param, env));
         }
-        let args = args.into_iter().map(|a| a.expect("given"));
-        let mut result = match func {
-            Func::Named(instance) => {
-                let function = self.place(Body::Copy(instance));
-                let args = args.flat_map(|a| a.values).collect();
-                let types = self.scalars(gives);
-                out.emit(form::Op::Call { function, args }, types)
-            }
-            Func::Lambda(lambda, frame, lambda_env) => {
-                let caller = std::mem::replace(&mut out.at, frame);
-                let before = out.names().len();
-                let mut limits: Vec<usize> = out.frames.iter().map(Vec::len).collect();
-                limits[frame] = before;
-                for ((name, _), mut arg) in lambda.params.iter().zip(args) {
-                    arg.name = name.clone();
-                    out.names_mut().push(arg);
-                }
-                let code = Code::Stmts(&lambda.body);
-                let result = self.leaving(out, code, &lambda_env, (gives, false), limits);
-                out.names_mut().truncate(before);
-                out.at = caller;
-                result
-            }
-            Func::Each(each, frame, each_env) => {
-                let caller = std::mem::replace(&mut out.at, frame);
-                let before = out.names().len();
-                let mut limits: Vec<usize> = out.frames.iter().map(Vec::len).collect();
-                limits[frame] = before;
-                let over = each.over.as_ref().expect("a loop over a value");
-                for mut arg in args {
-                    arg.name = over.name.clone();
-                    out.names_mut().push(arg);
-                }
-                let code = Code::Each(each, !quiet);
-                let result = self.leaving(out, code, &each_env, (gives, false), limits);
-                out.names_mut().truncate(before);
-                out.at = caller;
-                result
-            }
-        };
+        let args = args.into_iter().map(|a| a.expect("given")).collect();
+        let mut result = self.run_func(out, func, args, gives, quiet);
         if *gives == Ty::Nothing {
             result.clear();
         }
         (gives.clone(), result)
+    }
+
+    /// Lowers a call of the name of an effect: the functions given for its
+    /// operations are in force while the body runs, in place, and no longer.
+    pub(super) fn handle(
+        &mut self,
+        out: &mut Out<'a>,
+        expr: &'a Expr,
+        call: &'a Call,
+        effect: usize,
+        env: &[Ty],
+    ) -> (Ty, Vec<form::Value>) {
+        let typed = self.typed;
+        let signature = typed.defs.handler_signature(effect);
+        let places = params_of(&signature.params, &call.args).expect("checked");
+        let mut given: Vec<Option<Bound<'a>>> = vec![None; signature.params.len()];
+        for (arg, at) in call.args.iter().zip(places) {
+            given[at] = Some(self.argument(out, &arg.value, &signature.params[at], env));
+        }
+        let mut given: Vec<Bound<'a>> = given.into_iter().map(|a| a.expect("given")).collect();
+        let body = given.pop().expect("a body").func.expect("a function");
+        let operations = (given.into_iter())
+            .map(|b| b.func.expect("a function"))
+            .collect();
+        let below = out.handlers.len();
+        out.handlers.push(Handler {
+            effect,
+            operations,
+            below,
+        });
+        let gives = typed.type_of(expr, env);
+        let mut result = self.run_func(out, body, Vec::new(), &gives, false);
+        out.handlers.truncate(below);
+        if gives == Ty::Nothing {
+            result.clear();
+        }
+        (gives, result)
+    }
+
+    /// Lowers a call of an operation of an effect: the function the handler in
+    /// force gives for it, run in place with the call's arguments, under the
+    /// handlers that were in force outside that handler.
+    pub(super) fn operation_call(
+        &mut self,
+        out: &mut Out<'a>,
+        call: &'a Call,
+        instance: Instance,
+        gives: Ty,
+        env: &[Ty],
+    ) -> (Ty, Vec<form::Value>) {
+        let typed = self.typed;
+        let defs = typed.defs;
+        let Template::Free(f) = instance.template else {
+            unreachable!("an operation is a function")
+        };
+        let (effect, at) = defs.operation_of(f);
+        let handler = out
+            .handlers
+            .iter()
+            .rposition(|h| h.effect == effect)
+            .expect("an effect that is handled where it is asked of");
+        let func = out.handlers[handler].operations[at].clone();
+        let params = defs.params(instance.template);
+        let mut args: Vec<Option<Bound<'a>>> = vec![None; params.len()];
+        for (arg, at) in call
+            .args
+            .iter()
+            .zip(params_of(&params, &call.args).expect("checked"))
+        {
+            args[at] = Some(self.argument(out, &arg.value, &params[at], env));
+        }
+        for (at, default) in defs.left_out(call) {
+            args[at] = Some(self.argument(out, default, &params[at], &[]));
+        }
+        let args = args.into_iter().map(|a| a.expect("given")).collect();
+        let outside = out.handlers.split_off(out.handlers[handler].below);
+        let mut result = self.run_func(out, func, args, &gives, false);
+        out.handlers.extend(outside);
+        if gives == Ty::Nothing {
+            result.clear();
+        }
+        (gives, result)
     }
 }

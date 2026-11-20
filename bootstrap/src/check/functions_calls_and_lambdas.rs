@@ -53,6 +53,7 @@ impl<'a> Checker<'a> {
         self.defaults(def, &defs.signatures[f]);
         self.contracts(def, &defs.signatures[f]);
         self.effects(&def.effects);
+        self.parameter_effects(def);
     }
 
     /// Checks a default: it uses no name, carries no effect, and gives
@@ -70,6 +71,7 @@ impl<'a> Checker<'a> {
             default: Some(params),
             scope,
             listed: Vec::new(),
+            extra: Vec::new(),
             unknown_effect: false,
             missing: Vec::new(),
             names: Vec::new(),
@@ -537,6 +539,12 @@ impl<'a> Checker<'a> {
             self.arguments(body, call, &print, true, None, None);
             return Ty::Nothing;
         }
+        if let (Some(effect), false) = (
+            defs.effect_named(name),
+            defs.function_names.contains_key(name),
+        ) {
+            return self.handler_call(body, call, effect);
+        }
         if let Some(&f) = defs.function_names.get(name) {
             let sig = &defs.signatures[f];
             if self.effect_in_default(body, call, sig) {
@@ -886,7 +894,11 @@ impl<'a> Checker<'a> {
             if let (Some(i), Expr::Lambda(l), Want::Ty(Ty::Fn(_))) = (param, &arg.value, &wanted) {
                 lambdas.push((i, l));
             }
+            let mark = body.extra.len();
+            body.extra
+                .extend(self.lambda_effects(signature, param, &arg.value));
             let gives = self.expr(body, &arg.value, &wanted);
+            body.extra.truncate(mark);
             match param {
                 Some(i) => {
                     let pattern = &signature.params[i].1;

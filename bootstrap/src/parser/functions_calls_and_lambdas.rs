@@ -214,7 +214,7 @@ impl Parser<'_> {
         self.expect_punct(":", "`:` and the parameter's type")?;
         let take = self.taking();
         self.name_bound_ok = self.bound_names_allowed && self.tok() != &Tok::Keyword("fn");
-        let (ty, takes) = self.ty_taking()?;
+        let (ty, takes, effects) = self.ty_taking()?;
         self.name_bound_ok = false;
         let mut default = None;
         if self.tok() == &Tok::Punct("=") {
@@ -239,14 +239,20 @@ impl Parser<'_> {
             default,
             take,
             takes,
+            effects,
         })
     }
 
     /// Parses a function type, from its `fn`: the types of its parameters in
     /// parentheses, each marked `take` if the function owns it, then
     /// `-> R` if it gives a result, and the effects it carries. It gives
-    /// whether each parameter is marked `take`.
-    pub(super) fn function_type(&mut self) -> Result<(Type, Vec<bool>), Error> {
+    /// whether each parameter is marked `take`, and the effects it carries,
+    /// which only the type of a parameter keeps: the effects of any other
+    /// function type are not built.
+    pub(super) fn function_type(
+        &mut self,
+        kept: bool,
+    ) -> Result<(Type, Vec<bool>, Effects), Error> {
         let pos = self.pos();
         self.bump();
         if self.tok() != &Tok::Punct("(") {
@@ -269,7 +275,13 @@ impl Parser<'_> {
                 range: None,
             });
         }
-        self.function_effects();
+        let bang = self.pos();
+        let mut effects = self.effects()?;
+        if !kept && !effects.is_empty() {
+            self.unbuilt
+                .push(Error::unsupported(bang, "an effect on a function type"));
+            effects.clear();
+        }
         let function = Type {
             name: String::new(),
             pos,
@@ -277,7 +289,7 @@ impl Parser<'_> {
             function: true,
             range: None,
         };
-        Ok((function, takes))
+        Ok((function, takes, effects))
     }
 
     /// Parses what follows a name, which is at `pos` and after the name

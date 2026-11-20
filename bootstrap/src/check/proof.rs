@@ -1342,6 +1342,7 @@ impl<'a> Checker<'a> {
             default: None,
             scope: &sig.scope,
             listed: Vec::new(),
+            extra: Vec::new(),
             unknown_effect: false,
             missing: Vec::new(),
             names: sig.params.clone(),

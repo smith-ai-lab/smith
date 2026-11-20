@@ -692,6 +692,10 @@ struct Signature {
     /// The effects it carries that a caller must have, which are those it
     /// lists that the compiler builds.
     effects: Vec<String>,
+    /// For each parameter that is a function with effects, the effects its
+    /// function carries, which a lambda written for it may carry beside those
+    /// of the function it is written in. A parameter that is not one has none.
+    fn_effects: Vec<Vec<String>>,
 }
 
 impl Signature {
@@ -704,6 +708,7 @@ impl Signature {
             param_defaults: Vec::new(),
             gives: Ty::Nothing,
             effects: Vec::new(),
+            fn_effects: Vec::new(),
         }
     }
 
@@ -715,6 +720,7 @@ impl Signature {
             param_defaults: Vec::new(),
             gives: Ty::Nothing,
             effects: vec!["console".to_string()],
+            fn_effects: Vec::new(),
         }
     }
 }
@@ -1160,6 +1166,9 @@ impl<'a> Defs<'a> {
                 }
                 built
             },
+            fn_effects: (f.params.iter())
+                .map(|p| p.effects.iter().map(|(e, _)| e.clone()).collect())
+                .collect(),
             scope,
         }
     }
@@ -4817,6 +4826,10 @@ enum Callee {
     /// `narrow` or one of its three relatives, which take a whole number to
     /// a type that does not hold all of its values.
     Narrow(Narrowing),
+    /// The name of an effect, called with a lambda for each operation and the
+    /// body to run with them in force: the effect, by its place among the
+    /// file's.
+    Handle(usize),
 }
 
 /// For each argument of a call, the place of its parameter, or none when an
@@ -5111,6 +5124,9 @@ impl<'a> Typed<'a> {
                     let template = Template::Free(f);
                     return Callee::Run(Instance { template, args }, gives);
                 }
+                if let Some(effect) = defs.effect_named(name) {
+                    return Callee::Handle(effect);
+                }
                 defs.trait_fns[name][0]
             }
             Some((q, _)) => {
@@ -5163,6 +5179,7 @@ impl<'a> Typed<'a> {
             | Callee::Push
             | Callee::Freeze
             | Callee::Utf8
+            | Callee::Handle(_)
             | Callee::Narrow(_) => Vec::new(),
         }
     }
@@ -5269,6 +5286,15 @@ impl<'a> Typed<'a> {
             };
             let endless = (path.get(&callee.template).into_iter().flatten())
                 .any(|p| *p == callee || grows(p));
+            if let Some(effect) = self.defs.carries_handled(&callee) {
+                errors.push(Error::unsupported(
+                    pos,
+                    &format!(
+                        "a function that carries the `{}` effect, which a handler answers,",
+                        written_name(effect)
+                    ),
+                ));
+            }
             if endless {
                 errors.push(Error::unsupported(
                     pos,
@@ -5578,6 +5604,9 @@ struct Body<'a> {
     scope: &'a Scope,
     /// The effects it lists that have a name, each once.
     listed: Vec<&'a str>,
+    /// The effects a lambda being checked may carry beside those listed: those
+    /// of the function type of the parameter it is written for.
+    extra: Vec<String>,
     /// Whether it lists an effect with no such name, which may be one it
     /// needs misspelt, so that a missing effect is then not reported.
     unknown_effect: bool,
@@ -6083,6 +6112,7 @@ impl<'a> Checker<'a> {
             default: None,
             scope: view.scope,
             listed,
+            extra: Vec::new(),
             unknown_effect,
             missing: Vec::new(),
             names: view.params.clone(),
