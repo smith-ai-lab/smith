@@ -1199,11 +1199,7 @@ impl<'a> Checker<'a> {
         }
         self.circles.push(sorted);
         let name = |m: usize| format!("`{}`", defs.file.functions[m].name);
-        let names = members
-            .iter()
-            .map(|&m| name(m))
-            .collect::<Vec<_>>()
-            .join(", ");
+        let names = listed(&members.iter().map(|&m| name(m)).collect::<Vec<_>>());
         let without: Vec<String> = (members.iter())
             .filter(|&&m| defs.file.functions[m].decreases.is_empty())
             .map(|&m| name(m))
@@ -1213,8 +1209,9 @@ impl<'a> Checker<'a> {
                 Error::new(
                     pos,
                     format!(
-                        "{names} call each other, and a function in a circle of functions needs a `decreases`, which {} has not",
-                        without.join(", ")
+                        "{names} call each other, and a function in a circle of functions needs a `decreases`, which {} {}",
+                        listed(&without),
+                        if without.len() == 1 { "has not" } else { "have none" }
                     ),
                 )
                 .with_fix(
@@ -1373,5 +1370,15 @@ fn tail_calls(stmts: &[Stmt], out: &mut Vec<Pos>) {
         }
         Some(Stmt::Expr(Expr::Call(c))) => out.push(c.pos),
         _ => {}
+    }
+}
+
+/// Names written as a sentence says them: `a`, `a` and `b`, or `a`, `b`, and `c`.
+fn listed(names: &[String]) -> String {
+    match names {
+        [] => String::new(),
+        [one] => one.clone(),
+        [a, b] => format!("{a} and {b}"),
+        [rest @ .., last] => format!("{}, and {last}", rest.join(", ")),
     }
 }
