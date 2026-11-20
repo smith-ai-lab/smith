@@ -7,6 +7,7 @@ built:
   - "`effect e { fn op(a: T = x) -> U }` declares an effect, and each operation is a function with no body that carries the effect, with the parameters, result, and defaults of any function, so a caller lists the effect, whether it calls the operation or a function that carries it, and a default may be left out of a call"
   - "`pub effect` in a module is imported with `use` by its name, and each operation by its own name, and an effect or an operation used with no import is refused as any name is"
   - "`console` is declared by `std/console.smith` and `print` is its operation, which a program that reaches `main` with no handler has answered by the target"
+  - "the effect's name is a function that takes a lambda for each operation, each taking every parameter of the operation, and the body to run, and gives what the body gives"
   - "an effect that the program declares and lists in `main`, which the target does not provide and no handler answers, is one error at its name in the list that names the effect"
 ---
 

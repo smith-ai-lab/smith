@@ -2,6 +2,9 @@
 type: specification
 title: The Smith compiler
 description: How the compiler is designed. It covers how for expressions and effects are compiled, the compiler's structure and commands, its representation, backends, what an executable depends on, testing, timings, the map of an executable, releases, and bootstrap.
+status: partial
+built:
+  - "a handler is resolved at build time: the handler in force at each call of an operation is the one `with` or a call of the effect's name installed, found while the code is lowered, and the call is the lambda that answers it lowered in place"
 ---
 
 # The Smith compiler
