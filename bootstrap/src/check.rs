@@ -2507,7 +2507,9 @@ fn reach(file: &File, names: &Names, roots: &[Item], contracts: bool) -> Reached
         let function = |f: &Function, found: &mut Vec<Item>| {
             types_named(f, &mut |name, pos| type_name(name, pos, found));
             let defaults = f.params.iter().filter_map(|p| p.default.as_ref());
-            let contracts = f.requires.iter().chain(&f.ensures).filter(|_| contracts);
+            let contracts = (f.requires.iter().chain(&f.ensures))
+                .chain(&f.decreases)
+                .filter(|_| contracts);
             called(
                 values(&f.body).chain(defaults).chain(contracts).collect(),
                 found,
@@ -4475,7 +4477,7 @@ fn names_in_items(file: &File, impls: &[Arc<Impl>], out: &mut dyn FnMut(&str, Po
 fn names_in_function(f: &Function, out: &mut dyn FnMut(&str, Pos, Ask)) {
     types_named(f, &mut |n, pos| out(n, pos, Ask::Type));
     let defaults = f.params.iter().filter_map(|p| p.default.as_ref());
-    let contracts = f.requires.iter().chain(&f.ensures);
+    let contracts = (f.requires.iter().chain(&f.ensures)).chain(&f.decreases);
     names_in_expressions(
         values(&f.body).chain(defaults).chain(contracts).collect(),
         out,
@@ -6541,6 +6543,7 @@ impl<'a> Checker<'a> {
             for requirement in &f.requires {
                 self.assume(&mut body, requirement, true);
             }
+            self.measure_parts(&mut body, f);
             if !f.ensures.is_empty() {
                 proof::tails(&f.body, &mut body.tails);
             }
