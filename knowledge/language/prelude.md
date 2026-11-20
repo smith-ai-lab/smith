@@ -12,7 +12,7 @@ built:
 
 # The prelude
 
-A small set of names is in scope in every file with no `use`. It is called the prelude, and it is as small as it can be: a name is in it only when the syntax of the language means that name, or, for `Int`, `Nat`, `Pos`, and `Byte`, when it says what a number is for. There is no other way in, and so no name is in it for convenience. The syntax means types, traits, and effects, and never a function, so no function is in it.
+A small set of names is in scope in every file with no `use`. It is called the prelude, and it is as small as it can be: a name is in it only when the syntax of the language means that name, when it is a trait that every type or every function is given with no `impl`, or, for `Int`, `Nat`, `Pos`, and `Byte`, when it says what a number is for. There is no other way in, and so no name is in it for convenience. The syntax means types, traits, and effects, and never a function, so no function is in it.
 
 ```
 use std.console (console, print)
@@ -38,7 +38,8 @@ No syntax means `print`, or the `console` effect it needs, so a program that pri
 | `Exit` | What `main` returns |
 | `Fmt` and `Repr` | An expression in a string's braces |
 | `Convert` | Two types that meet in an operator, and a failure that `try` converts |
-| `Hash`, `Copy`, and `Discard` | The traits a type is given with no `impl` |
+| `Hash`, `Copy`, and `Discard` | The traits a type is given with no `impl`, which a bound as `T: Copy` and a `without` name |
+| `Function` | The trait every function with a name is given with no `impl`, as [Traits](traits.md) says |
 | `FromInt`, `FromFloat`, `FromString`, and `FromArray` | The literals |
 | `alloc`, `diverge`, and the other effects the compiler gives | A string that holds an expression, an open-ended `loop`, and the rest of [the built-in effects](provided-effects.md#built-in) |
 
