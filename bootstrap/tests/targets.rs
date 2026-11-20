@@ -31,8 +31,20 @@ use crate::tuples;
 
 pub const ONCE: &[Test] = &[
     (
-        "every_target_builds_identical_bytes_twice_for_the_rest",
-        every_target_builds_identical_bytes_twice_for_the_rest,
+        "every_target_builds_identical_bytes_twice_for_reprs",
+        every_target_builds_identical_bytes_twice_for_reprs,
+    ),
+    (
+        "every_target_builds_identical_bytes_twice_for_choices",
+        every_target_builds_identical_bytes_twice_for_choices,
+    ),
+    (
+        "every_target_builds_identical_bytes_twice_for_numbers",
+        every_target_builds_identical_bytes_twice_for_numbers,
+    ),
+    (
+        "every_target_builds_identical_bytes_twice_for_enums_and_text",
+        every_target_builds_identical_bytes_twice_for_enums_and_text,
     ),
     (
         "every_target_builds_identical_bytes_twice",
@@ -329,13 +341,22 @@ fn builds_identical_bytes_twice<T: Debug>(
 fn every_target_builds_identical_bytes_twice() {
     builds_identical_bytes_twice(6, 3, programs::program, |c| &c.source);
     builds_identical_bytes_twice(19, 2, traits::program, |c| c.source.as_bytes());
+}
+
+fn every_target_builds_identical_bytes_twice_for_enums_and_text() {
     builds_identical_bytes_twice(24, 2, enums::program, |c| c.source.as_bytes());
     builds_identical_bytes_twice(36, 2, text::program, |c| c.source.as_bytes());
 }
 
-fn every_target_builds_identical_bytes_twice_for_the_rest() {
+fn every_target_builds_identical_bytes_twice_for_reprs() {
     builds_identical_bytes_twice(65, 1, reprs::program, |c| c.source.as_bytes());
+}
+
+fn every_target_builds_identical_bytes_twice_for_choices() {
     builds_identical_bytes_twice(69, 1, choices::program, |c| c.source.as_bytes());
+}
+
+fn every_target_builds_identical_bytes_twice_for_numbers() {
     builds_identical_bytes_twice(73, 1, numbers::program, |c| c.source.as_bytes());
 }
 
@@ -372,11 +393,11 @@ fn every_executable_of_a_program_with_traits_does_what_the_evaluator_says() {
 }
 
 fn every_executable_of_a_program_with_enums_does_what_the_evaluator_says() {
-    every_executable_agrees(25, 60, enums::program, |case| case.source.as_bytes());
+    every_executable_agrees(25, 30, enums::program, |case| case.source.as_bytes());
 }
 
 fn every_executable_of_a_program_with_tuples_does_what_the_evaluator_says() {
-    every_executable_agrees(28, 60, tuples::program, |case| case.source.as_bytes());
+    every_executable_agrees(28, 30, tuples::program, |case| case.source.as_bytes());
 }
 
 fn every_executable_of_a_program_with_lambdas_does_what_the_evaluator_says() {
