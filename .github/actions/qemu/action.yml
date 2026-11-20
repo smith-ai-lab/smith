@@ -3,38 +3,30 @@ description: >
   Puts `qemu-x86_64` on the path. The test of an executable started on a chip
   without the level it was built for makes such a chip with it, and fails
   where it is not there. The packages that hold it, with what they need that
-  the runner's image does not have, are kept between runs by the version of the
-  package, and the mirror is asked for them only when no run has kept that
-  version.
+  the runner's image does not have, are kept between runs by the release of the
+  system and the month, and the mirror is asked for them only when no run has
+  kept them in that month.
 
 runs:
   using: composite
   steps:
-    # The version the package has now, as the lists the runner's image carries
-    # say, and as the mirror says when the image carries none. The image is not
-    # in the key: runs are given images of different versions, and a key with it
-    # would miss for each.
+    # What names the kept files is the release of the system, the chip, and the
+    # month, and not the version of the package, which only the mirror (or lists
+    # that the runner's image may not carry, and `apt-get update` is 10 s) can
+    # say. A kept file is replaced in the month after it was kept, with the
+    # package the mirror has then.
     - id: version
       shell: bash
       run: |
         set -eu
-        version=$(apt-cache policy qemu-user | sed -n 's/^ *Candidate: //p')
-        if [ -z "$version" ] || [ "$version" = "(none)" ]; then
-          sudo apt-get update
-          version=$(apt-cache policy qemu-user | sed -n 's/^ *Candidate: //p')
-        fi
-        if [ -z "$version" ] || [ "$version" = "(none)" ]; then
-          echo "::error::no version of the package qemu-user, which has qemu-x86_64, is known"
-          exit 1
-        fi
-        echo "the version is $version"
-        echo "version=$version" >> "$GITHUB_OUTPUT"
+        release=$(. /etc/os-release && echo "$ID-$VERSION_ID")
+        echo "key=$release-$(uname -m)-$(date -u +%Y-%m)" >> "$GITHUB_OUTPUT"
     - id: kept
       uses: actions/cache@v4
       with:
         path: ~/.cache/qemu-x86_64
-        key: qemu-x86_64-${{ runner.os }}-${{ runner.arch }}-${{ steps.version.outputs.version }}
-    - name: Fetch it from the mirror, as no run has kept this version
+        key: qemu-x86_64-${{ steps.version.outputs.key }}
+    - name: Fetch it from the mirror, as no run has kept them this month
       if: steps.kept.outputs.cache-hit != 'true'
       shell: bash
       run: |
