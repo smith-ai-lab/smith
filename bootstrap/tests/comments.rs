@@ -19,6 +19,10 @@ pub const ONCE: &[Test] = &[
         a_comment_with_a_blank_line_or_code_between_it_and_an_item_is_not_the_items,
     ),
     (
+        "a_part_that_shares_its_line_with_what_it_belongs_to_has_no_comment_of_its_own",
+        a_part_that_shares_its_line_with_what_it_belongs_to_has_no_comment_of_its_own,
+    ),
+    (
         "a_file_with_no_comment_has_no_comment_on_any_item",
         a_file_with_no_comment_has_no_comment_on_any_item,
     ),
@@ -215,4 +219,23 @@ fn a_file_with_no_comment_has_no_comment_on_any_item() {
             .collect();
         assert_eq!(item_comments(bare.as_bytes()), Ok(Vec::new()), "for\n{bare}");
     });
+}
+
+/// A parameter written on the line of the function has no comment of its own,
+/// and neither has one written on the line of another parameter: the comment
+/// above is the thing's that starts the line.
+fn a_part_that_shares_its_line_with_what_it_belongs_to_has_no_comment_of_its_own() {
+    let source = "// Adds two.\nfn add(a: str, b: str) -> str { a }\n\n\
+        // Adds.\nfn plus(\n  // The first.\n  a: str, b: str,\n) -> str { a }\n\n\
+        // A pair.\nstruct Pair { a: str }\n";
+    let found = item_comments(source.as_bytes()).expect("a file");
+    assert_eq!(
+        found,
+        vec![
+            ("add".to_string(), "Adds two.".to_string()),
+            ("plus".to_string(), "Adds.".to_string()),
+            ("plus.a".to_string(), "The first.".to_string()),
+            ("Pair".to_string(), "A pair.".to_string()),
+        ]
+    );
 }

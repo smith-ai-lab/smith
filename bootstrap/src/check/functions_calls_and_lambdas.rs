@@ -572,8 +572,27 @@ impl<'a> Checker<'a> {
         ) {
             return self.handler_call(body, call, effect);
         }
-        if let Some(f) = defs.function(call.name_pos, name) {
+        // A name that holds the function `g` by the type `g` is called as `g` is.
+        let named = body
+            .names
+            .iter()
+            .rfind(|(n, _)| n == name)
+            .and_then(|(_, t)| match t {
+                Ty::Named(g) => Some(*g),
+                _ => None,
+            });
+        if let Some(f) = named.or_else(|| defs.function(call.name_pos, name)) {
             let sig = &defs.signatures[f];
+            if named.is_some() {
+                self.named_calls.insert(addr(call), f);
+                if call.args.len() < sig.params.len() {
+                    self.errors.push(Error::unsupported(
+                        call.pos,
+                        "leaving out an argument of a function called by its type",
+                    ));
+                    return self.unknown_call(body, call);
+                }
+            }
             if self.effect_in_default(body, call, sig) {
                 return self.unknown_call(body, call);
             }

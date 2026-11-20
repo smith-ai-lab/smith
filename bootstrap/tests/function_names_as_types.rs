@@ -19,6 +19,10 @@ pub const ONCE: &[Test] = &[
         an_impl_for_a_function_is_found_for_that_function_and_for_no_other_of_the_same_signature,
     ),
     (
+        "a_parameter_typed_with_a_functions_name_is_given_that_function_and_called_as_it_is",
+        a_parameter_typed_with_a_functions_name_is_given_that_function_and_called_as_it_is,
+    ),
+    (
         "a_function_given_for_a_type_parameter_that_a_trait_bounds_settles_it_and_a_lambda_does_not",
         a_function_given_for_a_type_parameter_that_a_trait_bounds_settles_it_and_a_lambda_does_not,
     ),
@@ -137,6 +141,41 @@ fn an_impl_for_a_function_is_found_for_that_function_and_for_no_other_of_the_sam
             assert_eq!(found.len(), asked_missing, "{found:?} for\n{source}");
         }
     });
+}
+
+/// A parameter whose type is the name of a function takes that function and no
+/// other of the same signature, and is called as the function is, with what the
+/// function gives. The expectation is what the generator chose each to give.
+fn a_parameter_typed_with_a_functions_name_is_given_that_function_and_called_as_it_is() {
+    generate::check(
+        7913,
+        30,
+        |g: &mut Gen| (g.below(3) + 2, g.below(1000), g.below(2)),
+        |(count, add, other)| {
+            // `f0` is given `x + n` for its own `n`, and the others differ.
+            let mut source = String::from("use std.bits (i32)\nuse std.console (console, print)\n\n");
+            for k in 0..*count {
+                source += &format!("fn f{k}(x: i32) -> i32 {{ {} }}\n", k as i32 + *add as i32);
+            }
+            source += "\nfn pick(f: f0) -> i32 { 7 }\n\nfn run(f: f0) -> i32 { f(3) }\n\n";
+            source += "fn main() ! console, alloc {\n  print(\"{pick(f0)}\")\n  print(\"{run(f0)}\")\n}\n";
+            let found = errors(&source);
+            assert!(found.is_empty(), "{found:?} for\n{source}");
+            assert_eq!(
+                outcome(&source).stdout,
+                format!("7\n{}\n", *add).into_bytes(),
+                "for\n{source}"
+            );
+            // Another function of the same signature is not that type.
+            let wrong = source.replace("pick(f0)", &format!("pick(f{})", 1 + other % (count - 1)));
+            let found = errors(&wrong);
+            assert_eq!(found.len(), 1, "{found:?} for\n{wrong}");
+            assert!(
+                found[0].message.ends_with("where a `f0` is needed"),
+                "{found:?}"
+            );
+        },
+    );
 }
 
 /// A function given where `F: Described` is needed is that function's type,
