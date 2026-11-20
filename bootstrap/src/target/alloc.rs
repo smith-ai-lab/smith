@@ -859,7 +859,7 @@ fn has_a_loop(blocks: &[crate::scalar::Block]) -> bool {
     state[0] = 1;
     let mut stack = vec![(0, 0)];
     while let Some((b, i)) = stack.last_mut() {
-        if let Some(s) = blocks[*b].end.successors().nth(*i) {
+        if let Some(s) = blocks[*b].end.jumps().get(*i).map(|j| j.block) {
             *i += 1;
             match state[s] {
                 1 => return true,
@@ -894,7 +894,7 @@ fn reverse_postorder(blocks: &[crate::scalar::Block]) -> Vec<usize> {
         seen[root] = true;
         let mut stack = vec![(root, 0)];
         while let Some((b, i)) = stack.last_mut() {
-            if let Some(s) = blocks[*b].end.successors().nth(*i) {
+            if let Some(s) = blocks[*b].end.jumps().get(*i).map(|j| j.block) {
                 *i += 1;
                 if !seen[s] {
                     seen[s] = true;
