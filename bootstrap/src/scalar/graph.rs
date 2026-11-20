@@ -23,7 +23,7 @@ pub(super) fn reverse_postorder(f: &Function) -> Vec<usize> {
     let mut stack = vec![(0, 0)];
     while let Some((b, next)) = stack.last_mut() {
         let b = *b;
-        if let Some(to) = f.blocks[b].end.successors().nth(*next) {
+        if let Some(to) = f.blocks[b].end.jumps().get(*next).map(|j| j.block) {
             *next += 1;
             if !seen[to] {
                 seen[to] = true;
