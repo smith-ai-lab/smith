@@ -21,8 +21,20 @@ use crate::serialize::{self, Defs, INTS, Parts, Ty, with_import};
 
 pub const ONCE: &[Test] = &[
     (
-        "a_rawjson_is_never_read_from_bytes_a_reader_gives_that_are_not_one_json_value",
-        a_rawjson_is_never_read_from_bytes_a_reader_gives_that_are_not_one_json_value,
+        "a_rawjson_is_never_read_from_bytes_a_reader_gives_that_are_not_one_json_value_part_1_of_4",
+        || a_rawjson_is_never_read_from_bytes_a_reader_gives_that_are_not_one_json_value(0),
+    ),
+    (
+        "a_rawjson_is_never_read_from_bytes_a_reader_gives_that_are_not_one_json_value_part_2_of_4",
+        || a_rawjson_is_never_read_from_bytes_a_reader_gives_that_are_not_one_json_value(1),
+    ),
+    (
+        "a_rawjson_is_never_read_from_bytes_a_reader_gives_that_are_not_one_json_value_part_3_of_4",
+        || a_rawjson_is_never_read_from_bytes_a_reader_gives_that_are_not_one_json_value(2),
+    ),
+    (
+        "a_rawjson_is_never_read_from_bytes_a_reader_gives_that_are_not_one_json_value_part_4_of_4",
+        || a_rawjson_is_never_read_from_bytes_a_reader_gives_that_are_not_one_json_value(3),
     ),
     (
         "a_rawjson_read_from_a_reader_of_another_format_is_the_bytes_of_its_text",
@@ -53,8 +65,12 @@ pub const ONCE: &[Test] = &[
         the_path_of_an_error_is_the_way_to_the_value_that_broke,
     ),
     (
-        "a_read_that_succeeds_asks_for_no_memory_of_its_own",
-        a_read_that_succeeds_asks_for_no_memory_of_its_own,
+        "a_read_that_succeeds_asks_for_no_memory_of_its_own_part_1_of_2",
+        || a_read_that_succeeds_asks_for_no_memory_of_its_own(0),
+    ),
+    (
+        "a_read_that_succeeds_asks_for_no_memory_of_its_own_part_2_of_2",
+        || a_read_that_succeeds_asks_for_no_memory_of_its_own(1),
     ),
     (
         "a_type_taken_from_without_deserialize_refuses_every_type_that_holds_it_at_the_call",
@@ -515,12 +531,10 @@ fn a_rawjson_read_from_a_reader_of_another_format_is_the_bytes_of_its_text() {
 /// value, whatever the format it is asked for, and what is not one whole JSON
 /// value is an error and no `RawJson`. What is one is held with the space
 /// round it left out.
-fn a_rawjson_is_never_read_from_bytes_a_reader_gives_that_are_not_one_json_value() {
+fn a_rawjson_is_never_read_from_bytes_a_reader_gives_that_are_not_one_json_value(part: u64) {
     const NOT: &[&str] = &["] not json", "[", "1 2", "", "tru", "[1,]"];
     const WHOLE: &[&str] = &["[1.50, 1e400]", " [true] ", "7", " null"];
-    generate::check(
-        3,
-        12,
+    generate::check_part(3, 12, part, 4,
         |g: &mut Gen| (g.one_in(2), g.below(NOT.len().max(WHOLE.len()))),
         |&(whole, at)| {
             let list = if whole { WHOLE } else { NOT };
@@ -1121,7 +1135,7 @@ fn the_path_of_an_error_is_the_way_to_the_value_that_broke() {
 
 // What reading costs.
 
-fn a_read_that_succeeds_asks_for_no_memory_of_its_own() {
+fn a_read_that_succeeds_asks_for_no_memory_of_its_own(part: u64) {
     // Values with no list, read by a reader that keeps nothing it was
     // asked, and so asks for no memory itself. The shapes it is given are
     // built by the program that reads them and by one that does not, so
@@ -1132,7 +1146,7 @@ fn a_read_that_succeeds_asks_for_no_memory_of_its_own() {
         barred: false,
     };
     let generate = move |g: &mut Gen| case(g, parts, false, false, false);
-    generate::check(4586, 8, generate, |c| {
+    generate::check_part(4586, 8, part, 2, generate, |c| {
         let reads = format!(
             "{}  match v {{\n    .ok(x) {{ print(\"ok\") }}\n    .err(e) {{ print(\"no\") }}\n  }}\n}}\n",
             c.source
