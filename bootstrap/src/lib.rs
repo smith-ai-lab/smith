@@ -40,28 +40,33 @@ pub fn item_comments(source: &[u8]) -> Result<Vec<(String, String)>, Vec<diag::E
     let file = parser::parse(&tokens).map_err(in_order)?;
     let text = std::str::from_utf8(source).unwrap_or_default();
     let mut found: Vec<(usize, String, String)> = Vec::new();
-    let mut add = |name: String, line: usize| {
-        let comment = comments::above(text, line);
+    // A part of an item, which has a comment of its own only where it starts
+    // its line.
+    let mut add = |name: String, pos: diag::Pos, part: bool| {
+        if part && !comments::starts_line(text, pos.line, pos.col) {
+            return;
+        }
+        let comment = comments::above(text, pos.line);
         if !comment.is_empty() {
-            found.push((line, name, comment));
+            found.push((pos.line, name, comment));
         }
     };
     for f in file.functions.iter() {
-        add(f.name.clone(), f.pos.line);
+        add(f.name.clone(), f.pos, false);
         for p in &f.params {
-            add(format!("{}.{}", f.name, p.name), p.pos.line);
+            add(format!("{}.{}", f.name, p.name), p.pos, true);
         }
     }
     for s in &file.structs {
-        add(s.name.clone(), s.pos.line);
+        add(s.name.clone(), s.pos, false);
         for f in &s.fields {
-            add(format!("{}.{}", s.name, f.name), f.pos.line);
+            add(format!("{}.{}", s.name, f.name), f.pos, true);
         }
     }
     for e in &file.enums {
-        add(e.name.clone(), e.pos.line);
+        add(e.name.clone(), e.pos, false);
         for c in &e.cases {
-            add(format!("{}.{}", e.name, c.name), c.pos.line);
+            add(format!("{}.{}", e.name, c.name), c.pos, true);
         }
     }
     found.sort_by_key(|(line, ..)| *line);

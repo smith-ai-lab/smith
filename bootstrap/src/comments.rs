@@ -40,3 +40,16 @@ fn start_of(source: &str, line: usize) -> usize {
     }
     at
 }
+
+/// Whether the item whose name is at the column `col` of line `line`, counted
+/// from 1, starts its line: nothing but spaces comes before it. A parameter, a
+/// field, or a case written on the line of what it belongs to has no comment
+/// of its own, and the comment above that line is the whole thing's.
+pub(crate) fn starts_line(source: &str, line: usize, col: usize) -> bool {
+    let start = start_of(source, line);
+    let row = source[start..].split('\n').next().unwrap_or("");
+    // A column is counted in characters.
+    row.chars()
+        .take(col.saturating_sub(1))
+        .all(|c| c == ' ' || c == '\t')
+}

@@ -6,7 +6,7 @@ status: partial
 built:
   - "`impl`, calls of trait functions with defaults"
   - "a type parameter of a trait's function, with a bound"
-  - "a function's name written where a type is expected, as in `impl Described[double]`, which is found for that function and for no other of the same parameters and result, and a function given for a type parameter that a trait other than `Copy` and `Discard` bounds, which settles it to that function's type; a function of such a trait names the type in a parameter or its result, as any function of a trait must, so `describe(f: F)` and not `describe()`"
+  - "a function's name written where a type is expected, as in `impl Described[double]`, which is found for that function and for no other of the same parameters and result, and a function given for a type parameter that a trait other than `Copy` and `Discard` bounds, which settles it to that function's type; a function of such a trait names the type in a parameter or its result, as any function of a trait must, so `describe(f: F)` and not `describe()`; and a parameter typed with a function's name, `fn pick(f: one)`, takes that function, `pick(one)`, and no other of the same parameters and result, and is called as the function is, `f(3)`, with every argument written"
 ---
 
 # Traits

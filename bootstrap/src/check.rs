@@ -2158,6 +2158,7 @@ fn check_file(
         value_calls: Set::default(),
         fn_values: Map::default(),
         named: Set::default(),
+        named_calls: Map::default(),
         no_impl: false,
         refusals: 0,
         deciding: None,
@@ -2212,6 +2213,7 @@ fn check_file(
         value_calls: checker.value_calls,
         fn_values: checker.fn_values,
         named: checker.named,
+        named_calls: checker.named_calls,
     };
     let mut errors = Vec::new();
     typed.copies(
@@ -5485,6 +5487,9 @@ struct Typed<'a> {
     /// Which of those were given for a type parameter that a trait bounds,
     /// and so are the type whose one value the function is.
     named: Set<usize>,
+    /// The calls of a name that holds a function by its type, by their
+    /// addresses, with the function each calls.
+    named_calls: Map<usize, usize>,
 }
 
 impl<'a> Typed<'a> {
@@ -5564,7 +5569,8 @@ impl<'a> Typed<'a> {
                 if let Some(narrowing) = narrowing(defs, call) {
                     return Callee::Narrow(narrowing);
                 }
-                if let Some(f) = defs.function(call.name_pos, name) {
+                let by_type = self.named_calls.get(&addr(call)).copied();
+                if let Some(f) = by_type.or_else(|| defs.function(call.name_pos, name)) {
                     let sig = &defs.signatures[f];
                     let args = solve(&sig.params, sig.scope.names.len());
                     let args = defaulted(args, sig.param_defaults.clone());
@@ -5797,6 +5803,8 @@ struct Checker<'a> {
     fn_values: Map<usize, usize>,
     /// Which of those were given for a type parameter that a trait bounds.
     named: Set<usize>,
+    /// The calls of a name that holds a function by its type, with the function.
+    named_calls: Map<usize, usize>,
     /// Whether the call of a trait's function being checked has types no
     /// implementation is for, which is already reported.
     no_impl: bool,
@@ -6446,6 +6454,20 @@ impl<'a> Checker<'a> {
                     let needed = defs.describe_pattern(pattern, sol, vars, body.scope);
                     let message =
                         self.mismatch(body, value, defs.describe(&named, body.scope), needed);
+                    self.errors.push(Error::new(value.pos(), message));
+                }
+            }
+            // The name of the function a type names is a value of that type.
+            (Ty::Fn(_), Ty::Named(n)) if self.fn_values.contains_key(&addr(value)) => {
+                let f = self.fn_values[&addr(value)];
+                self.named.insert(addr(value));
+                if f != *n {
+                    let message = self.mismatch(
+                        body,
+                        value,
+                        defs.describe(&Ty::Named(f), body.scope),
+                        defs.describe(pattern, body.scope),
+                    );
                     self.errors.push(Error::new(value.pos(), message));
                 }
             }
