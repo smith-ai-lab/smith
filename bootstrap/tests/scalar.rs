@@ -1584,8 +1584,8 @@ fn after_each_pass(p: &scalar::Program) -> [scalar::Program; 6] {
     let inlined = scalar::inline(p.clone());
     let trimmed = scalar::trim(inlined.clone());
     let threaded = scalar::thread(trimmed.clone());
-    let folded = scalar::fold(&threaded);
-    let shared = scalar::common(&folded);
+    let folded = scalar::fold(threaded.clone());
+    let shared = scalar::common(folded.clone());
     let removed = scalar::remove(shared.clone());
     [inlined, trimmed, threaded, folded, shared, removed]
 }
@@ -1773,8 +1773,8 @@ fn the_passes_give_the_same_program_every_time_and_never_a_larger_one() {
         let [inlined, trimmed, threaded, folded, shared, removed] = after_each_pass(s);
         assert_eq!(trimmed, scalar::trim(inlined.clone()));
         assert_eq!(threaded, scalar::thread(trimmed.clone()));
-        assert_eq!(folded, scalar::fold(&threaded));
-        assert_eq!(shared, scalar::common(&folded));
+        assert_eq!(folded, scalar::fold(threaded.clone()));
+        assert_eq!(shared, scalar::common(folded.clone()));
         assert_eq!(removed, scalar::remove(shared.clone()));
         assert!(size(&shared) <= size(&folded), "{shared:?}");
         assert!(size(&removed) <= size(&shared), "{removed:?}");
@@ -1788,7 +1788,7 @@ fn the_passes_give_the_same_program_every_time_and_never_a_larger_one() {
 fn removal_makes_at_most_four_walks_and_leaves_no_work() {
     assert_eq!(scalar::WALKS, 4);
     for (_, s) in taken() {
-        let shared = scalar::common(&scalar::fold(&scalar::inline(s.clone())));
+        let shared = scalar::common(scalar::fold(scalar::inline(s.clone())));
         let (removed, walks) = scalar::remove_counting(shared);
         assert!(walks <= scalar::WALKS, "{walks} walks over {s:?}");
         let (again, more) = scalar::remove_counting(removed.clone());
@@ -2368,8 +2368,8 @@ fn reads(p: &scalar::Program) -> usize {
 fn sharing_never_replaces_a_read_through_an_address() {
     let mut some = 0;
     for (_, s) in taken() {
-        let folded = scalar::fold(&scalar::inline(s.clone()));
-        let shared = scalar::common(&folded);
+        let folded = scalar::fold(scalar::inline(s.clone()));
+        let shared = scalar::common(folded.clone());
         assert_eq!(reads(&shared), reads(&folded));
         some += reads(&shared);
     }

@@ -24,10 +24,10 @@ use super::{Constant, Function, Op, Program, Type, Value};
 
 /// The program with each instruction that does what an earlier one does, to
 /// the same values, replaced by the earlier one's value.
-pub fn common(program: &Program) -> Program {
+pub fn common(program: Program) -> Program {
     Program {
-        data: program.data.clone(),
-        functions: program.functions.iter().map(shared).collect(),
+        data: program.data,
+        functions: program.functions.into_iter().map(shared).collect(),
         main: program.main,
     }
 }
@@ -64,8 +64,7 @@ fn pure(op: &Op) -> bool {
     )
 }
 
-fn shared(f: &Function) -> Function {
-    let mut f = f.clone();
+fn shared(mut f: Function) -> Function {
     let children = dominated(&f);
     let mut sub: Vec<Value> = (0..f.types.len()).map(Value).collect();
     let mut first: HashMap<(Op, Type), Value> = HashMap::new();
