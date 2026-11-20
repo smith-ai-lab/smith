@@ -16,7 +16,7 @@ built:
   - "an `impl` of a trait that a file lists with `use`, whose functions the file does not list: a function written in the `impl` is the function of that trait of the same name, so two traits of two modules that each have `show` are both implemented in one file, and an `impl` that lacks a function of the trait or writes one it does not have is one error at its place that names the function as the module wrote it"
   - "a name of the standard library outside the prelude that a file uses and neither defines, binds, nor imports is one error at its first use, whose fix says `use std.module (name)`, and an effect that is imported brings its name alone, so `print` is imported as `console` is"
   - "not `pub` in the file that is built"
-  - "a function, struct, enum, trait, or `impl` of a module of the standard library whose source is Smith is compiled when a program reaches it, as one of the program's own file is, so the library can be written in Smith; the library's names that the compiler builds, as [the compiler's design](../compiler.md#bootstrap) says, are still supplied by it, because effect declarations are not built"
+  - "a function, struct, enum, trait, or `impl` of a module of the standard library whose source is Smith is compiled when a program reaches it, as one of the program's own file is, so the library can be written in Smith; the library's names that the compiler builds, as [the compiler's design](../compiler.md#bootstrap) says, are still supplied by it"
 ---
 
 # Importing with use
