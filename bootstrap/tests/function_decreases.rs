@@ -178,8 +178,8 @@ fn a_function_whose_decreases_is_smaller_at_each_call_of_itself_is_a_loop_that_d
         for n in [0, 1, 5, 40] {
             let source = source.replace("count(5, 0)", &format!("count({n}, 0)"));
             let lowered = lower(source.as_bytes()).unwrap();
-            // `lower` keeps the call, and the passes make a loop of it.
-            assert!(calls_itself(&lowered, "count"), "{source}");
+            // `lower` makes a loop of a call that is the last thing done.
+            assert!(!calls_itself(&lowered, "count"), "{source}");
             let passed = scalar::passes(&lowered);
             assert!(!calls_itself(&passed, "count"), "{source}");
             let said = scalar::run(&lowered);
