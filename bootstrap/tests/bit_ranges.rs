@@ -89,7 +89,16 @@ fn program(call: &str, first: (i128, i128), second: (i128, i128), gives: (i128, 
 /// The function gives its exact range, and not a range that is one less at
 /// either end.
 fn exact(function: &str, op: fn(i128, i128) -> i128, second: &dyn Fn(i128) -> Vec<(i128, i128)>) {
-    for first in ranges() {
+    exact_of(ranges(), function, op, second);
+}
+
+fn exact_of(
+    firsts: Vec<(i128, i128)>,
+    function: &str,
+    op: fn(i128, i128) -> i128,
+    second: &dyn Fn(i128) -> Vec<(i128, i128)>,
+) {
+    for first in firsts {
         for second in second(first.0) {
             let mut results = Vec::new();
             for a in first.0..first.1 {
