@@ -11,9 +11,9 @@ runs:
   using: composite
   steps:
     # The version the package has now, as the lists the runner's image carries
-    # say, and as the mirror says when the image carries none. The image's own
-    # version is in the key too, as what the package needs besides itself is
-    # what that image lacks.
+    # say, and as the mirror says when the image carries none. The image is not
+    # in the key: runs are given images of different versions, and a key with it
+    # would miss for each.
     - id: version
       shell: bash
       run: |
@@ -27,14 +27,13 @@ runs:
           echo "::error::no version of the package qemu-user, which has qemu-x86_64, is known"
           exit 1
         fi
-        echo "the version is $version, on the image ${ImageVersion:-unknown}"
+        echo "the version is $version"
         echo "version=$version" >> "$GITHUB_OUTPUT"
-        echo "image=${ImageVersion:-unknown}" >> "$GITHUB_OUTPUT"
     - id: kept
       uses: actions/cache@v4
       with:
         path: ~/.cache/qemu-x86_64
-        key: qemu-x86_64-${{ runner.os }}-${{ runner.arch }}-${{ steps.version.outputs.image }}-${{ steps.version.outputs.version }}
+        key: qemu-x86_64-${{ runner.os }}-${{ runner.arch }}-${{ steps.version.outputs.version }}
     - name: Fetch it from the mirror, as no run has kept this version
       if: steps.kept.outputs.cache-hit != 'true'
       shell: bash
@@ -53,7 +52,14 @@ runs:
           echo "::error::no package of qemu-user is in $dir, so no chip can be made to lack a level; the test of that fails without it"
           exit 1
         fi
-        sudo apt-get install -y --no-install-recommends --no-download "$dir"/*.deb
+        # What the package needs besides itself is what the image of the run that
+        # kept it lacked. Another image may lack more, and then the mirror is
+        # asked, and a warning says so, so that the test still runs.
+        if ! sudo apt-get install -y --no-install-recommends --no-download "$dir"/*.deb; then
+          echo "::warning::what was kept does not install on this image; fetching qemu-user from the mirror"
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends qemu-user
+        fi
         if ! command -v qemu-x86_64 >/dev/null; then
           echo "::error::qemu-x86_64 is not installed, so no chip can be made to lack a level; the test of that fails without it"
           exit 1
