@@ -832,6 +832,37 @@ impl<'a> Defs<'a> {
         found
     }
 
+    /// The struct the name written at `pos` is, as `function` finds a function.
+    fn struct_at(&self, pos: Pos, name: &str) -> Option<usize> {
+        self.by_scope(&self.struct_names, pos, name)
+    }
+
+    /// The enum the name written at `pos` is.
+    fn enum_at(&self, pos: Pos, name: &str) -> Option<usize> {
+        self.by_scope(&self.enum_names, pos, name)
+    }
+
+    /// The trait the name written at `pos` is.
+    fn trait_at(&self, pos: Pos, name: &str) -> Option<usize> {
+        self.by_scope(&self.trait_names, pos, name)
+    }
+
+    /// The item of `table` that the name written at `pos` is, which in a
+    /// debug build is asked of the module that wrote it too.
+    fn by_scope(&self, table: &Map<&'a str, usize>, pos: Pos, name: &str) -> Option<usize> {
+        let found = table.get(name).copied();
+        if cfg!(debug_assertions) {
+            let key = self.resolution.key(pos, name, &|n| table.contains_key(n));
+            assert_eq!(
+                found,
+                table.get(key.as_str()).copied(),
+                "`{name}` at {pos:?}, key `{key}`, written `{}`",
+                self.resolution.written_at(pos, name)
+            );
+        }
+        found
+    }
+
     /// The number a bound of the range type `t` stands for where only the
     /// range of the bound is known: a number is itself, and a name is the
     /// least number of its parameter if it is the first bound of the range
@@ -923,7 +954,7 @@ impl<'a> Defs<'a> {
                 Ty::Unknown
             };
         }
-        if let Some(&s) = self.struct_names.get(name) {
+        if let Some(s) = self.struct_at(t.pos, name) {
             let args: Vec<Ty> = t
                 .args
                 .iter()
@@ -940,7 +971,7 @@ impl<'a> Defs<'a> {
                 Ty::structure(s, args)
             };
         }
-        if let Some(&e) = self.enum_names.get(name) {
+        if let Some(e) = self.enum_at(t.pos, name) {
             let args: Vec<Ty> = t
                 .args
                 .iter()
@@ -3753,9 +3784,11 @@ fn splice<'a>(
                 &tokens,
                 &|n| scope.rename(n, modules[i].defined.contains(n)),
                 &through,
-                &mut |pos, name| {
+                &mut |pos, name, to| {
                     if cfg!(debug_assertions) {
-                        resolution.written.insert(pos, name.to_string());
+                        resolution
+                            .written
+                            .insert((pos, to.to_string()), name.to_string());
                     }
                 },
             );
@@ -3933,7 +3966,7 @@ struct LazyModule<'a> {
     parsed: Vec<Option<File>>,
     /// The name each token of the items read was written as, by its place,
     /// where the tokens were rewritten.
-    written: HashMap<Pos, String>,
+    written: HashMap<(Pos, String), String>,
 }
 
 impl LazyModule<'_> {
@@ -3989,14 +4022,14 @@ impl LazyModule<'_> {
         let text = &self.source[piece.text.0..piece.text.1];
         let tokens = crate::lexer::lex(text.as_bytes()).ok()?;
         let tokens = shifted(&tokens, self.number * STEP + piece.line);
-        let mut renamed: Vec<(Pos, String)> = Vec::new();
+        let mut renamed: Vec<((Pos, String), String)> = Vec::new();
         let tokens = renamed_tokens(
             &tokens,
             &|n| self.rename(n),
             &self.through,
-            &mut |pos, name| {
+            &mut |pos, name, to| {
                 if cfg!(debug_assertions) {
-                    renamed.push((pos, name.to_string()));
+                    renamed.push(((pos, to.to_string()), name.to_string()));
                 }
             },
         );
@@ -4530,9 +4563,9 @@ fn cycles(
     };
     for ty in types {
         for (name, pos) in type_names(ty) {
-            let t = if let Some(&s) = defs.struct_names.get(name) {
+            let t = if let Some(s) = defs.struct_at(pos, name) {
                 Def::Struct(s)
-            } else if let Some(&e) = defs.enum_names.get(name) {
+            } else if let Some(e) = defs.enum_at(pos, name) {
                 Def::Enum(e)
             } else {
                 continue;
@@ -4924,8 +4957,8 @@ impl<'a> Defs<'a> {
         };
         let name = call.callee.as_str();
         let (slots, by_position) = match &call.qualifier {
-            Some((q, _)) => {
-                let Some(&k) = self.trait_names.get(q.as_str()) else {
+            Some((q, at)) => {
+                let Some(k) = self.trait_at(*at, q) else {
                     return Vec::new();
                 };
                 match traits::trait_function(&file.traits[k], name) {
@@ -4934,7 +4967,7 @@ impl<'a> Defs<'a> {
                 }
             }
             None => {
-                if let Some(&s) = self.struct_names.get(name) {
+                if let Some(s) = self.struct_at(call.name_pos, name) {
                     let fields = (file.structs[s].fields.iter())
                         .map(|f| (f.name.as_str(), f.default.as_ref()))
                         .collect();
@@ -5147,7 +5180,7 @@ impl<'a> Typed<'a> {
         let (k, fi) = match &call.qualifier {
             None => {
                 let name = call.callee.as_str();
-                if defs.struct_names.contains_key(name) {
+                if defs.struct_at(call.name_pos, name).is_some() {
                     let Ty::Struct(s, args) = self.types[&addr(call)].subst(env) else {
                         unreachable!("checked")
                     };
@@ -5190,11 +5223,11 @@ impl<'a> Typed<'a> {
                 }
                 defs.trait_fns[name][0]
             }
-            Some((q, _)) => {
-                if let Some(&e) = defs.enum_names.get(q.as_str()) {
+            Some((q, at)) => {
+                if let Some(e) = defs.enum_at(*at, q) {
                     return Callee::Case(defs.case_of(e, &call.callee).expect("checked"));
                 }
-                let k = defs.trait_names[q.as_str()];
+                let k = defs.trait_at(*at, q).expect("checked");
                 let at = traits::trait_function(&defs.file.traits[k], &call.callee);
                 (k, at.expect("checked"))
             }

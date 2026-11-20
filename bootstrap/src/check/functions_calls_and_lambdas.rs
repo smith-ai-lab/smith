@@ -472,12 +472,12 @@ impl<'a> Checker<'a> {
         let defs = self.defs;
         let name = call.callee.as_str();
         if let Some((q, at)) = &call.qualifier {
-            if let Some(&e) = defs.enum_names.get(q.as_str())
+            if let Some(e) = defs.enum_at(*at, q)
                 && !body.names.iter().any(|(n, _)| n == q)
             {
                 return self.qualified_case(body, call, e, want);
             }
-            let Some(&k) = defs.trait_names.get(q.as_str()) else {
+            let Some(k) = defs.trait_at(*at, q) else {
                 self.errors.push(if body.names.iter().any(|(n, _)| n == q) {
                     Error::unsupported(call.name_pos, "calling what a field gives")
                 } else {
@@ -500,7 +500,7 @@ impl<'a> Checker<'a> {
             let items = items.clone();
             return self.value_call(body, call, &items);
         }
-        if let Some(&s) = defs.struct_names.get(name) {
+        if let Some(s) = defs.struct_at(call.name_pos, name) {
             return self.construction(body, call, s, want);
         }
         if is_prelude_call(call, "__eprint") {
