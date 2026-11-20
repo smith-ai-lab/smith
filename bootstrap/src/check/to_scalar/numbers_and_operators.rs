@@ -419,9 +419,9 @@ impl<'a> Lowering<'a> {
     }
 
     /// The value `a`, a whole number of type `from`, taken to type `to`,
-    /// which does not hold all of its values: as `narrow` and `wrapping_narrow`
-    /// do, which keep the bits, as `saturating_narrow` does, which gives the
-    /// nearest value that fits, and as `checked_narrow` does, which gives an
+    /// which does not hold all of its values: as `wrapping_narrow`
+    /// does, which keeps the bits, as `clamp` does, which gives the
+    /// nearest value that fits, and as `narrow` does, which gives an
     /// `Option` that holds the value if it fits. A narrowing to a smaller type
     /// is one instruction, and to a type of the same size none.
     pub(super) fn narrowing(
@@ -435,7 +435,7 @@ impl<'a> Lowering<'a> {
         let defs = self.typed.defs;
         let (wide, narrow) = (bits_of(from), bits_of(to));
         let r = out.resize(from.signed(), a, narrow);
-        if matches!(narrowing, Narrowing::Plain | Narrowing::Wrapping) {
+        if narrowing == Narrowing::Wrapping {
             return vec![r];
         }
         let less = if from.signed() { LessS } else { LessU };

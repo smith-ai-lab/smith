@@ -1,6 +1,5 @@
 use std.bits (bit_or, shift_left, u64)
 use std.console (console, print)
-use std.int (narrow)
 
 fn sh(x: u64, by: Byte) -> u64
   requires by < 64
@@ -11,13 +10,13 @@ fn sh(x: u64, by: Byte) -> u64
 fn main() ! console, alloc {
   var n: u64 = 0
   loop i in 0..64 {
-    j: Byte = narrow(i)
+    j: Byte = i
     n = bit_or(n, sh(1, j))
   }
   print("{n}")
   var m: u64 = 0
   loop i in 0..64 {
-    m = bit_or(m, sh(1, narrow(i)))
+    m = bit_or(m, sh(1, i))
   }
   print("{m}")
 }
