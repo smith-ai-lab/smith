@@ -89,11 +89,11 @@ fn frame(inside: Html) -> Html {
 
 ## A component
 
-A part of a page is a function that carries the effect `html`, which every element carries. It is called where it belongs, as an element is.
+A part of a page is a function that carries the effect `markup`, which every element carries. It is called where it belongs, as an element is.
 
 ```
 // One note of the list.
-fn note_card(note: Note) ! html {
+fn note_card(note: Note) ! markup {
   article(class: "card") {
     h2(note.title)
     p(note.body)
@@ -118,10 +118,10 @@ fn notes(all: List[Note]) -> Html {
 
 `if`, `loop`, and `match` are the language's own, and work in a page as anywhere, so there is no other language for a page that chooses or repeats.
 
-A component that puts its caller's content somewhere takes it as a block, a lambda that carries `html`.
+A component that puts its caller's content somewhere takes it as a block, a lambda that carries `markup`.
 
 ```
-fn layout(heading: str, inside: fn() ! html) -> Html {
+fn layout(heading: str, inside: fn() ! markup) -> Html {
   render() {
     html() {
       head() {
@@ -144,7 +144,7 @@ fn about() -> Html {
 
 ## Where the page goes
 
-Each element writes through the effect `html`, and `render` is the [handler](../language/handlers.md) that answers it: it runs its block, gathers what the block writes into one text, and gives it as an `Html`. So a function that calls `render` carries no `html`, and a component, which does not, carries it.
+Each element writes through the effect `markup`, and `render` is the [handler](../language/handlers.md) that answers it: it runs its block, gathers what the block writes into one text, and gives it as an `Html`. So a function that calls `render` carries no `markup`, and a component, which does not, carries it.
 
 Nothing is sent or printed while a page is written. A function that fails halfway has made no part of a page that anyone has seen, so it gives its error as any function does.
 
@@ -163,7 +163,7 @@ A file imports each element it uses, as any name, or imports the module and writ
 | `text("Hello")` | A text among other elements |
 | `a("Open", href: "/")` | An attribute, as an argument with a name |
 | `attr("data-id", "7")` | An attribute the library has no parameter for |
-| `fn card(n: Note) ! html` | A component |
-| `fn layout(inside: fn() ! html)` | A component that takes its caller's content |
+| `fn card(n: Note) ! markup` | A component |
+| `fn layout(inside: fn() ! markup)` | A component that takes its caller's content |
 | `render() { ... }` | The page its block writes, as an `Html` |
 | `insert(page)` | An `Html` put inside another |
