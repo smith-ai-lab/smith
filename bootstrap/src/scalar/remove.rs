@@ -19,7 +19,9 @@
 //! value that the end of its block chooses on, which only the blocks the end
 //! jumps to read, is made in them, as `sink` says, and goes. The last step of
 //! all moves a comparison that only the choice ending its block reads to the
-//! end of the block.
+//! end of the block. The values that are left are numbered from 0 with no gap,
+//! in the order they are defined, so that a target gives a place in a frame to
+//! no value that a pass took away.
 
 use super::graph::{self, jumps, jumps_mut};
 use super::sink;
@@ -70,6 +72,7 @@ fn removed(mut f: Function) -> (Function, usize) {
         drop_unused(&mut f, true);
     }
     sink_compares(&mut f);
+    renumber(&mut f);
     (f, walks)
 }
 
@@ -582,4 +585,37 @@ fn join(f: &mut Function) {
     }
     let keep: Vec<bool> = joined.iter().map(|j| !j).collect();
     keep_blocks(f, &keep);
+}
+
+/// Numbers the values that are defined from 0 with no gap, in the order of
+/// first definition: the parameters of each block, then what each of its
+/// instructions makes, block by block. A value that nothing defines any more is
+/// not in the function's types, and the types of the others are in the same
+/// order.
+fn renumber(f: &mut Function) {
+    let mut by = vec![usize::MAX; f.types.len()];
+    let mut types = Vec::with_capacity(f.types.len());
+    let mut define = |v: &mut Value, types: &mut Vec<_>| {
+        by[v.0] = types.len();
+        types.push(f.types[v.0]);
+        *v = Value(by[v.0]);
+    };
+    for block in &mut f.blocks {
+        for p in &mut block.params {
+            define(p, &mut types);
+        }
+        for i in &mut block.instructions {
+            for r in &mut i.results {
+                define(r, &mut types);
+            }
+        }
+    }
+    let rename = |v: Value| Value(by[v.0]);
+    for block in &mut f.blocks {
+        for i in &mut block.instructions {
+            i.op.rename(&rename);
+        }
+        graph::rename_end(&mut block.end, &rename);
+    }
+    f.types = types;
 }
