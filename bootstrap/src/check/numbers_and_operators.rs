@@ -367,6 +367,28 @@ impl<'a> Checker<'a> {
         gives
     }
 
+    /// Checks the measure `e` of a `decreases`, which is an expression of whole
+    /// numbers of any types, worked out as an exact number that is never
+    /// computed: so no `+`, `-`, or `*` in it is asked to fit a type. The
+    /// type given is that of a whole number, where it is one.
+    pub(super) fn measure_type(&mut self, body: &mut Body<'a>, e: &Expr) -> Ty {
+        let Expr::Arith { left, right, .. } = e else {
+            return self.expr(body, e, &Want::Any);
+        };
+        let (l, r) = (
+            self.measure_type(body, left),
+            self.measure_type(body, right),
+        );
+        let ty = match (l, r) {
+            (Ty::Unknown, _) | (_, Ty::Unknown) => Ty::Unknown,
+            (Ty::Int(a), Ty::Int(b)) => Ty::Int(a.hull(b).unwrap_or(Int::U64)),
+            (Ty::Flex(k), _) | (_, Ty::Flex(k)) => Ty::Flex(k),
+            (other, _) => other,
+        };
+        self.types.insert(addr(e), ty.clone());
+        ty
+    }
+
     /// The type of a binding written `a..b` where a bound is a name, which is
     /// the smallest range that holds every number the range can have, and
     /// each name with whether it is the end. None, with the mistake reported,
