@@ -27,6 +27,10 @@ pub const ONCE: &[Test] = &[
         a_mcp_ledger_that_lost_a_line_or_names_a_sentence_twice_or_a_test_that_is_not_there_is_refused,
     ),
     (
+        "a_ledger_names_a_test_that_is_split_into_parts_as_it_was_written_before_the_split",
+        a_ledger_names_a_test_that_is_split_into_parts_as_it_was_written_before_the_split,
+    ),
+    (
         "every_page_of_the_mcp_specification_is_taken_or_left_out_with_a_reason",
         every_page_of_the_mcp_specification_is_taken_or_left_out_with_a_reason,
     ),
@@ -151,6 +155,33 @@ fn a_mcp_ledger_that_lost_a_line_or_names_a_sentence_twice_or_a_test_that_is_not
     let wrong = LEDGER.replacen("| reason to be decided", "| test not_a_test", 1);
     let errors = standard::check_sentences(&sentences, &wrong, &tests).unwrap_err();
     assert!(errors.iter().any(|e| e.contains("does not exist")), "{errors:?}");
+}
+
+/// A ledger line that names a test that is in parts holds when every part is
+/// there, and not when one is missing, so a test can be split with no change to
+/// a ledger.
+fn a_ledger_names_a_test_that_is_split_into_parts_as_it_was_written_before_the_split() {
+    let sentences = [standard::Sentence { section: "1".into(), text: "A server MUST answer.".into() }];
+    let ledger = "1 | A server MUST answer. | test a_test\n";
+    let parts = |n: usize, without: Option<usize>| -> Vec<String> {
+        (1..=n).filter(|k| Some(*k) != without).map(|k| format!("a_test_part_{k}_of_{n}")).collect()
+    };
+    let check = |names: &[String]| {
+        let names: Vec<&str> = names.iter().map(String::as_str).collect();
+        standard::check_sentences(&sentences, ledger, &names)
+    };
+    assert_eq!(check(&["a_test".to_string()]), Ok(()), "a test that is not split");
+    assert_eq!(check(&parts(2, None)), Ok(()), "two parts");
+    assert_eq!(check(&parts(5, None)), Ok(()), "five parts");
+    for n in [2, 5] {
+        for lost in 1..=n {
+            assert!(check(&parts(n, Some(lost))).is_err(), "{n} parts without the part {lost}");
+        }
+    }
+    // The parts of a test of another name, and a name that only starts the same.
+    let other: Vec<String> = parts(3, None).iter().map(|p| p.replace("a_test", "a_test_more")).collect();
+    assert!(check(&other).is_err(), "the parts of another test");
+    assert!(check(&["a_test_part_1_of_x".to_string()]).is_err(), "a part of no number");
 }
 
 /// The path, without `.mdx`, of each page under `dir`, relative to `base`.
