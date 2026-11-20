@@ -958,6 +958,40 @@ impl<'a> Defs<'a> {
         out
     }
 
+    /// A struct or an enum inside `t` that contains itself, which it can only
+    /// do through a `List`, as a type that holds itself in place is refused
+    /// where it is declared. A trait is given to such a type by a function
+    /// that calls itself, which is not built yet.
+    fn containing_itself(&self, t: &Ty) -> Option<Ty> {
+        /// How deep a type may hold types before it is taken to hold itself,
+        /// as a generic type may hold itself with other arguments for ever.
+        const DEEP: usize = 32;
+        fn visit(defs: &Defs, t: &Ty, path: &mut Vec<Ty>, seen: &mut Vec<Ty>) -> Option<Ty> {
+            let parts: Vec<Ty> = match t {
+                Ty::Struct(s, args) => defs.fields[*s].iter().map(|f| f.subst(args)).collect(),
+                Ty::Enum(e, args) => (defs.cases[*e].iter().flatten())
+                    .map(|c| c.subst(args))
+                    .collect(),
+                Ty::Tuple(items) | Ty::List(items) | Ty::Slice(items) => {
+                    return items.iter().find_map(|p| visit(defs, p, path, seen));
+                }
+                _ => return None,
+            };
+            if path.contains(t) || path.len() > DEEP {
+                return Some(t.clone());
+            }
+            if seen.contains(t) {
+                return None;
+            }
+            path.push(t.clone());
+            let found = parts.iter().find_map(|p| visit(defs, p, path, seen));
+            path.pop();
+            seen.push(t.clone());
+            found
+        }
+        visit(self, t, &mut Vec::new(), &mut Vec::new())
+    }
+
     /// The trait and the part of `t` that lacks it, for a type `t` that
     /// lacks trait `k` only because one of its parts lacks a trait. The part
     /// is the innermost one, which lacks the trait on its own.
@@ -994,6 +1028,13 @@ impl<'a> Defs<'a> {
     /// The end of the error that says `t` has no implementation of trait
     /// `k`, which names the part of `t` that lacks a trait, if that is why.
     pub(super) fn because(&self, k: usize, t: &Ty, scope: &Scope) -> String {
+        if let Some(own) = self.containing_itself(t) {
+            return format!(
+                ", as `{}` contains itself, and a type that does is given no `{}` until a function may call itself, which is not built yet",
+                self.text(&own, scope),
+                self.file.traits[k].name
+            );
+        }
         match self.lacking(k, t, scope) {
             Some((lacks, part)) => format!(
                 ", as `{}` has no `{}`",

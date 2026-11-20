@@ -1,0 +1,4 @@
+type_holds_itself.smith:2:9: `Node` holds itself, directly or through others with no `List` between, which is not built yet, and a `List` of it is
+  2 |   next: Node
+    |         ^
+  fix: hold it in a `List`, as `List[Node]`

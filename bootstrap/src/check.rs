@@ -4704,9 +4704,11 @@ fn head(t: &Ty) -> Option<Def> {
 }
 
 /// Reports each type, of a field or of a case, that closes a cycle of
-/// structs and enums that contain one another, in a walk from `d`, and
-/// marks those on the cycle. `path` is the definitions being walked, and
-/// `done` those already walked.
+/// structs and enums that hold one another with no `List` between, in a walk
+/// from `d`, and marks those on the cycle. A `List` keeps its elements out of
+/// line, in memory of its own, so a type that reaches itself only through
+/// one is not a cycle. `path` is the definitions being walked, and `done`
+/// those already walked.
 fn cycles(
     defs: &mut Defs,
     d: Def,
@@ -4725,18 +4727,23 @@ fn cycles(
             .collect(),
     };
     for ty in types {
-        for (name, pos) in type_names(ty) {
+        for (name, pos) in held_names(defs, ty) {
             let t = match defs.type_at(pos, name) {
                 Some(Item::Struct(s)) => Def::Struct(s),
                 Some(Item::Enum(e)) => Def::Enum(e),
                 _ => continue,
             };
             if let Some(at) = path.iter().position(|p| *p == t) {
-                let what = match t {
-                    Def::Struct(_) => "a struct that contains itself, directly or through others,",
-                    Def::Enum(_) => "an enum that contains itself, directly or through others,",
-                };
-                errors.push(Error::unsupported(pos, what));
+                errors.push(Error {
+                    unbuilt: true,
+                    ..Error::new(
+                        pos,
+                        format!(
+                            "`{name}` holds itself, directly or through others with no `List` between, which is not built yet, and a `List` of it is"
+                        ),
+                    )
+                    .with_fix(format!("hold it in a `List`, as `List[{name}]`"))
+                });
                 for &p in &path[at..] {
                     match p {
                         Def::Struct(s) => defs.cyclic[s] = true,
@@ -4750,6 +4757,26 @@ fn cycles(
     }
     path.pop();
     done.push(d);
+}
+
+/// Every name in a type that the type holds in place, with where it is: its
+/// own, and those of the types in its brackets, but not those of the
+/// elements of a `List`, which are held out of line.
+fn held_names<'a>(defs: &Defs, t: &'a Type) -> Vec<(&'a str, Pos)> {
+    fn names<'a>(defs: &Defs, t: &'a Type, out: &mut Vec<(&'a str, Pos)>) {
+        if !t.name.is_empty() {
+            out.push((t.name.as_str(), t.pos));
+        }
+        if t.name == "List" && defs.type_at(t.pos, "List").is_none() {
+            return;
+        }
+        for a in &t.args {
+            names(defs, a, out);
+        }
+    }
+    let mut out = Vec::new();
+    names(defs, t, &mut out);
+    out
 }
 
 /// Every name in a type, with where it is: its own, and those of the

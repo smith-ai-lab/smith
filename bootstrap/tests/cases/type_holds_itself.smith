@@ -1,0 +1,7 @@
+struct Node {
+  next: Node
+}
+
+fn main() {
+  n: Node = 5
+}
