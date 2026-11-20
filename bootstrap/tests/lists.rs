@@ -18,8 +18,12 @@ pub const ONCE: &[Test] = &[
         a_program_builds_a_list_pushes_to_it_and_reads_each_element,
     ),
     (
-        "a_list_holds_the_size_and_the_elements_that_were_put_in_in_order",
-        a_list_holds_the_size_and_the_elements_that_were_put_in_in_order,
+        "a_list_holds_the_size_and_the_elements_that_were_put_in_in_order_part_1_of_2",
+        || a_list_holds_the_size_and_the_elements_that_were_put_in_in_order(0),
+    ),
+    (
+        "a_list_holds_the_size_and_the_elements_that_were_put_in_in_order_part_2_of_2",
+        || a_list_holds_the_size_and_the_elements_that_were_put_in_in_order(1),
     ),
     (
         "an_index_compiles_exactly_when_arith_proves_it_below_the_size",
@@ -264,8 +268,8 @@ fn a_program_builds_a_list_pushes_to_it_and_reads_each_element() {
 /// For every type of whole number and `bool`, and every list built from a
 /// literal, or from `[]`, and a run of pushes, whether to a `var` or one name
 /// after another, the size and each element are what was put in, in order.
-fn a_list_holds_the_size_and_the_elements_that_were_put_in_in_order() {
-    generate::check(61, 200, build, |b| {
+fn a_list_holds_the_size_and_the_elements_that_were_put_in_in_order(part: u64) {
+    generate::check_part(61, 200, part, 2, build, |b| {
         let t = b.elem.name();
         let mut body = String::new();
         let last = if b.var {
