@@ -61,8 +61,12 @@ pub const ONCE: &[Test] = &[
         a_loop_that_decreases_a_measure_ends_without_diverge,
     ),
     (
-        "a_loop_with_decreases_compiles_exactly_when_the_measure_is_unsigned_and_gets_smaller",
-        a_loop_with_decreases_compiles_exactly_when_the_measure_is_unsigned_and_gets_smaller,
+        "a_loop_with_decreases_compiles_exactly_when_the_measure_gets_smaller_and_stays_at_zero_or_above",
+        a_loop_with_decreases_compiles_exactly_when_the_measure_gets_smaller_and_stays_at_zero_or_above,
+    ),
+    (
+        "a_distance_to_an_end_is_proven_where_the_loop_goes_round_again_and_nowhere_before",
+        a_distance_to_an_end_is_proven_where_the_loop_goes_round_again_and_nowhere_before,
     ),
     (
         "a_round_that_always_ends_in_break_has_no_place_to_go_round_again",
@@ -443,10 +447,10 @@ fn round(g: &mut Gen) -> Round {
     }
 }
 
-/// For every `loop decreases e`, the program compiles exactly when `e` is of
-/// an unsigned type and each place the loop goes round again has `e` smaller
-/// than the round began with.
-fn a_loop_with_decreases_compiles_exactly_when_the_measure_is_unsigned_and_gets_smaller() {
+/// For every `loop decreases e`, the program compiles exactly when each place
+/// the loop goes round again has `e` smaller than the round began with and
+/// not below zero.
+fn a_loop_with_decreases_compiles_exactly_when_the_measure_gets_smaller_and_stays_at_zero_or_above() {
     generate::check(53, 160, round, |r| {
         let (t, guard, step) = (r.ty.name, r.guard, r.step);
         let rest = if r.with_else {
@@ -464,15 +468,15 @@ fn a_loop_with_decreases_compiles_exactly_when_the_measure_is_unsigned_and_gets_
         let smaller = step >= 1;
         assert_eq!(
             errors.is_empty(),
-            !r.ty.signed && fits && smaller,
+            fits && smaller,
             "{errors:?} for {source}"
         );
-        let named = if r.ty.signed {
-            "`decreases`".to_string()
-        } else if !fits {
+        let named = if !smaller {
+            "`left` is smaller than when the round began".to_string()
+        } else if !r.ty.signed {
             format!("left - {step}")
         } else {
-            "`left` is smaller than when the round began".to_string()
+            "`left` is not below zero where the round ends".to_string()
         };
         if !errors.is_empty() {
             assert!(
@@ -632,4 +636,30 @@ fn two_literal_ends_of_a_range_take_the_type_the_counter_is_used_as() {
     // Nothing decides, so the numbers are `Int`.
     let nothing = "use std.console (console, print)\n\nfn main() ! console, alloc {\n  loop i in 0..3 { print(\"{i}\") }\n}\n";
     prints(nothing, vec!["0".into(), "1".into(), "2".into()]);
+}
+
+/// `count_to` and `steps` of `open-loop.md`, whose measure is below zero if the
+/// place is past the end, though no round that goes on begins there.
+fn a_distance_to_an_end_is_proven_where_the_loop_goes_round_again_and_nowhere_before() {
+    let page = "use std.bits (u64)\nuse std.console (console, print)\nuse std.int (wrapping_add)\n\n\
+        fn count_to(size: u64) -> u64 {\n  var at: u64 = 0\n  var n: u64 = 0\n  loop decreases size - at {\n    if at >= size { break }\n    at = at + 1\n    n = wrapping_add(n, 1)\n  }\n  n\n}\n\n\
+        fn skip(src: List[Byte], at: u64) -> next: u64\n  requires at < src.size\n  ensures next > at and next <= src.size\n{\n  at + 1\n}\n\n\
+        fn steps(src: List[Byte]) -> u64 {\n  var at: u64 = 0\n  var n: u64 = 0\n  loop decreases src.size - at {\n    if at >= src.size { break }\n    at = skip(src, at)\n    n = wrapping_add(n, 1)\n  }\n  n\n}\n\n\
+        fn main() ! console, alloc {\n  print(\"{count_to(3)} {steps([1, 2, 3, 4])}\")\n}\n";
+    prints(page, vec!["3 4".into()]);
+    // The place goes toward the end by `step`, and the loop breaks where the
+    // place is at or past the end, or only past it.
+    for (guard, step) in [(">=", 1), (">=", 2), (">=", 0), (">", 1)] {
+        let source = with_header(format!(
+            "fn f(size: u64) -> u64 {{\n  var at: u64 = 0\n  loop decreases size - at {{\n    if at {guard} size {{ break }}\n    at = at + {step}\n  }}\n  at\n}}\n\nfn main() ! console, alloc {{\n  print(\"{{f(3)}}\")\n}}\n"
+        ));
+        let errors = refused(&source);
+        // Past the end the measure is below zero, which is only left alone where
+        // the loop breaks the moment the place reaches the end, by one step.
+        assert_eq!(
+            errors.is_empty(),
+            guard == ">=" && step == 1,
+            "{errors:?} for {source}"
+        );
+    }
 }
