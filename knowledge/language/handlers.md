@@ -6,7 +6,9 @@ status: partial
 built:
   - "a function with a parameter `body: fn() -> T ! e` runs it with `e` handled by calling the effect's name with a lambda for each operation, named as the operation is, and the body, and the body a lambda or a name is given may carry `e` while the function that gives it does not"
   - "a call of an operation runs the lambda that the handler in force gives for it, with the arguments it is called with and the defaults it leaves out, under the handlers that were in force outside that handler, and the executable holds no trace of the handler: the call is the lambda lowered in place"
-  - "a function that carries a handled effect and takes no function, as `report` does, is refused where it is called, as not built yet"
+  - "a function that carries a handled effect and takes no function, as `report` does, runs under the handlers it is called under: the handler in force where it is called answers it, it is built once for each handler it runs under, found by where the handler is installed, and it is given what the functions of those handlers use, so `at_one()` is `1` and `at_two()` is `2` from one copy of `report`"
+  - "a handler inside a handler, whose function asks the effect again, is answered by the handler outside it, for a function that carries the effect as well as for the code under `with`"
+  - "a function a handler gives that assigns a name, under which a function that carries the effect runs, is refused as not built yet"
 ---
 
 # Handlers
