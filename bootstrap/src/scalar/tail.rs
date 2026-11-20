@@ -85,6 +85,19 @@ fn looped(index: usize, mut f: Function) -> Function {
 /// The blocks of the function, `index`, that end with a call of it that is
 /// the last thing it does, and how many arguments the call has.
 fn tail_calls(index: usize, f: &Function) -> Vec<(usize, usize)> {
+    // A tail call is the last instruction of its block, so a function with no
+    // block that ends with a call of itself is known without reading an
+    // instruction of it or making a table, which is what nearly every function
+    // is.
+    let ends_with_call = |block: &Block| {
+        matches!(
+            block.instructions.last(),
+            Some(Instruction { op: Op::Call { function, .. }, .. }) if *function == index
+        )
+    };
+    if !f.blocks.iter().any(ends_with_call) {
+        return Vec::new();
+    }
     let mut reads = vec![0u32; f.types.len()];
     for block in &f.blocks {
         for i in &block.instructions {
@@ -98,15 +111,18 @@ fn tail_calls(index: usize, f: &Function) -> Vec<(usize, usize)> {
     }
     let mut sites = Vec::new();
     for (b, block) in f.blocks.iter().enumerate() {
+        if !ends_with_call(block) {
+            continue;
+        }
         let Some(Instruction {
             results,
-            op: Op::Call { function, args },
+            op: Op::Call { args, .. },
             ..
         }) = block.instructions.last()
         else {
             continue;
         };
-        if *function == index && gives_back(f, &block.end, results, &reads) {
+        if gives_back(f, &block.end, results, &reads) {
             sites.push((b, args.len()));
         }
     }
