@@ -200,7 +200,9 @@ pub fn compile_timed(
 }
 
 fn emit(program: scalar::Program, target: Target, map: bool, timings: &mut Timings) -> Built {
-    let program = timings.stage("inline", || scalar::inline(program));
+    // The stage of `inline` is the time of `tail` too, which looks once at each
+    // function and changes the few that call themselves last.
+    let program = timings.stage("inline", || scalar::inline(scalar::tail(program)));
     let program = timings.stage("trim", || scalar::trim(program));
     let program = timings.stage("thread", || scalar::thread(program));
     let program = timings.stage("fold", || scalar::fold(program));
