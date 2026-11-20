@@ -152,6 +152,22 @@ struct Button {
 
 `on_press` is a function that may use the console. A field of type `fn()` would be pure. What is stored has exactly the effects its type states: `Button(label: "ok", on_press: hi)` is accepted for `hi` above, and a function that prints is refused for a field of type `fn()`, because whoever calls the field later is checked against the type alone. Only a function that is passed has its effects checked where it is written.
 
+## An effect that is listed and not needed
+
+An effect in a signature is a permission, and every caller must carry it. So a function that lists an effect nothing in it needs is asking its callers for more than it uses, and `smith check` says so.
+
+```
+use std.console (console, print)
+
+fn main() ! console, alloc {
+  print("hello")
+}
+```
+
+`smith check` warns: "`main` lists the `alloc` effect, and nothing in it needs it", with the fix "write `fn main() ! console`". It is a warning, as an unused import is, so `smith build` and `smith run` still build the program, and `smith check` fails.
+
+Three functions may list an effect they do not need, and are not warned of. A function of an `impl` has the signature its trait gives, and one implementation may need less than another. A function passed where a parameter's type allows an effect need not use it. And a function whose body holds a [`hole`](hole.md) is not finished. A `pub` function is warned of as any other: an effect is not listed to keep a place for later.
+
 ## The forms
 
 | Written | Means |
