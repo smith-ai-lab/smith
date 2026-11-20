@@ -255,12 +255,14 @@ pub struct Type {
     pub range: Option<(Bound, Bound)>,
 }
 
-/// A bound of a range type: a whole number written out, or the name of a
-/// parameter of the function the type is written in.
+/// A bound of a range type: a whole number written out, the name of a
+/// parameter of the function the type is written in, or the `size` of one.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Bound {
     Number(i128),
     Name(String),
+    /// `xs.size`, the size of a name.
+    Size(String),
 }
 
 impl Bound {
@@ -268,6 +270,32 @@ impl Bound {
         match self {
             Bound::Number(n) => n.to_string(),
             Bound::Name(n) => n.clone(),
+            Bound::Size(n) => format!("{n}.size"),
+        }
+    }
+
+    /// The expression a bound is in a clause, with `pos` for its places.
+    fn expr(&self, pos: Pos) -> Option<Expr> {
+        let name = |n: &str| Expr::Name {
+            name: n.to_string(),
+            pos,
+        };
+        match self {
+            Bound::Number(_) => None,
+            Bound::Name(n) => Some(name(n)),
+            Bound::Size(n) => Some(Expr::Field {
+                of: Box::new(name(n)),
+                name: "size".to_string(),
+                pos,
+            }),
+        }
+    }
+
+    /// The name that the bound is about, if it is about one.
+    fn named(&self) -> Option<&str> {
+        match self {
+            Bound::Number(_) => None,
+            Bound::Name(n) | Bound::Size(n) => Some(n),
         }
     }
 }
@@ -1445,8 +1473,8 @@ impl Parser<'_> {
                 pos,
             };
             for bound in [first, end] {
-                if let Bound::Name(n) = bound
-                    && (*n == p.name || !params.iter().any(|q| q.name == *n))
+                if let Some(n) = bound.named()
+                    && (n == p.name || !params.iter().any(|q| q.name == n))
                 {
                     self.errors.push(
                         Error::new(
@@ -1460,11 +1488,11 @@ impl Parser<'_> {
                     named = false;
                 }
             }
-            if let Bound::Name(n) = first {
-                owed.push(compared(name(n), "<=", name(&p.name), pos));
+            if let Some(held) = first.expr(pos) {
+                owed.push(compared(held, "<=", name(&p.name), pos));
             }
-            if let Bound::Name(n) = end {
-                owed.push(compared(name(&p.name), "<", name(n), pos));
+            if let Some(held) = end.expr(pos) {
+                owed.push(compared(name(&p.name), "<", held, pos));
             }
         }
         named.then_some(owed)
@@ -1503,8 +1531,8 @@ impl Parser<'_> {
         let mut owed = Vec::new();
         let mut all_named = true;
         for bound in [first, end] {
-            if let Bound::Name(n) = bound
-                && (*n == given || !params.iter().any(|q| q.name == *n))
+            if let Some(n) = bound.named()
+                && (n == given || !params.iter().any(|q| q.name == n))
             {
                 self.errors.push(
                     Error::new(
@@ -1516,11 +1544,11 @@ impl Parser<'_> {
                 all_named = false;
             }
         }
-        if let Bound::Name(n) = first {
-            owed.push(compared(name(n), "<=", name(&given), pos));
+        if let Some(held) = first.expr(pos) {
+            owed.push(compared(held, "<=", name(&given), pos));
         }
-        if let Bound::Name(n) = end {
-            owed.push(compared(name(&given), "<", name(n), pos));
+        if let Some(held) = end.expr(pos) {
+            owed.push(compared(name(&given), "<", held, pos));
         }
         all_named.then_some(owed)
     }
@@ -1613,8 +1641,9 @@ impl Parser<'_> {
             Tok::Ident(name) => {
                 let name = name.clone();
                 self.bump();
-                if self.tok() == &Tok::Punct("..") {
-                    return self.range_type(pos, names, Some(Bound::Name(name)));
+                if self.tok() == &Tok::Punct("..") || self.tok() == &Tok::Punct(".") {
+                    let first = self.name_bound(name, pos)?;
+                    return self.range_type(pos, names, Some(first));
                 }
                 let mut args = Vec::new();
                 if self.tok() == &Tok::Punct("[") {
@@ -1683,6 +1712,13 @@ impl Parser<'_> {
         }
         self.bump();
         let end = self.range_bound()?;
+        if matches!(self.tok(), Tok::Punct("+" | "-" | "*" | "(")) {
+            return Err(Error::new(
+                pos,
+                "a bound is a whole number, a name, or the `size` of a name",
+            )
+            .with_fix("bind the number to a name first, and write the name"));
+        }
         match (&first, &end) {
             (Bound::Number(min), Bound::Number(end)) => {
                 if end.checked_sub(1).is_none_or(|max| max < min - 1) {
@@ -1726,6 +1762,29 @@ impl Parser<'_> {
         })
     }
 
+    /// The bound that begins with the name just read: the name, or its `size`
+    /// when `.size` follows. A bound is nothing else, and is not worked out.
+    fn name_bound(&mut self, name: String, pos: Pos) -> Result<Bound, Error> {
+        let refused = || {
+            Error::new(
+                pos,
+                "a bound is a whole number, a name, or the `size` of a name",
+            )
+            .with_fix("bind the number to a name first, and write the name")
+        };
+        if self.tok() != &Tok::Punct(".") {
+            return Ok(Bound::Name(name));
+        }
+        self.bump();
+        match self.tok() {
+            Tok::Ident(field) if field == "size" => {
+                self.bump();
+                Ok(Bound::Size(name))
+            }
+            _ => Err(refused()),
+        }
+    }
+
     /// Parses a bound of a range type: a whole number, with its `-` if it
     /// has one directly before it, or a name.
     fn range_bound(&mut self) -> Result<Bound, Error> {
@@ -1733,7 +1792,7 @@ impl Parser<'_> {
         if let Tok::Ident(name) = self.tok() {
             let name = name.clone();
             self.bump();
-            return Ok(Bound::Name(name));
+            return self.name_bound(name, pos);
         }
         let negative = self.tok() == &Tok::Punct("-");
         if negative {

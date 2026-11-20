@@ -13,7 +13,8 @@ built:
   - "`==`, `!=`, `<`, `<=`, `>`, and `>=` between two different ranges, as the numbers they hold are, where one type of 64 bits holds the numbers of both"
   - "a range whose bound is the name of a parameter, `0..n` or `m..256`, as the type of a parameter: the body knows that the parameter is below `n` or at least `m`, as a `requires` says, and a call compiles when its argument is shown to be, and is the empty type where `n` is not above the first bound"
   - "a name for a bound in the type of a result, as `0..n` or `m..256`, which the function is shown to give and a caller knows, and in the type of a binding made with `=`, which is shown where it is written and known wherever the name is used, and a name in the type of a field, of a `var`, or inside another type refused with the reason, and a `var` or an unbound name refused as a bound"
-  - "not the `size` of a name as a bound, which is planned, and a comparison of two ranges that no type of 64 bits holds"
+  - "the `size` of a name as a bound, `0..xs.size` or `xs.size..256`, wherever a name is a bound, where `xs` is a `List`, a `Slice`, or a `str` that is a parameter or an `=` binding, and no other field and no bound that is worked out, such as `0..n + 1` or `0..g.rows`, which is refused with \"a bound is a whole number, a name, or the `size` of a name\"; the size of a text written out is not known to a call, so a `str` is shown by a `requires` or an `if`"
+  - "not the `size` of an array as a bound, and a comparison of two ranges that no type of 64 bits holds"
 ---
 
 # Number types

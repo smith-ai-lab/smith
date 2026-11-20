@@ -882,6 +882,8 @@ impl<'a> Defs<'a> {
     ) -> Option<i128> {
         let name = match bound {
             Bound::Number(n) => return Some(*n),
+            // The size of a name is a `Nat`, whatever the name is.
+            Bound::Size(_) => return Some(if first { 0 } else { u64::MAX as i128 }),
             Bound::Name(name) => name,
         };
         let params = self.bound_params.take();
@@ -6389,7 +6391,8 @@ impl<'a> Checker<'a> {
                             let bound = match ty {
                                 Some(t)
                                     if t.range.as_ref().is_some_and(|(a, b)| {
-                                        matches!(a, Bound::Name(_)) || matches!(b, Bound::Name(_))
+                                        matches!(a, Bound::Name(_) | Bound::Size(_))
+                                            || matches!(b, Bound::Name(_) | Bound::Size(_))
                                     }) =>
                                 {
                                     let needed = match self.named_range(body, t) {
