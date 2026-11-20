@@ -44,6 +44,10 @@ pub const ONCE: &[Test] = &[
         a_text_given_to_an_element_or_an_attribute_is_escaped_as_the_reference_escapes_it,
     ),
     (
+        "an_operation_of_markup_is_refused_outside_std_html_to_import_and_markup_is_refused_to_handle",
+        an_operation_of_markup_is_refused_outside_std_html_to_import_and_markup_is_refused_to_handle,
+    ),
+    (
         "the_examples_of_the_page_build_for_every_target",
         the_examples_of_the_page_build_for_every_target,
     ),
@@ -472,5 +476,42 @@ fn main() ! alloc {
         if let Err(e) = compile(source.as_bytes(), *target) {
             panic!("{e:?} on {target:?}");
         }
+    }
+}
+
+/// The operations of `markup`, which only `std.html` calls and handles.
+const OPERATIONS: [&str; 6] = ["start", "attribute", "emit", "include", "void", "end"];
+
+/// The messages a program is refused with.
+fn refused(source: &str) -> Vec<String> {
+    match lower(source.as_bytes()) {
+        Ok(_) => panic!("the program is accepted:\n{source}"),
+        Err(errors) => errors.into_iter().map(|e| e.message).collect(),
+    }
+}
+
+/// No function writes a text as HTML: an operation of `markup` is not imported
+/// by a program, and the effect is not handled by one, so `render` is the only
+/// handler.
+fn an_operation_of_markup_is_refused_outside_std_html_to_import_and_markup_is_refused_to_handle() {
+    for operation in OPERATIONS {
+        let source = format!("use std.html ({operation})\n\nfn main() {{\n}}\n");
+        let said = refused(&source);
+        assert!(
+            said.iter().any(|m| m.contains(&format!("`{operation}`")) && m.contains("private")),
+            "{operation}: {said:?}"
+        );
+    }
+    let handler = "use std.html (markup)
+
+fn main() {
+  with markup(start: fn(tag) { }, attribute: fn(name, value) { }, emit: fn(text) { }, include: fn(page) { }, void: { }, end: fn(tag) { })
+}
+";
+    let said = refused(handler);
+    assert!(said.iter().any(|m| m.contains("`markup`") && m.contains("private")), "{said:?}");
+    // Every operation is named as one that is private, so none was left out.
+    for operation in OPERATIONS {
+        assert!(said.iter().any(|m| m.contains(&format!("`{operation}`"))), "{operation}: {said:?}");
     }
 }
