@@ -25,12 +25,26 @@ pub const ONCE: &[Test] = &[
         "a_function_that_does_not_call_itself_and_one_that_calls_itself_last_are_not_changed",
         a_function_that_does_not_call_itself_and_one_that_calls_itself_last_are_not_changed,
     ),
+    (
+        "two_functions_that_call_each_other_give_what_they_gave_and_none_calls_another_but_the_one_they_make",
+        two_functions_that_call_each_other_give_what_they_gave_and_none_calls_another_but_the_one_they_make,
+    ),
+    (
+        "a_circle_of_functions_goes_a_hundred_thousand_deep_and_comes_back",
+        a_circle_of_functions_goes_a_hundred_thousand_deep_and_comes_back,
+    ),
 ];
 
-pub const MACHINE: &[Test] = &[(
-    "an_executable_of_a_function_that_calls_itself_a_million_deep_gives_the_right_number",
-    an_executable_of_a_function_that_calls_itself_a_million_deep_gives_the_right_number,
-)];
+pub const MACHINE: &[Test] = &[
+    (
+        "an_executable_of_a_function_that_calls_itself_a_million_deep_gives_the_right_number",
+        an_executable_of_a_function_that_calls_itself_a_million_deep_gives_the_right_number,
+    ),
+    (
+        "an_executable_of_two_functions_that_call_each_other_a_million_deep_gives_the_right_number",
+        an_executable_of_two_functions_that_call_each_other_a_million_deep_gives_the_right_number,
+    ),
+];
 
 const LONG: Type = Type::Int(Bits::B64);
 
@@ -154,6 +168,123 @@ fn an_executable_of_a_function_that_calls_itself_a_million_deep_gives_the_right_
     let said = scalar::Outcome {
         stdout: Vec::new(),
         status: (DEEP & 0xff) as i32,
+    };
+    for target in runnable() {
+        scalar_runs_as(&program, target, &said);
+    }
+}
+
+/// `ping(n)` is 0 when `n` is 0 and otherwise 1 more than `pong(n - 1, 7)`, and
+/// `pong(n, k)` is `k` when `n` is 0 and otherwise 2 more than `ping(n - 1)`:
+/// two functions that call each other and take different numbers of values.
+/// `ping` is the function at 0, `pong` the one at 1, and `main` the one at 2.
+fn circle(n: u64) -> Program {
+    let mut b = Builder::new();
+    let [n_] = b.params(&[LONG])[..] else {
+        unreachable!()
+    };
+    let (calls, _) = b.block(&[]);
+    let (stops, _) = b.block(&[]);
+    let zero = b.int(Bits::B64, 0);
+    let is_zero = b.compare(Compare::Equal, n_, zero);
+    b.switch(is_zero, vec![(calls, vec![]), (stops, vec![])]);
+    b.at(calls);
+    let one = b.int(Bits::B64, 1);
+    let seven = b.int(Bits::B64, 7);
+    let before = b.binary(Binary::Sub, n_, one);
+    let made = b.call(1, vec![before, seven], &[LONG]);
+    let more = b.binary(Binary::Add, made[0], one);
+    b.ret(vec![more]);
+    b.at(stops);
+    b.ret(vec![zero]);
+    let ping = b.finish(&[LONG]);
+
+    let mut b = Builder::new();
+    let [n_, k] = b.params(&[LONG, LONG])[..] else {
+        unreachable!()
+    };
+    let (calls, _) = b.block(&[]);
+    let (stops, _) = b.block(&[]);
+    let zero = b.int(Bits::B64, 0);
+    let is_zero = b.compare(Compare::Equal, n_, zero);
+    b.switch(is_zero, vec![(calls, vec![]), (stops, vec![])]);
+    b.at(calls);
+    let one = b.int(Bits::B64, 1);
+    let two = b.int(Bits::B64, 2);
+    let before = b.binary(Binary::Sub, n_, one);
+    let made = b.call(0, vec![before], &[LONG]);
+    let more = b.binary(Binary::Add, made[0], two);
+    b.ret(vec![more]);
+    b.at(stops);
+    b.ret(vec![k]);
+    let pong = b.finish(&[LONG]);
+
+    let mut b = Builder::new();
+    let n = b.int(Bits::B64, n);
+    let made = b.call(0, vec![n], &[LONG]);
+    let status = b.narrow(made[0], Bits::B8);
+    b.exit(status);
+    b.ret(vec![]);
+    Program {
+        data: Vec::new(),
+        functions: vec![ping, pong, b.finish(&[])],
+        main: 2,
+    }
+}
+
+/// What `ping(n)` gives, worked out by the same two rules.
+fn ping_gives(n: u64) -> u64 {
+    let (mut n, mut sum, mut in_ping) = (n, 0, true);
+    loop {
+        if n == 0 {
+            return sum + if in_ping { 0 } else { 7 };
+        }
+        sum += if in_ping { 1 } else { 2 };
+        n -= 1;
+        in_ping = !in_ping;
+    }
+}
+
+fn two_functions_that_call_each_other_give_what_they_gave_and_none_calls_another_but_the_one_they_make() {
+    for n in [0, 1, 2, 3, 4, 9, 30] {
+        let program = circle(n);
+        assert_eq!(scalar::check(&program), Ok(()));
+        let made = scalar::recur(program.clone());
+        assert_eq!(scalar::check(&made), Ok(()), "n {n}");
+        // The two functions and `main` are where they were, and the one made of
+        // them is after.
+        assert_eq!(made.functions.len(), 4);
+        for f in 0..2 {
+            let calls: Vec<usize> = (made.functions[f].blocks.iter().flat_map(|b| &b.instructions))
+                .filter_map(|i| match i.op {
+                    Op::Call { function, .. } => Some(function),
+                    _ => None,
+                })
+                .collect();
+            assert_eq!(calls, vec![3], "n {n} function {f}");
+        }
+        assert!(!(made.functions[3].blocks.iter().flat_map(|b| &b.instructions))
+            .any(|i| matches!(&i.op, Op::Call { function, .. } if *function != 3)));
+        assert_eq!(scalar::run(&made), scalar::run(&program), "n {n}");
+        assert_eq!(scalar::call(&made, 0, &[n]), vec![ping_gives(n)], "n {n}");
+        assert_eq!(scalar::call(&made, 1, &[n, 5]), scalar::call(&program, 1, &[n, 5]), "n {n}");
+    }
+}
+
+fn a_circle_of_functions_goes_a_hundred_thousand_deep_and_comes_back() {
+    let program = scalar::recur(circle(0));
+    assert_eq!(scalar::check(&program), Ok(()));
+    for n in [0u64, 1, 4_000, 4_101, 100_000] {
+        assert_eq!(scalar::call(&program, 0, &[n]), vec![ping_gives(n)], "n {n}");
+    }
+}
+
+fn an_executable_of_two_functions_that_call_each_other_a_million_deep_gives_the_right_number() {
+    const DEEP: u64 = 1_000_000;
+    let program = scalar::recur(circle(DEEP));
+    let said = scalar::Outcome {
+        stdout: Vec::new(),
+        status: (ping_gives(DEEP) & 0xff) as i32,
     };
     for target in runnable() {
         scalar_runs_as(&program, target, &said);

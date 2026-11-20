@@ -19,11 +19,15 @@
 //! after, finds the requests for a chunk as it finds any request and gives
 //! them room in a stack of memory that is released when the function returns.
 //!
-//! A function that does not call itself, or only calls itself as the last thing
-//! it does, which `tail` has made a jump, is not changed. Functions that call
-//! each other are not changed here.
+//! Functions that call each other are first made one function that calls
+//! itself, as `circle` says, and a call of a function of the circle from one
+//! that is the last thing it does is then a jump, as `tail` makes it. A
+//! function that does not call itself, or only calls itself as the last thing
+//! it does, which `tail` has made a jump, is not changed.
 
 use std::collections::HashMap;
+
+use super::circle;
 
 use super::{
     Binary, Bits, Block, Compare, Constant, End, Function, Instruction, Jump, Op, Place, Program,
@@ -40,6 +44,13 @@ const EXIT: u64 = 1;
 
 /// The program with the stack of each function that calls itself explicit.
 pub fn recur(program: Program) -> Program {
+    let before = program.functions.len();
+    let program = circle::merge(program);
+    let program = if program.functions.len() == before {
+        program
+    } else {
+        super::tail(program)
+    };
     let main = program.main;
     Program {
         data: program.data,

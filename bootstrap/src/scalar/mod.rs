@@ -12,6 +12,7 @@
 //! `check::to_scalar`, and what it needs at run time is in `runtime`.
 
 mod build;
+mod circle;
 mod common;
 mod escape;
 mod eval;
