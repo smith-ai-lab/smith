@@ -91,6 +91,12 @@ jobs:
   # on the commit the change is based on, where they passed. This job builds
   # the compiler of that commit and of this one, on a machine that is never
   # scarce, and compares what each would run, as `needs-machines.sh` says.
+  # "This one" is the change as it would be once merged, which GitHub builds
+  # for a pull request and for the merge queue, and not the head of the
+  # branch: a branch that is older than a change of generated code on `main`
+  # builds other bytes than `main` does for that change, and not for its own.
+  # The commit it is based on is the first parent of the merge, for a pull
+  # request, and the base the queue gives.
   decide:
     name: which machines need a test
     needs: changes
@@ -101,13 +107,15 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
-          ref: ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha }}
+          # No ref is the merge of the change into its base for a pull request.
+          ref: ${{ github.event.merge_group.head_sha }}
           fetch-depth: 0
       - id: decide
         env:
-          BASE: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
+          BASE: ${{ github.event.merge_group.base_sha }}
         run: |
           set -eu
+          BASE=${BASE:-$(git rev-parse HEAD^1)}
           git worktree add --detach "$RUNNER_TEMP/base" "$BASE"
           # The two builds below run side by side, and each would install the
           # toolchain the repository names if it is missing. Two installs at
