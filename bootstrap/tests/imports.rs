@@ -20,6 +20,10 @@ use crate::{numbers, programs, text};
 
 pub const ONCE: &[Test] = &[
     (
+        "a_label_after_a_character_of_more_than_one_byte_on_its_line_is_no_use_of_a_name",
+        a_label_after_a_character_of_more_than_one_byte_on_its_line_is_no_use_of_a_name,
+    ),
+    (
         "a_name_a_module_does_not_export_costs_a_lookup_and_names_the_module_that_does",
         a_name_a_module_does_not_export_costs_a_lookup_and_names_the_module_that_does,
     ),
@@ -245,7 +249,11 @@ fn names_of(source: &str) -> (HashSet<String>, HashSet<String>) {
             let bytes: Vec<u8> = parts[3].split(',').map(|b| b.parse().unwrap()).collect();
             let name = String::from_utf8(bytes).unwrap();
             let (at, col): (usize, usize) = (parts[1].parse().unwrap(), parts[2].parse().unwrap());
-            let after = lines.get(at - 1).and_then(|l| l.get(col - 1 + name.len()..));
+            // A column counts characters, and a line is indexed by bytes.
+            let after = lines.get(at - 1).and_then(|l| {
+                let start = l.char_indices().nth(col - 1).map_or(l.len(), |(i, _)| i);
+                l.get(start + name.len()..)
+            });
             if after.is_some_and(|rest| rest.starts_with(':') && !rest.starts_with("::")) {
                 labels.insert(name);
             } else {
@@ -813,4 +821,16 @@ fn a_name_a_module_does_not_export_costs_a_lookup_and_names_the_module_that_does
         with.bytes <= 2 * without.bytes && with.calls <= 2 * without.calls,
         "a name no module exports allocates {with:?}, and the file without it {without:?}"
     );
+}
+
+/// A name before a colon is a label and no use of a name of the library, also
+/// when a character of more than one byte stands before it on its line: the
+/// column of the lexer counts characters, and the line is read by bytes.
+fn a_label_after_a_character_of_more_than_one_byte_on_its_line_is_no_use_of_a_name() {
+    for before in ["", "\"a\", ", "\"é\", ", "\"日本\", ", "\"🙂//\", ", "\"🙂\", \"🙂\", "] {
+        let source = format!("fn f() {{ g({before}text: \"\") }}\n");
+        let (written, defined) = names_of(&source);
+        assert!(!written.contains("text"), "{source:?} writes text: {written:?}");
+        assert!(defined.contains("text"), "{source:?} does not give text as a label: {defined:?}");
+    }
 }
