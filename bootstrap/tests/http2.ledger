@@ -1,0 +1,127 @@
+# RFC 9113, sections 4 to 6: each sentence that holds MUST, MUST NOT, or SHALL, and what holds it in
+# `std.http2`. A line is
+#   <section> | <first words of the sentence> | test <name>
+# or
+#   <section> | <first words of the sentence> | reason <why std.http2 has nothing to do with it>
+# `tests/http2_standard.rs` fails for a sentence that is in no line.
+4.1 | Values greater than 2^14 (16,384) MUST NOT be sent | reason binds a sender of frames, which is the connection; write_frame writes the frame it is given
+4.1 | Implementations MUST ignore and discard frames of unknown types. | test a_frame_is_written_as_its_bytes_and_read_from_them_and_a_front_part_of_it_is_incomplete
+4.1 | Unused flags MUST be ignored on receipt and MUST | test a_frame_is_written_as_its_bytes_and_read_from_them_and_a_front_part_of_it_is_incomplete
+4.1 | The semantics of this bit are undefined, and the | test a_frame_is_written_as_its_bytes_and_read_from_them_and_a_front_part_of_it_is_incomplete
+4.2 | All implementations MUST be capable of receiving and minimally | test a_frame_with_one_fault_the_page_lists_is_refused_and_without_it_is_read
+4.2 | An endpoint MUST send an error code of FRAME_SIZE_ERROR | test a_frame_with_one_fault_the_page_lists_is_refused_and_without_it_is_read
+4.2 | A frame size error in a frame that could | reason binds the connection, which holds the state of its streams, its settings, and its flow-control windows; the frame is read as it is given
+4.3 | Field blocks MUST be transmitted as a contiguous sequence | reason binds the connection, which holds the state of its streams, its settings, and its flow-control windows; the frame is read as it is given
+4.3 | A receiver MUST terminate the connection with a connection | reason binds the connection, which holds the state of its streams, its settings, and its flow-control windows; the frame is read as it is given
+4.3 | A decoding error in a field block MUST be | reason binds the connection, which holds the state of its streams, its settings, and its flow-control windows; the frame is read as it is given
+4.3.1 | Once an endpoint acknowledges a change to SETTINGS_HEADER_TABLE_SIZE that | reason binds the connection, which holds the state of its streams, its settings, and its flow-control windows; the frame is read as it is given
+4.3.1 | An endpoint MUST treat a field block that follows | reason binds the connection, which holds the state of its streams, its settings, and its flow-control windows; the frame is read as it is given
+5.1 | Receiving any frame other than HEADERS or PRIORITY on | reason binds the connection, which holds the state of its streams, its settings, and its flow-control windows; the frame is read as it is given
+5.1 | If this stream is initiated by the server, as | reason binds the connection, which holds the state of its streams, its settings, and its flow-control windows; the frame is read as it is given
+5.1 | An endpoint MUST NOT send any type of frame other than HEADERS, | reason binds the connection, which holds the state of its streams, its settings, and its flow-control windows; the frame is read as it is given
+5.1 | Receiving any type of frame other than RST_STREAM, PRIORITY, | reason binds the connection, which holds the state of its streams, its settings, and its flow-control windows; the frame is read as it is given
+5.1 | An endpoint MUST NOT send any type of frame other than RST_STREAM, | reason binds the connection, which holds the state of its streams, its settings, and its flow-control windows; the frame is read as it is given
+5.1 | Receiving any type of frame other than HEADERS, RST_STREAM, | reason binds the connection, which holds the state of its streams, its settings, and its flow-control windows; the frame is read as it is given
+5.1 | If an endpoint receives additional frames, other than WINDOW_UPDATE, | reason binds the connection, which holds the state of its streams, its settings, and its flow-control windows; the frame is read as it is given
+5.1 | An endpoint MUST NOT send frames other than PRIORITY | reason binds the connection, which holds the state of its streams, its settings, and its flow-control windows; the frame is read as it is given
+5.1 | An endpoint MUST minimally process and then discard any | reason binds the connection, which holds the state of its streams, its settings, and its flow-control windows; the frame is read as it is given
+5.1.1 | Streams initiated by a client MUST use odd-numbered stream | reason binds the connection, which holds the state of its streams, its settings, and its flow-control windows; the frame is read as it is given
+5.1.1 | The identifier of a newly established stream MUST be | reason binds the connection, which holds the state of its streams, its settings, and its flow-control windows; the frame is read as it is given
+5.1.1 | An endpoint that receives an unexpected stream identifier MUST | reason binds the connection, which holds the state of its streams, its settings, and its flow-control windows; the frame is read as it is given
+5.1.2 | Endpoints MUST NOT exceed the limit set by their | reason binds the connection, which holds the state of its streams, its settings, and its flow-control windows; the frame is read as it is given
+5.1.2 | An endpoint that receives a HEADERS frame that causes | reason binds the connection, which holds the state of its streams, its settings, and its flow-control windows; the frame is read as it is given
+5.2.1 | A sender MUST respect flow-control limits imposed by a | reason binds the connection, which holds the state of its streams, its settings, and its flow-control windows; the frame is read as it is given
+5.2.2 | Endpoints MUST read and process HTTP/2 frames from the | reason binds the connection, which holds the state of its streams, its settings, and its flow-control windows; the frame is read as it is given
+5.4 | If a frame causes a connection error, that error | reason binds the connection, which holds the state of its streams, its settings, and its flow-control windows; the frame is read as it is given
+5.4.1 | After sending the GOAWAY frame for an error condition, | reason binds the connection, which holds the state of its streams, its settings, and its flow-control windows; the frame is read as it is given
+5.4.2 | The peer that sends the RST_STREAM frame MUST be | reason binds the connection, which holds the state of its streams, its settings, and its flow-control windows; the frame is read as it is given
+5.4.2 | To avoid looping, an endpoint MUST NOT send a | reason binds the connection, which holds the state of its streams, its settings, and its flow-control windows; the frame is read as it is given
+5.5 | Implementations MUST ignore unknown or unsupported values in all | test a_frame_is_written_as_its_bytes_and_read_from_them_and_a_front_part_of_it_is_incomplete
+5.5 | Implementations MUST discard frames that have unknown or unsupported | test a_frame_is_written_as_its_bytes_and_read_from_them_and_a_front_part_of_it_is_incomplete
+5.5 | However, extension frames that appear in the middle of | reason binds the connection, which holds the state of its streams, its settings, and its flow-control windows; the frame is read as it is given
+5.5 | An extension that changes existing protocol elements or state | reason binds the connection, which holds the state of its streams, its settings, and its flow-control windows; the frame is read as it is given
+5.5 | If a setting is used for extension negotiation, the | reason binds the connection, which holds the state of its streams, its settings, and its flow-control windows; the frame is read as it is given
+6.1 | Padding octets MUST be set to zero when sending. | test a_frame_is_written_as_its_bytes_and_read_from_them_and_a_front_part_of_it_is_incomplete
+6.1 | DATA frames MUST be associated with a stream. | test a_frame_with_one_fault_the_page_lists_is_refused_and_without_it_is_read
+6.1 | If a DATA frame is received whose Stream Identifier | test a_frame_with_one_fault_the_page_lists_is_refused_and_without_it_is_read
+6.1 | If a DATA frame is received whose stream is | reason binds the connection, which holds the state of its streams, its settings, and its flow-control windows; the frame is read as it is given
+6.1 | If the length of the padding is the length | test a_frame_with_one_fault_the_page_lists_is_refused_and_without_it_is_read
+6.2 | Padding octets MUST be set to zero when sending. | test a_frame_is_written_as_its_bytes_and_read_from_them_and_a_front_part_of_it_is_incomplete
+6.2 | A HEADERS frame without the END_HEADERS flag set MUST | reason binds the connection, which holds the state of its streams, its settings, and its flow-control windows; the frame is read as it is given
+6.2 | A receiver MUST treat the receipt of any other | reason binds the connection, which holds the state of its streams, its settings, and its flow-control windows; the frame is read as it is given
+6.2 | HEADERS frames MUST be associated with a stream. | test a_frame_with_one_fault_the_page_lists_is_refused_and_without_it_is_read
+6.2 | If a HEADERS frame is received whose Stream Identifier | test a_frame_with_one_fault_the_page_lists_is_refused_and_without_it_is_read
+6.2 | If the length of the padding is the length | test a_frame_with_one_fault_the_page_lists_is_refused_and_without_it_is_read
+6.3 | If a PRIORITY frame is received with a stream | test a_frame_with_one_fault_the_page_lists_is_refused_and_without_it_is_read
+6.3 | A PRIORITY frame with a length other than 5 | test a_frame_with_one_fault_the_page_lists_is_refused_and_without_it_is_read
+6.4 | After receiving a RST_STREAM on a stream, the receiver | reason binds the connection, which holds the state of its streams, its settings, and its flow-control windows; the frame is read as it is given
+6.4 | However, after sending the RST_STREAM, the sending endpoint MUST | reason binds the connection, which holds the state of its streams, its settings, and its flow-control windows; the frame is read as it is given
+6.4 | RST_STREAM frames MUST be associated with a stream. | test a_frame_with_one_fault_the_page_lists_is_refused_and_without_it_is_read
+6.4 | If a RST_STREAM frame is received with a stream | test a_frame_with_one_fault_the_page_lists_is_refused_and_without_it_is_read
+6.4 | RST_STREAM frames MUST NOT be sent for a stream | reason binds the connection, which holds the state of its streams, its settings, and its flow-control windows; the frame is read as it is given
+6.4 | If a RST_STREAM frame identifying an idle stream is | reason binds the connection, which holds the state of its streams, its settings, and its flow-control windows; the frame is read as it is given
+6.4 | A RST_STREAM frame with a length other than 4 | test a_frame_with_one_fault_the_page_lists_is_refused_and_without_it_is_read
+6.5 | A SETTINGS frame MUST be sent by both endpoints | reason binds the connection, which holds the state of its streams, its settings, and its flow-control windows; the frame is read as it is given
+6.5 | Implementations MUST support all of the settings defined by | reason binds the connection, which holds the state of its streams, its settings, and its flow-control windows; the frame is read as it is given
+6.5 | When this bit is set, the frame payload of | test a_frame_with_one_fault_the_page_lists_is_refused_and_without_it_is_read
+6.5 | Receipt of a SETTINGS frame with the ACK flag | test a_frame_with_one_fault_the_page_lists_is_refused_and_without_it_is_read
+6.5 | The stream identifier for a SETTINGS frame MUST be | test a_frame_with_one_fault_the_page_lists_is_refused_and_without_it_is_read
+6.5 | If an endpoint receives a SETTINGS frame whose Stream | test a_frame_with_one_fault_the_page_lists_is_refused_and_without_it_is_read
+6.5 | A badly formed or incomplete SETTINGS frame MUST be | test a_frame_with_one_fault_the_page_lists_is_refused_and_without_it_is_read
+6.5 | A SETTINGS frame with a length other than a | test a_frame_with_one_fault_the_page_lists_is_refused_and_without_it_is_read
+6.5.2 | A server MUST NOT send a PUSH_PROMISE frame if | reason binds the connection, which holds the state of its streams, its settings, and its flow-control windows; the frame is read as it is given
+6.5.2 | A client that has both set this parameter to | reason binds the connection, which holds the state of its streams, its settings, and its flow-control windows; the frame is read as it is given
+6.5.2 | Any value other than 0 or 1 MUST be | reason binds the connection, which holds the state of its streams, its settings, and its flow-control windows; the frame is read as it is given
+6.5.2 | A server MUST NOT explicitly set this value to | reason binds the connection, which holds the state of its streams, its settings, and its flow-control windows; the frame is read as it is given
+6.5.2 | A server MAY choose to omit this setting when | reason binds the connection, which holds the state of its streams, its settings, and its flow-control windows; the frame is read as it is given
+6.5.2 | A client MUST treat receipt of a SETTINGS frame | reason binds the connection, which holds the state of its streams, its settings, and its flow-control windows; the frame is read as it is given
+6.5.2 | Values above the maximum flow-control window size of 2^31-1 | reason binds the connection, which holds the state of its streams, its settings, and its flow-control windows; the frame is read as it is given
+6.5.2 | The value advertised by an endpoint MUST be between | reason binds the connection, which holds the state of its streams, its settings, and its flow-control windows; the frame is read as it is given
+6.5.2 | Values outside this range MUST be treated as a | reason binds the connection, which holds the state of its streams, its settings, and its flow-control windows; the frame is read as it is given
+6.5.2 | An endpoint that receives a SETTINGS frame with any | reason binds the connection, which holds the state of its streams, its settings, and its flow-control windows; the frame is read as it is given
+6.5.3 | In order to provide such synchronization timepoints, the recipient | reason binds the connection, which holds the state of its streams, its settings, and its flow-control windows; the frame is read as it is given
+6.5.3 | The values in the SETTINGS frame MUST be processed | reason binds the connection, which holds the state of its streams, its settings, and its flow-control windows; the frame is read as it is given
+6.5.3 | Unsupported settings MUST be ignored. | reason binds the connection, which holds the state of its streams, its settings, and its flow-control windows; the frame is read as it is given
+6.5.3 | Once all values have been processed, the recipient MUST | reason binds the connection, which holds the state of its streams, its settings, and its flow-control windows; the frame is read as it is given
+6.6 | The promised stream identifier MUST be a valid choice | reason binds the connection, which holds the state of its streams, its settings, and its flow-control windows; the frame is read as it is given
+6.6 | Padding octets MUST be set to zero when sending. | test a_frame_is_written_as_its_bytes_and_read_from_them_and_a_front_part_of_it_is_incomplete
+6.6 | A PUSH_PROMISE frame without the END_HEADERS flag set MUST | reason binds the connection, which holds the state of its streams, its settings, and its flow-control windows; the frame is read as it is given
+6.6 | A receiver MUST treat the receipt of any other | reason binds the connection, which holds the state of its streams, its settings, and its flow-control windows; the frame is read as it is given
+6.6 | PUSH_PROMISE frames MUST only be sent on a peer-initiated | reason binds the connection, which holds the state of its streams, its settings, and its flow-control windows; the frame is read as it is given
+6.6 | If the Stream Identifier field specifies the value 0x00, | test a_frame_with_one_fault_the_page_lists_is_refused_and_without_it_is_read
+6.6 | PUSH_PROMISE MUST NOT be sent if the SETTINGS_ENABLE_PUSH setting | reason binds the connection, which holds the state of its streams, its settings, and its flow-control windows; the frame is read as it is given
+6.6 | An endpoint that has set this setting and has | reason binds the connection, which holds the state of its streams, its settings, and its flow-control windows; the frame is read as it is given
+6.6 | A sender MUST NOT send a PUSH_PROMISE on a | reason binds the connection, which holds the state of its streams, its settings, and its flow-control windows; the frame is read as it is given
+6.6 | A receiver MUST treat the receipt of a PUSH_PROMISE on | reason binds the connection, which holds the state of its streams, its settings, and its flow-control windows; the frame is read as it is given
+6.6 | However, an endpoint that has sent RST_STREAM on the | reason binds the connection, which holds the state of its streams, its settings, and its flow-control windows; the frame is read as it is given
+6.6 | A receiver MUST treat the receipt of a PUSH_PROMISE that | reason binds the connection, which holds the state of its streams, its settings, and its flow-control windows; the frame is read as it is given
+6.6 | If the length of the padding is the length | test a_frame_with_one_fault_the_page_lists_is_refused_and_without_it_is_read
+6.7 | In addition to the frame header, PING frames MUST | test a_frame_with_one_fault_the_page_lists_is_refused_and_without_it_is_read
+6.7 | Receivers of a PING frame that does not include | reason binds the connection, which holds the state of its streams, its settings, and its flow-control windows; the frame is read as it is given
+6.7 | An endpoint MUST set this flag in PING responses. | reason binds the connection, which holds the state of its streams, its settings, and its flow-control windows; the frame is read as it is given
+6.7 | An endpoint MUST NOT respond to PING frames containing | reason binds the connection, which holds the state of its streams, its settings, and its flow-control windows; the frame is read as it is given
+6.7 | If a PING frame is received with a Stream | test a_frame_with_one_fault_the_page_lists_is_refused_and_without_it_is_read
+6.7 | Receipt of a PING frame with a length field | reason binds the connection, which holds the state of its streams, its settings, and its flow-control windows; the frame is read as it is given
+6.8 | Receivers of a GOAWAY frame MUST NOT open additional | reason binds the connection, which holds the state of its streams, its settings, and its flow-control windows; the frame is read as it is given
+6.8 | An endpoint MUST treat a GOAWAY frame with a | test a_frame_with_one_fault_the_page_lists_is_refused_and_without_it_is_read
+6.8 | Endpoints MUST NOT increase the value they send in | reason binds the connection, which holds the state of its streams, its settings, and its flow-control windows; the frame is read as it is given
+6.8 | For instance, HEADERS, PUSH_PROMISE, and CONTINUATION frames MUST be | reason binds the connection, which holds the state of its streams, its settings, and its flow-control windows; the frame is read as it is given
+6.8 | Logged or otherwise persistently stored debug data MUST have | reason std.http2 logs and stores nothing
+6.9 | Frames that are exempt from flow control MUST be | reason binds the connection, which holds the state of its streams, its settings, and its flow-control windows; the frame is read as it is given
+6.9 | A receiver MUST treat the receipt of a WINDOW_UPDATE | reason binds the connection, which holds the state of its streams, its settings, and its flow-control windows; the frame is read as it is given
+6.9 | A receiver MUST NOT treat this as an error | reason binds the connection, which holds the state of its streams, its settings, and its flow-control windows; the frame is read as it is given
+6.9 | A receiver that receives a flow-controlled frame MUST always | reason binds the connection, which holds the state of its streams, its settings, and its flow-control windows; the frame is read as it is given
+6.9 | A WINDOW_UPDATE frame with a length other than 4 | test a_frame_with_one_fault_the_page_lists_is_refused_and_without_it_is_read
+6.9.1 | The sender MUST NOT send a flow-controlled frame with | reason binds the connection, which holds the state of its streams, its settings, and its flow-control windows; the frame is read as it is given
+6.9.1 | A sender MUST NOT allow a flow-control window to | reason binds the connection, which holds the state of its streams, its settings, and its flow-control windows; the frame is read as it is given
+6.9.1 | If a sender receives a WINDOW_UPDATE that causes a | reason binds the connection, which holds the state of its streams, its settings, and its flow-control windows; the frame is read as it is given
+6.9.2 | When the value of SETTINGS_INITIAL_WINDOW_SIZE changes, a receiver MUST | reason binds the connection, which holds the state of its streams, its settings, and its flow-control windows; the frame is read as it is given
+6.9.2 | A sender MUST track the negative flow-control window and | reason binds the connection, which holds the state of its streams, its settings, and its flow-control windows; the frame is read as it is given
+6.9.2 | An endpoint MUST treat a change to SETTINGS_INITIAL_WINDOW_SIZE that | reason binds the connection, which holds the state of its streams, its settings, and its flow-control windows; the frame is read as it is given
+6.9.3 | However, the receiver MUST be prepared to receive data | reason binds the connection, which holds the state of its streams, its settings, and its flow-control windows; the frame is read as it is given
+6.10 | If the END_HEADERS flag is not set, this frame | reason binds the connection, which holds the state of its streams, its settings, and its flow-control windows; the frame is read as it is given
+6.10 | A receiver MUST treat the receipt of any other | reason binds the connection, which holds the state of its streams, its settings, and its flow-control windows; the frame is read as it is given
+6.10 | CONTINUATION frames MUST be associated with a stream. | test a_frame_with_one_fault_the_page_lists_is_refused_and_without_it_is_read
+6.10 | If a CONTINUATION frame is received with a Stream | reason binds the connection, which holds the state of its streams, its settings, and its flow-control windows; the frame is read as it is given
+6.10 | A CONTINUATION frame MUST be preceded by a HEADERS, | reason binds the connection, which holds the state of its streams, its settings, and its flow-control windows; the frame is read as it is given
+6.10 | A recipient that observes violation of this rule MUST | reason binds the connection, which holds the state of its streams, its settings, and its flow-control windows; the frame is read as it is given
