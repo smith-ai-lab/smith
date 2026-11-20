@@ -1,0 +1,305 @@
+use std.describe (Describer)
+use std.bits (u64)
+use std.int (saturating_add)
+use std.json (Json, json_string, written_member)
+use std.list (push)
+use std.text (Text, append, finish, text)
+
+// The schema of a type, written as it is told what the type is made of.
+//
+// `scope` is what the text being written is inside: the elements of an array
+// that are separated by commas, the members of an object, a value that one
+// wrapper holds, or a case of an enum. A scope that holds another is saved
+// when the other is entered and comes back when it is left.
+enum Scope {
+  alts
+  props
+  wrap
+  held
+  plain
+  keyed
+  tagged
+}
+
+struct Saved {
+  scope: Scope
+  count: Nat
+  tail: str
+  required: str
+  case: str
+  below: Nat
+}
+
+pub struct JsonSchema {
+  settings: Json
+  buffer: Text
+  scope: Scope
+  count: Nat
+  // What is written when the scope ends, and the names, written as strings
+  // and separated by commas, of the members the object it is in requires.
+  tail: str
+  required: str
+  // The name of the case whose value is not begun, which is in `held`.
+  case: str
+  // Whether the value that is begun next is the members of the struct beside
+  // the tag, and not a value under `value`.
+  merge: bool
+  // The comment that the next value begun is written with.
+  about: str
+  saved: List[Saved]
+  top: Nat
+}
+
+// The describer of a JSON Schema for the values that `to_json_as` writes and
+// `from_json_as` reads with the settings, which is told what a type is made
+// of by `Describe[T].describe` and gives the schema with `schema_text`.
+pub fn json_schema(json: Json) -> JsonSchema {
+  JsonSchema(settings: json, buffer: text(), scope: .alts, count: 0, tail: "", required: "", case: "", merge: false, about: "", saved: [], top: 0)
+}
+
+pub fn schema_text(to: take JsonSchema) -> str {
+  finish(to.buffer)
+}
+
+fn emit(to: take JsonSchema, s: str) -> JsonSchema ! alloc {
+  var w = to
+  w.buffer = append(w.buffer, s)
+  w
+}
+
+fn emit_json_string(to: take JsonSchema, s: str) -> JsonSchema ! alloc {
+  var w = to
+  w.buffer = append(w.buffer, json_string(s))
+  w
+}
+
+fn refuses(json: Json) -> bool {
+  match json.unknown {
+    .ignore { false }
+    .refuse { true }
+  }
+}
+
+// The name of a member of a struct, as `to_json_as` writes it, as a string.
+fn member_name(w: JsonSchema, name: str) -> str ! alloc {
+  json_string(written_member(name, w.settings))
+}
+
+// Begins an object, with the comment that waits for a value, and `first`.
+fn node(to: take JsonSchema, first: str) -> JsonSchema ! alloc {
+  var w = emit(to, "\{")
+  if w.about != "" {
+    about = w.about
+    w = emit(w, "\"description\":")
+    w = emit_json_string(w, about)
+    w = emit(w, ",")
+    w.about = ""
+  }
+  emit(w, first)
+}
+
+fn leaf(to: take JsonSchema, first: str) -> JsonSchema ! alloc {
+  emit(node(value_begins(to, false), first), "\}")
+}
+
+fn closed(to: take JsonSchema) -> JsonSchema ! alloc {
+  if refuses(to.settings) { emit(to, ",\"additionalProperties\":false") } else { to }
+}
+
+fn enter(to: take JsonSchema, scope: Scope, tail: str) -> JsonSchema ! alloc {
+  var w = to
+  w.saved = push(w.saved, Saved(scope: w.scope, count: w.count, tail: w.tail, required: w.required, case: w.case, below: w.top))
+  w.top = w.saved.size
+  w.scope = scope
+  w.count = 0
+  w.tail = tail
+  w.required = ""
+  w
+}
+
+fn leave(to: take JsonSchema) -> JsonSchema {
+  var w = to
+  t = w.top
+  if t > 0 and t <= w.saved.size {
+    frame = w.saved[t - 1]
+    w.scope = frame.scope
+    w.count = frame.count
+    w.tail = frame.tail
+    w.required = frame.required
+    w.case = frame.case
+    w.top = frame.below
+  }
+  w
+}
+
+// Begins a value: a `,` where it follows another element, and, where it is
+// what a case holds, the object round it. `structure` says whether the value
+// is a struct, whose members then stand beside the tag.
+fn value_begins(to: take JsonSchema, structure: bool) -> JsonSchema ! alloc {
+  var w = to
+  match w.scope {
+    .alts {
+      if w.count > 0 { w = emit(w, ",") }
+      w.count = saturating_add(w.count, 1)
+    }
+    .held { w = held_value(w, structure) }
+    .props { }
+    .wrap { }
+    .plain { }
+    .keyed { }
+    .tagged { }
+  }
+  w
+}
+
+fn held_value(to: take JsonSchema, structure: bool) -> JsonSchema ! alloc {
+  var w = to
+  case = w.case
+  match w.settings.cases {
+    .key {
+      w = node(w, "\"type\":\"object\",\"properties\":\{")
+      w = emit(w, json_string(case))
+      w = emit(w, ":")
+      w.scope = .keyed
+    }
+    .tag(t) {
+      if structure {
+        w.merge = true
+        w.scope = .plain
+      } else {
+        w = node(w, "\"type\":\"object\",\"properties\":\{")
+        w = emit(w, "{json_string(t)}:\{\"const\":{json_string(case)}\},\"value\":")
+        w.scope = .tagged
+      }
+    }
+  }
+  w
+}
+
+impl Describer[JsonSchema] {
+  fn boolean(d: take JsonSchema) -> JsonSchema ! alloc { leaf(d, "\"type\":\"boolean\"") }
+  fn signed(d: take JsonSchema, least: Int, greatest: Int) -> JsonSchema ! alloc {
+    leaf(d, "\"type\":\"integer\",\"minimum\":{least},\"maximum\":{greatest}")
+  }
+  fn unsigned(d: take JsonSchema, least: u64, greatest: u64) -> JsonSchema ! alloc {
+    leaf(d, "\"type\":\"integer\",\"minimum\":{least},\"maximum\":{greatest}")
+  }
+  fn text(d: take JsonSchema) -> JsonSchema ! alloc { leaf(d, "\"type\":\"string\"") }
+  fn nothing(d: take JsonSchema) -> JsonSchema ! alloc { leaf(d, "\"type\":\"null\"") }
+  fn optional(d: take JsonSchema) -> JsonSchema ! alloc {
+    enter(node(value_begins(d, false), "\"anyOf\":["), .alts, ",\{\"type\":\"null\"\}]\}")
+  }
+  fn end_optional(d: take JsonSchema) -> JsonSchema ! alloc {
+    tail = d.tail
+    leave(emit(d, tail))
+  }
+  fn sequence(d: take JsonSchema) -> JsonSchema ! alloc {
+    enter(node(value_begins(d, false), "\"type\":\"array\",\"items\":"), .wrap, "\}")
+  }
+  fn end_sequence(d: take JsonSchema) -> JsonSchema ! alloc {
+    tail = d.tail
+    leave(emit(d, tail))
+  }
+  fn tuple(d: take JsonSchema, size: Nat) -> JsonSchema ! alloc {
+    enter(node(value_begins(d, false), "\"type\":\"array\",\"prefixItems\":["), .alts, "],\"minItems\":{size},\"maxItems\":{size}\}")
+  }
+  fn end_tuple(d: take JsonSchema) -> JsonSchema ! alloc {
+    tail = d.tail
+    leave(emit(d, tail))
+  }
+  fn structure(d: take JsonSchema, name: str, about: str, fields: Nat) -> JsonSchema ! alloc {
+    var w = value_begins(d, true)
+    merge = w.merge
+    w.merge = false
+    if w.about == "" { w.about = about }
+    w = enter(node(w, "\"type\":\"object\",\"properties\":\{"), .props, "")
+    if merge {
+      match w.settings.cases {
+        .key { }
+        .tag(t) {
+          case = w.case
+          w = emit(w, "{json_string(t)}:\{\"const\":{json_string(case)}\}")
+          w.count = 1
+          w.required = json_string(t)
+        }
+      }
+    }
+    w
+  }
+  fn field(d: take JsonSchema, name: str, about: str, optional: bool) -> JsonSchema ! alloc {
+    var w = d
+    if w.count > 0 { w = emit(w, ",") }
+    w.count = saturating_add(w.count, 1)
+    written = member_name(w, name)
+    w = emit(w, "{written}:")
+    w.about = about
+    if not optional {
+      w.required = if w.required == "" { written } else { "{w.required},{written}" }
+    }
+    w
+  }
+  fn end_structure(d: take JsonSchema) -> JsonSchema ! alloc {
+    var w = emit(d, "\}")
+    if w.required != "" {
+      required = w.required
+      w = emit(w, ",\"required\":[{required}]")
+    }
+    w = emit(closed(w), "\}")
+    leave(w)
+  }
+  fn enumeration(d: take JsonSchema, name: str, about: str, cases: Nat) -> JsonSchema ! alloc {
+    var w = value_begins(d, false)
+    if w.about == "" { w.about = about }
+    enter(node(w, "\"oneOf\":["), .alts, "]\}")
+  }
+  fn case(d: take JsonSchema, name: str, about: str, holds: bool) -> JsonSchema ! alloc {
+    var w = value_begins(d, false)
+    w.about = about
+    if holds {
+      w = enter(w, .held, "")
+      w.case = name
+      w
+    } else {
+      match w.settings.cases {
+        .key { w = emit(node(w, "\"const\":{json_string(name)}"), "\}") }
+        .tag(t) {
+          w = emit(node(w, "\"type\":\"object\",\"properties\":\{{json_string(t)}:\{\"const\":{json_string(name)}\}\},\"required\":[{json_string(t)}]"), "\}")
+        }
+      }
+      enter(w, .plain, "")
+    }
+  }
+  fn end_enumeration(d: take JsonSchema) -> JsonSchema ! alloc {
+    tail = d.tail
+    leave(emit(d, tail))
+  }
+  fn end_case(d: take JsonSchema) -> JsonSchema ! alloc {
+    var w = d
+    match w.scope {
+      .keyed {
+        case = w.case
+        w = emit(w, "\},\"required\":[{json_string(case)}]")
+        w = emit(closed(w), "\}")
+      }
+      .tagged {
+        tag = tag_of(w.settings)
+        w = emit(w, "\},\"required\":[{json_string(tag)},\"value\"]")
+        w = emit(closed(w), "\}")
+      }
+      .alts { }
+      .props { }
+      .wrap { }
+      .held { }
+      .plain { }
+    }
+    leave(w)
+  }
+  fn map(d: take JsonSchema) -> JsonSchema ! alloc { leaf(d, "\"type\":\"object\"") }
+}
+
+fn tag_of(json: Json) -> str {
+  match json.cases {
+    .key { "" }
+    .tag(t) { t }
+  }
+}
