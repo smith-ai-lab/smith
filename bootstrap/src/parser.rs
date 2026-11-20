@@ -61,6 +61,11 @@ pub struct File {
     /// by putting an `Expr::Unbuilt` or an unbuilt `Type` in its place, so
     /// that the rest of the file is checked.
     pub unbuilt: Vec<Error>,
+    /// For each function of the file that has a `Function` made for it, the
+    /// name of the struct that holds its arguments, which is made with it.
+    pub args: Vec<(String, String)>,
+    /// For each of those, the comment on the function.
+    pub abouts: Vec<(String, String)>,
 }
 
 /// A name written with the name of an imported module before it.
@@ -347,7 +352,7 @@ impl Type {
 }
 
 /// A statement of a block.
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Stmt {
     /// `x = e` or `x: T = e`, which defines a name, or `var x = e` or
     /// `var x: T = e`, which defines a name that can change. Whether a
@@ -380,7 +385,7 @@ pub enum Stmt {
 }
 
 /// An expression.
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Expr {
     /// What is not built yet, whose place the parser kept so that the rest
     /// of the file is checked. It has no type, and nothing is said of it.
@@ -484,7 +489,7 @@ pub enum Expr {
 
 /// A `loop`: over a range of whole numbers when it has one, and otherwise
 /// open-ended, running until a `break`.
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Loop {
     /// Where `loop` is.
     pub pos: Pos,
@@ -499,7 +504,7 @@ pub struct Loop {
 }
 
 /// The head of a `loop` over a range: `i in a..b`.
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Range {
     /// The name each number is given, and where it is.
     pub name: String,
@@ -509,7 +514,7 @@ pub struct Range {
 }
 
 /// The head of a `loop` over the elements of a value: `v in xs`.
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Over {
     /// The name each element is given, and where it is.
     pub name: String,
@@ -519,7 +524,7 @@ pub struct Over {
 
 /// A lambda: a block, with `fn` and the names of its parameters before it
 /// when it takes any.
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Lambda {
     /// Where it starts: at `fn`, or at the `{` when it takes no parameters.
     pub pos: Pos,
@@ -536,7 +541,7 @@ pub struct Lambda {
 /// `match e { pattern { ... } ... }`, or what is read as one: `if`,
 /// `not`, `and`, and `or`, each a `match` on a `bool` with a block for
 /// `.true` and one for `.false`.
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Match {
     /// Where it starts: at `match`, `if`, or `not`, or at the left side of
     /// `and` and `or`.
@@ -570,7 +575,7 @@ pub enum Form {
 }
 
 /// A pattern of a `match` and the block that runs when it matches.
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Arm {
     pub pattern: Pattern,
     pub body: Vec<Stmt>,
@@ -581,7 +586,7 @@ pub struct Arm {
 /// A pattern: a bare name, which matches anything and names it, a case
 /// with a leading dot and the pattern for what it holds, if it holds one,
 /// or a tuple of patterns.
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Pattern {
     Bind {
         name: String,
@@ -681,7 +686,7 @@ impl Expr {
 /// A call of a named function, or the construction of a struct, which is
 /// written as a call. A function of a trait may be named with its trait,
 /// as in `Named.name_of(x)`.
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Call {
     /// The name before the `.`, and where it is, if one is written.
     pub qualifier: Option<(String, Pos)>,
@@ -700,7 +705,7 @@ pub struct Call {
 /// An argument, given by position or by the name of its parameter, or a
 /// lambda written after the call, which is its last argument and is for its
 /// last parameter.
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Arg {
     pub name: Option<(String, Pos)>,
     pub value: Expr,
@@ -909,6 +914,8 @@ fn parse_file(tokens: &[Token], library: bool) -> Result<File, Vec<Error>> {
             qualified: p.qualified,
             scopes: Vec::new(),
             unbuilt: p.unbuilt,
+            args: Vec::new(),
+            abouts: Vec::new(),
             modules: Vec::new(),
         })
     } else {

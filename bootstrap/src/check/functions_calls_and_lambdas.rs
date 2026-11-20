@@ -128,7 +128,8 @@ impl<'a> Checker<'a> {
             self.generics(&def.generics, &format!("`{}`", def.name), Owner::Function);
             for g in &def.generics {
                 let named = (def.params.iter())
-                    .any(|p| type_names(&p.ty).iter().any(|(n, _)| *n == g.name));
+                    .any(|p| type_names(&p.ty).iter().any(|(n, _)| *n == g.name))
+                    || defs.named_by_out(def, &g.name);
                 if !named {
                     self.errors.push(Error::unsupported(
                         g.pos,
@@ -665,6 +666,7 @@ impl<'a> Checker<'a> {
                 _ => None,
             };
             let mut sol = self.arguments(body, call, sig, false, None, placed);
+            defs.complete_outs(&sig.scope.requires, &mut sol, body.scope);
             for (i, d) in sig.param_defaults.iter().enumerate() {
                 if let (None, Some(d)) = (&sol[i], d) {
                     let ty = d.solved(&sol);
@@ -946,10 +948,16 @@ impl<'a> Checker<'a> {
                 let pattern = &signature.params[i].1;
                 if !matches!(pattern, Ty::Fn(_) | Ty::Unknown) {
                     let needed = self.defs.describe_pattern(pattern, &sol, vars, body.scope);
-                    self.errors.push(Error::new(
-                        l.pos,
-                        format!("this is a lambda, where {needed} is needed"),
-                    ));
+                    // A lambda has no name, so it has no `Function`.
+                    let named = matches!(pattern, Ty::Param(p) if vars.requires.iter().any(
+                        |r| r.of == self.defs.function && r.types.contains(&Ty::Param(*p))));
+                    let message = if named {
+                        "this is a lambda, and `Function` is given to a function with a name"
+                            .to_string()
+                    } else {
+                        format!("this is a lambda, where {needed} is needed")
+                    };
+                    self.errors.push(Error::new(l.pos, message));
                     continue;
                 }
             }

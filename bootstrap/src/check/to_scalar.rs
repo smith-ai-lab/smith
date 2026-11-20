@@ -856,9 +856,11 @@ impl<'a> Lowering<'a> {
     }
 
     /// What a given implementation is, as the map of an executable names it.
-    fn given_name(&self, k: usize) -> &'static str {
+    fn given_name(&self, k: usize, fi: usize) -> &'static str {
         let defs = self.typed.defs;
-        if defs.serialize == Some(k) {
+        if k == defs.function {
+            ["function_name", "function_about", "function_call"][fi]
+        } else if defs.serialize == Some(k) {
             "serialize"
         } else if defs.deserialize == Some(k) {
             "deserialize"
@@ -1111,7 +1113,7 @@ impl<'a> Lowering<'a> {
                 Callee::Handle(effect) => self.handle(out, expr, call, effect, env),
                 Callee::Intrinsic => self.intrinsic_call(out, expr, call, env),
                 Callee::Run(instance, _)
-                    if !matches!(instance.template, Template::Given(_))
+                    if !matches!(instance.template, Template::Given(..))
                         && numbers_and_operators::number_function(
                             defs.view(instance.template).f,
                         )
