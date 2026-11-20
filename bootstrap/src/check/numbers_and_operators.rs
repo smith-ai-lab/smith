@@ -154,6 +154,181 @@ fn exact(op: ArithOp, left: Int, right: Int) -> Option<Int> {
     Int::between(low, high)
 }
 
+/// A function of `Bits` whose result has the exact range of what it makes
+/// of numbers that are not negative.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum BitFn {
+    And,
+    Or,
+    Xor,
+    Left,
+    Right,
+}
+
+impl BitFn {
+    pub(super) fn named(name: &str) -> Option<BitFn> {
+        Some(match name {
+            "bit_and" => BitFn::And,
+            "bit_or" => BitFn::Or,
+            "bit_xor" => BitFn::Xor,
+            "shift_left" => BitFn::Left,
+            "shift_right" => BitFn::Right,
+            _ => return None,
+        })
+    }
+}
+
+/// Which function of `Bits` a call of two numbers is, where it is written by
+/// the name the trait gives it and no function of the program takes that name.
+pub(super) fn bits_function(defs: &Defs, call: &Call) -> Option<BitFn> {
+    let op = BitFn::named(&call.callee)?;
+    let plain = call.args.len() == 2 && call.args.iter().all(|a| a.name.is_none() && !a.after);
+    let of_bits = match &call.qualifier {
+        None => {
+            defs.function(call.name_pos, &call.callee).is_none()
+                && defs
+                    .trait_fns_at(call.name_pos, &call.callee)
+                    .is_some_and(|of| matches!(of[..], [(k, _)] if k == defs.bits))
+        }
+        Some((q, at)) => defs.trait_at(*at, q) == Some(defs.bits),
+    };
+    (plain && of_bits).then_some(op)
+}
+
+/// The least and the greatest of `x op y` over every `x` from `a.0` to `a.1`
+/// and every `y` from `b.0` to `b.1`, for numbers that are not negative: found
+/// bit by bit from the top, as Warren's "Propagating bounds through logical
+/// operations" does.
+fn bit_bounds(op: BitFn, (a, b): ((u64, u64), (u64, u64))) -> (u64, u64) {
+    let ((a0, a1), (c0, c1)) = (a, b);
+    match op {
+        BitFn::And => (min_and(a0, a1, c0, c1), max_and(a0, a1, c0, c1)),
+        BitFn::Or => (min_or(a0, a1, c0, c1), max_or(a0, a1, c0, c1)),
+        BitFn::Xor => (min_xor(a0, a1, c0, c1), max_xor(a0, a1, c0, c1)),
+        BitFn::Left | BitFn::Right => unreachable!("a shift is not a bit by bit function"),
+    }
+}
+
+fn min_or(mut a: u64, b: u64, mut c: u64, d: u64) -> u64 {
+    let mut m = 1u64 << 63;
+    while m != 0 {
+        if !a & c & m != 0 {
+            let t = (a | m) & m.wrapping_neg();
+            if t <= b {
+                a = t;
+                break;
+            }
+        } else if a & !c & m != 0 {
+            let t = (c | m) & m.wrapping_neg();
+            if t <= d {
+                c = t;
+                break;
+            }
+        }
+        m >>= 1;
+    }
+    a | c
+}
+
+fn max_or(a: u64, mut b: u64, c: u64, mut d: u64) -> u64 {
+    let mut m = 1u64 << 63;
+    while m != 0 {
+        if b & d & m != 0 {
+            let t = (b - m) | (m - 1);
+            if t >= a {
+                b = t;
+                break;
+            }
+            let t = (d - m) | (m - 1);
+            if t >= c {
+                d = t;
+                break;
+            }
+        }
+        m >>= 1;
+    }
+    b | d
+}
+
+fn min_and(mut a: u64, b: u64, mut c: u64, d: u64) -> u64 {
+    let mut m = 1u64 << 63;
+    while m != 0 {
+        if !a & !c & m != 0 {
+            let t = (a | m) & m.wrapping_neg();
+            if t <= b {
+                a = t;
+                break;
+            }
+            let t = (c | m) & m.wrapping_neg();
+            if t <= d {
+                c = t;
+                break;
+            }
+        }
+        m >>= 1;
+    }
+    a & c
+}
+
+fn max_and(a: u64, mut b: u64, c: u64, mut d: u64) -> u64 {
+    let mut m = 1u64 << 63;
+    while m != 0 {
+        if b & !d & m != 0 {
+            let t = (b & !m) | (m - 1);
+            if t >= a {
+                b = t;
+                break;
+            }
+        } else if !b & d & m != 0 {
+            let t = (d & !m) | (m - 1);
+            if t >= c {
+                d = t;
+                break;
+            }
+        }
+        m >>= 1;
+    }
+    b & d
+}
+
+fn min_xor(mut a: u64, b: u64, mut c: u64, d: u64) -> u64 {
+    let mut m = 1u64 << 63;
+    while m != 0 {
+        if !a & c & m != 0 {
+            let t = (a | m) & m.wrapping_neg();
+            if t <= b {
+                a = t;
+            }
+        } else if a & !c & m != 0 {
+            let t = (c | m) & m.wrapping_neg();
+            if t <= d {
+                c = t;
+            }
+        }
+        m >>= 1;
+    }
+    a ^ c
+}
+
+fn max_xor(a: u64, mut b: u64, c: u64, mut d: u64) -> u64 {
+    let mut m = 1u64 << 63;
+    while m != 0 {
+        if b & d & m != 0 {
+            let t = (b - m) | (m - 1);
+            if t >= a {
+                b = t;
+            } else {
+                let t = (d - m) | (m - 1);
+                if t >= c {
+                    d = t;
+                }
+            }
+        }
+        m >>= 1;
+    }
+    b ^ d
+}
+
 /// Whether an expression is a literal, or an operation on literals only,
 /// which takes the type of what it is used with.
 pub(super) fn flexible(e: &Expr) -> bool {
@@ -637,6 +812,261 @@ impl<'a> Checker<'a> {
                 "a shift of a number whose type is a type parameter",
             )),
         }
+    }
+
+    /// Checks a call of `bit_and`, `bit_or`, `bit_xor`, `shift_left`, or
+    /// `shift_right` of `Bits`, which gives the exact range of what it makes
+    /// of numbers that are not negative, and takes the range that fills a size
+    /// of numbers that may be negative. None, before anything is checked,
+    /// where the arguments are not two, written by position.
+    pub(super) fn bits_exact(
+        &mut self,
+        body: &mut Body<'a>,
+        call: &Call,
+        (op, k, fi): (BitFn, usize, usize),
+    ) -> Option<Ty> {
+        let defs = self.defs;
+        if call.args.len() != 2 || call.args.iter().any(|a| a.name.is_some() || a.after) {
+            return None;
+        }
+        let name = call.callee.as_str();
+        let shifts = matches!(op, BitFn::Left | BitFn::Right);
+        let (first, second) = (&call.args[0].value, &call.args[1].value);
+        // A literal beside a number that is not negative is the range that
+        // holds it alone, and beside any other number the type of it.
+        let alone = |e: &Expr| match e {
+            Expr::Number {
+                magnitude,
+                negative: false,
+                ..
+            } if *magnitude <= i64::MAX as u128 => {
+                let n = *magnitude as i128;
+                Int::between(n, n).map_or(Want::Any, |t| Want::Ty(Ty::Int(t)))
+            }
+            _ => Want::Any,
+        };
+        let beside = |lit: &Expr, other: &Ty| match other {
+            Ty::Int(o) if o.min() >= 0 => match alone(lit) {
+                Want::Any => Self::side_want(other),
+                w => w,
+            },
+            _ => Self::side_want(other),
+        };
+        let (ta, tb) = if shifts {
+            let ta = self.expr(body, first, &alone(first));
+            let by = if flexible(second) {
+                match alone(second) {
+                    Want::Any => Want::Ty(Ty::Int(Int::U8)),
+                    w => w,
+                }
+            } else {
+                Want::Any
+            };
+            (ta, self.expr(body, second, &by))
+        } else {
+            match (flexible(first), flexible(second)) {
+                (true, false) => {
+                    let b = self.expr(body, second, &Want::Any);
+                    let want = beside(first, &b);
+                    (self.expr(body, first, &want), b)
+                }
+                (false, true) => {
+                    let a = self.expr(body, first, &Want::Any);
+                    let want = beside(second, &a);
+                    let b = self.expr(body, second, &want);
+                    (a, b)
+                }
+                (true, true) => (
+                    self.expr(body, first, &alone(first)),
+                    self.expr(body, second, &alone(second)),
+                ),
+                (false, false) => (
+                    self.expr(body, first, &Want::Any),
+                    self.expr(body, second, &Want::Any),
+                ),
+            }
+        };
+        let (a, b) = match (&ta, &tb) {
+            (Ty::Unknown, _) | (_, Ty::Unknown) => return Some(Ty::Unknown),
+            (Ty::Int(a), Ty::Int(b)) => (*a, *b),
+            (Ty::Flex(_) | Ty::Int(_), Ty::Flex(_) | Ty::Int(_)) if !shifts => {
+                use_at(call.pos);
+                if !flex_pair(&ta, &tb) {
+                    unreachable!("a number and a number")
+                }
+                return Some(if matches!(ta, Ty::Flex(_)) { tb } else { ta });
+            }
+            (Ty::Flex(_), _) => {
+                use_at(call.pos);
+                return Some(ta);
+            }
+            _ => {
+                // Not whole numbers: what the trait asks of the type.
+                let types = [ta.clone()];
+                if ta != tb {
+                    let (x, y) = (
+                        defs.describe(&ta, body.scope),
+                        defs.describe(&tb, body.scope),
+                    );
+                    self.errors.push(Error::new(
+                        call.pos,
+                        format!("`{name}` takes two values of one type, and these are {x} and {y}"),
+                    ));
+                    return Some(Ty::Unknown);
+                }
+                return match defs.find(k, &types, body.scope, &mut Vec::new()) {
+                    Found::Yes(..) => Some(ta),
+                    Found::No => {
+                        self.errors
+                            .push(self.no_implementation(body, call, k, &types));
+                        Some(Ty::Unknown)
+                    }
+                    Found::Two(x, y) => {
+                        self.errors.push(defs.ambiguous(call.pos, x, y));
+                        Some(Ty::Unknown)
+                    }
+                    Found::Unknown => Some(Ty::Unknown),
+                };
+            }
+        };
+        let sig = &defs.trait_sigs[k][fi];
+        let written = format!("{name}({}, {})", written_expr(first), written_expr(second));
+        if shifts && !Int::U8.holds(b) {
+            // The amount is a `Byte`, which it enters where `arith` shows it fits.
+            self.enters(body, second, (b, Int::U8));
+        }
+        let negative = a.min() < 0 || (!shifts && b.min() < 0);
+        if negative {
+            if (!shifts && a != b) || !Int::ALL.contains(&a) {
+                let message = if !shifts && a != b {
+                    format!(
+                        "`{name}` of a number that may be negative takes two numbers of one \
+                         range, and these are `{}` and `{}`",
+                        defs.spelling(a),
+                        defs.spelling(b)
+                    )
+                } else {
+                    format!(
+                        "`{name}` of a number that may be negative takes a range that fills \
+                         a size, and `{}` does not",
+                        defs.spelling(a)
+                    )
+                };
+                self.errors.push(
+                    Error::new(call.pos, message)
+                        .with_fix("bind the number to a type that fills a size, as `i32` does"),
+                );
+                return Some(Ty::Unknown);
+            }
+            let mistakes = self.errors.len();
+            if shifts {
+                self.shifts(body, second, a, call.pos);
+            }
+            if shifts && op == BitFn::Left && self.errors.len() == mistakes {
+                let most = self.amount_at_most(body, second, b);
+                if !(self.proves_product_fits(body, first, 1i128 << most, a)) {
+                    self.errors.push(
+                        Error::new(
+                            call.pos,
+                            format!(
+                                "`{written}` may drop a bit, as `shift_left` drops none, and it \
+                                 does not fit a `{}`",
+                                defs.spelling(a)
+                            ),
+                        )
+                        .with_fix("use `wrapping_shift_left` where the bits that leave the top are meant to go"),
+                    );
+                }
+            }
+            body.facts.note_bit_call(call, sig, name, a);
+            return Some(Ty::Int(a));
+        }
+        let result = match op {
+            BitFn::Right => {
+                self.amount_below(body, second, 64, "a shift", call.pos);
+                let (lo, hi) = (b.min().clamp(0, 63), b.max().clamp(0, 63));
+                Int::between(a.min() >> hi, a.max() >> lo)
+            }
+            BitFn::Left => {
+                let mistakes = self.errors.len();
+                self.amount_below(body, second, 64, "a shift", call.pos);
+                let most = if self.errors.len() == mistakes {
+                    self.amount_at_most(body, second, b)
+                } else {
+                    63
+                };
+                let (lo, hi) = (
+                    a.min().checked_mul(1i128 << b.min().clamp(0, 63)),
+                    a.max().checked_mul(1i128 << most),
+                );
+                match lo.zip(hi).and_then(|(lo, hi)| Int::between(lo, hi)) {
+                    Some(r) => Some(r),
+                    // No type holds the exact range, so the result is the type
+                    // of the number, as a product's is, where `arith` proves
+                    // that it fits.
+                    None => {
+                        if self.errors.len() == mistakes
+                            && !self.proves_product_fits(body, first, 1i128 << most, a)
+                        {
+                            self.errors.push(
+                                Error::new(
+                                    call.pos,
+                                    format!(
+                                        "cannot prove that `{written}` fits `{}`, as the number \
+                                         times two to the amount may be more",
+                                        defs.spelling(a)
+                                    ),
+                                )
+                                .with_fix(
+                                    "check the number and the amount first, or use `wrapping_shift_left`",
+                                ),
+                            );
+                        }
+                        body.facts.note_bit_call(call, sig, name, a);
+                        return Some(Ty::Int(a));
+                    }
+                }
+            }
+            _ => {
+                let ends = |t: Int| (t.min() as u64, t.max() as u64);
+                let (lo, hi) = bit_bounds(op, (ends(a), ends(b)));
+                Int::between(i128::from(lo), i128::from(hi))
+            }
+        };
+        let result = result.expect("a range of numbers that are not negative");
+        // Each side is the number at the size the work is done at.
+        let sides: [(&Expr, Int); 2] = [(first, a), (second, b)];
+        for (side, own) in sides {
+            let at = match op {
+                BitFn::Left if std::ptr::eq(side, first) => result,
+                BitFn::Left | BitFn::Right if std::ptr::eq(side, second) => continue,
+                BitFn::Right => own,
+                _ => a.hull(b).expect("a range"),
+            };
+            if own != at {
+                self.widened.insert(addr(side), at);
+            }
+        }
+        body.facts.note_bit_call(call, sig, name, result);
+        Some(Ty::Int(result))
+    }
+
+    /// The greatest amount that `by` is proven to be, of at most 63, which is
+    /// the greatest of its type where nothing proves less.
+    fn amount_at_most(&mut self, body: &mut Body<'a>, by: &Expr, ty: Int) -> u32 {
+        if let Expr::Number { magnitude, .. } = by {
+            return (*magnitude).min(63) as u32;
+        }
+        let (mut low, mut high) = (ty.min().clamp(0, 63), ty.max().clamp(0, 63));
+        while low < high {
+            let mid = low + (high - low) / 2;
+            if self.proves_at_most(body, by, mid) {
+                high = mid;
+            } else {
+                low = mid + 1;
+            }
+        }
+        high as u32
     }
 
     /// Checks `narrow(x)` or one of its relatives, which take the whole

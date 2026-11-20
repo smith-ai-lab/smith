@@ -127,6 +127,7 @@ trait Wrapping[T] {
   fn wrapping_add(a: T, b: T) -> T
   fn wrapping_sub(a: T, b: T) -> T
   fn wrapping_mul(a: T, b: T) -> T
+  fn wrapping_shift_left(a: T, by: u8) -> T
 }
 
 trait Saturating[T] {
@@ -171,6 +172,7 @@ impl Wrapping[i8] {
   fn wrapping_add(a: i8, b: i8) -> i8 { __wrapping_add(a, b) }
   fn wrapping_sub(a: i8, b: i8) -> i8 { __wrapping_sub(a, b) }
   fn wrapping_mul(a: i8, b: i8) -> i8 { __wrapping_mul(a, b) }
+  fn wrapping_shift_left(a: i8, by: u8) -> i8 { __shift_left(a, by) }
 }
 
 impl Saturating[i8] {
@@ -226,6 +228,7 @@ impl Wrapping[i16] {
   fn wrapping_add(a: i16, b: i16) -> i16 { __wrapping_add(a, b) }
   fn wrapping_sub(a: i16, b: i16) -> i16 { __wrapping_sub(a, b) }
   fn wrapping_mul(a: i16, b: i16) -> i16 { __wrapping_mul(a, b) }
+  fn wrapping_shift_left(a: i16, by: u8) -> i16 { __shift_left(a, by) }
 }
 
 impl Saturating[i16] {
@@ -277,6 +280,7 @@ impl Wrapping[i32] {
   fn wrapping_add(a: i32, b: i32) -> i32 { __wrapping_add(a, b) }
   fn wrapping_sub(a: i32, b: i32) -> i32 { __wrapping_sub(a, b) }
   fn wrapping_mul(a: i32, b: i32) -> i32 { __wrapping_mul(a, b) }
+  fn wrapping_shift_left(a: i32, by: u8) -> i32 { __shift_left(a, by) }
 }
 
 impl Saturating[i32] {
@@ -324,6 +328,7 @@ impl Wrapping[i64] {
   fn wrapping_add(a: i64, b: i64) -> i64 { __wrapping_add(a, b) }
   fn wrapping_sub(a: i64, b: i64) -> i64 { __wrapping_sub(a, b) }
   fn wrapping_mul(a: i64, b: i64) -> i64 { __wrapping_mul(a, b) }
+  fn wrapping_shift_left(a: i64, by: u8) -> i64 { __shift_left(a, by) }
 }
 
 impl Saturating[i64] {
@@ -367,6 +372,7 @@ impl Wrapping[u8] {
   fn wrapping_add(a: u8, b: u8) -> u8 { __wrapping_add(a, b) }
   fn wrapping_sub(a: u8, b: u8) -> u8 { __wrapping_sub(a, b) }
   fn wrapping_mul(a: u8, b: u8) -> u8 { __wrapping_mul(a, b) }
+  fn wrapping_shift_left(a: u8, by: u8) -> u8 { __shift_left(a, by) }
 }
 
 impl Saturating[u8] {
@@ -434,6 +440,7 @@ impl Wrapping[u16] {
   fn wrapping_add(a: u16, b: u16) -> u16 { __wrapping_add(a, b) }
   fn wrapping_sub(a: u16, b: u16) -> u16 { __wrapping_sub(a, b) }
   fn wrapping_mul(a: u16, b: u16) -> u16 { __wrapping_mul(a, b) }
+  fn wrapping_shift_left(a: u16, by: u8) -> u16 { __shift_left(a, by) }
 }
 
 impl Saturating[u16] {
@@ -493,6 +500,7 @@ impl Wrapping[u32] {
   fn wrapping_add(a: u32, b: u32) -> u32 { __wrapping_add(a, b) }
   fn wrapping_sub(a: u32, b: u32) -> u32 { __wrapping_sub(a, b) }
   fn wrapping_mul(a: u32, b: u32) -> u32 { __wrapping_mul(a, b) }
+  fn wrapping_shift_left(a: u32, by: u8) -> u32 { __shift_left(a, by) }
 }
 
 impl Saturating[u32] {
@@ -544,6 +552,7 @@ impl Wrapping[u64] {
   fn wrapping_add(a: u64, b: u64) -> u64 { __wrapping_add(a, b) }
   fn wrapping_sub(a: u64, b: u64) -> u64 { __wrapping_sub(a, b) }
   fn wrapping_mul(a: u64, b: u64) -> u64 { __wrapping_mul(a, b) }
+  fn wrapping_shift_left(a: u64, by: u8) -> u64 { __shift_left(a, by) }
 }
 
 impl Saturating[u64] {

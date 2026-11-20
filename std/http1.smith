@@ -1,5 +1,5 @@
-use std.bits (bit_and, shift_left, shift_right)
-use std.int (checked_add, checked_mul, narrow, saturating_add)
+use std.bits (bit_and, shift_right)
+use std.int (checked_add, checked_mul, narrow, saturating_add, wrapping_shift_left)
 use std.list (freeze, push)
 use std.text (append_ascii, finish, text)
 use std.utf8 (utf8)
@@ -586,7 +586,7 @@ pub fn write_chunk(to: take List[Byte], bytes: Slice[Byte]) -> List[Byte] ! allo
   var started = false
   loop k in 0..16 {
     d: Byte = bit_and(shift_right(rest, 60), 15)
-    rest = shift_left(rest, 4)
+    rest = wrapping_shift_left(rest, 4)
     if started or d != 0 or k == 15 {
       started = true
       written = push(written, hex_digit(d))

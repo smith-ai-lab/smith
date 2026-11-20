@@ -4,8 +4,8 @@ title: Bit operations
 description: The functions that and, or, xor, and shift the bits of a whole number and give the exact range of what they make, as arithmetic does, and what a number that may be negative and bit_not ask of a range.
 status: partial
 built:
-  - "`bit_and`, `bit_or`, `bit_xor`, `bit_not`, `shift_left`, and `shift_right` on `u8` to `u64` and `i8` to `i64`, a shift compiling when `arith` proves that its amount is below the number of bits"
-  - "not a range that does not fill a size given to a bit function, the exact range as the type of what one gives, a `shift_left` that drops no bit, or `wrapping_shift_left`: today each takes and gives a range that fills a size, what `arith` knows of the result is a fact and not its type, and `shift_left` drops the bits that leave the top"
+  - "`bit_and`, `bit_or`, `bit_xor`, `shift_left`, and `shift_right` of numbers that are not negative, of any ranges, giving the exact range of the result as its type, with a `shift_left` that drops no bit and is refused where no type of 64 bits holds its range and `arith` does not prove it fits, a shift compiling when `arith` proves that its amount is below 64"
+  - "`bit_not`, and a function on a number that may be negative, on the ranges that fill a size `u8` to `u64` and `i8` to `i64`, a shift compiling when `arith` proves that its amount is below the number of bits, and `wrapping_shift_left` of `std.int` on those ranges"
 ---
 
 # Bit operations

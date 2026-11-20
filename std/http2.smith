@@ -1,6 +1,6 @@
-use std.bits (bit_and, bit_or, shift_left, shift_right, u32, u64)
+use std.bits (bit_and, bit_or, shift_right, u32, u64)
 use std.http1 (Read)
-use std.int (saturating_sub, wrapping_add, wrapping_mul, wrapping_narrow, wrapping_sub)
+use std.int (saturating_sub, wrapping_add, wrapping_mul, wrapping_narrow, wrapping_shift_left, wrapping_sub)
 use std.list (freeze, push)
 use std.utf8 (utf8)
 
@@ -107,21 +107,15 @@ fn be64(b: Slice[Byte], i: Nat) -> Nat {
 }
 
 // A stream, which is the low 31 bits: the highest is reserved and is ignored.
-fn stream_of(x: Nat) -> 0..2147483648 {
-  y = bit_and(x, 2147483647)
-  if y < 2147483648 { y } else { 0 }
-}
+fn stream_of(x: Nat) -> 0..2147483648 { bit_and(x, 2147483647) }
 
-fn word_of(x: Nat) -> u32 {
-  y = bit_and(x, 4294967295)
-  if y < 4294967296 { y } else { 0 }
-}
+fn word_of(x: Nat) -> u32 { bit_and(x, 4294967295) }
 
-fn shl(x: Nat, by: Byte) -> Nat { if by < 64 { shift_left(x, by) } else { 0 } }
+fn shl(x: Nat, by: Byte) -> Nat { if by < 64 { wrapping_shift_left(x, by) } else { 0 } }
 
 fn shr(x: Nat, by: Byte) -> Nat { if by < 64 { shift_right(x, by) } else { 0 } }
 
-fn low(x: Nat) -> Byte { wrapping_narrow(bit_and(x, 255)) }
+fn low(x: Nat) -> Byte { bit_and(x, 255) }
 
 fn put16(to: take List[Byte], x: Nat) -> List[Byte] ! alloc {
   push(push(to, low(shift_right(x, 8))), low(x))

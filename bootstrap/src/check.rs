@@ -5349,6 +5349,9 @@ impl<'a> Typed<'a> {
         if self.value_calls.contains(&addr(call)) {
             return Callee::Value;
         }
+        if numbers_and_operators::bits_function(defs, call).is_some() {
+            return Callee::Intrinsic;
+        }
         let (k, fi) = match &call.qualifier {
             None => {
                 let name = call.callee.as_str();

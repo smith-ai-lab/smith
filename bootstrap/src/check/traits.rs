@@ -1368,6 +1368,13 @@ impl<'a> Checker<'a> {
         if self.effect_in_default(body, call, sig) {
             return self.unknown_call(body, call);
         }
+        if k == defs.bits
+            && let Some(op) =
+                numbers_and_operators::BitFn::named(&defs.file.traits[k].functions[fi].name)
+            && let Some(ty) = self.bits_exact(body, call, (op, k, fi))
+        {
+            return ty;
+        }
         let outer = std::mem::replace(&mut self.no_impl, false);
         let refused = self.refusals;
         let mistakes = self.errors.len();
@@ -1442,7 +1449,8 @@ impl<'a> Checker<'a> {
                 }
                 let bits = k == defs.bits;
                 let function = defs.file.traits[k].functions[fi].name.as_str();
-                let shifts = bits && function.starts_with("shift_");
+                let shifts =
+                    (bits && function.starts_with("shift_")) || function == "wrapping_shift_left";
                 if let (true, Ty::Int(t)) = (bits, &types[0]) {
                     body.facts.note_bit_call(call, sig, function, *t);
                 }

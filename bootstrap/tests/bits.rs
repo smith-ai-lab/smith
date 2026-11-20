@@ -156,7 +156,7 @@ fn a_function_of_bits_is_one_instruction_and_no_call() {
         } else {
             "ShiftRightU"
         };
-        for (function, kind) in [("shift_left", "ShiftLeft"), ("shift_right", right)] {
+        for (function, kind) in [("wrapping_shift_left", "ShiftLeft"), ("shift_right", right)] {
             assert_eq!(
                 difference(&base, &shift(&format!("{function}(x, by)"))),
                 expected(&[(kind, 1)]),
@@ -227,16 +227,23 @@ fn compiles(source: &str) -> Result<(), String> {
 }
 
 /// A shift of a number of any type compiles when the amount is proven below
-/// the bits of the type, and does not when it may be that many or more.
+/// the bits of the type, and does not when it may be that many or more, and
+/// `shift_right` of a number that is not negative compiles when the amount is
+/// proven below 64.
 fn a_shift_compiles_exactly_when_its_amount_is_proven_below_the_bits_of_the_type() {
     for ty in INTS {
-        for function in ["shift_left", "shift_right"] {
-            for limit in [ty.bits - 1, ty.bits, ty.bits + 1] {
+        for function in ["wrapping_shift_left", "shift_right"] {
+            for limit in [ty.bits - 1, ty.bits, ty.bits + 1, 62, 63, 64] {
+                let below = if function == "shift_right" && !ty.signed {
+                    64
+                } else {
+                    ty.bits
+                };
                 let source = with_header(format!(
                     "fn f(x: {0}, by: Byte) -> {0}\n  requires by <= {limit}\n{{\n  {function}(x, by)\n}}\n\nfn main() ! console, alloc {{\n  print(\"{{f(1, 0)}}\")\n}}\n",
                     ty.name
                 ));
-                let fits = limit < ty.bits;
+                let fits = limit < below;
                 // A `Byte` is below its own bits only when it is.
                 assert_eq!(
                     compiles(&source).is_ok(),
@@ -419,18 +426,13 @@ struct Range {
     needs: i128,
 }
 
-/// The value with the bits that do not fit the type left off.
-fn wrap(ty: Int, n: i128) -> i128 {
-    (n - ty.min()).rem_euclid(1i128 << ty.bits) + ty.min()
-}
-
 /// What the operation gives, worked out on 128 bits.
 fn gives(r: &Range, a: i128, b: i128) -> i128 {
     match r.op {
         Bit::And => a & b,
         Bit::Or => a | b,
         Bit::Xor => a ^ b,
-        Bit::Left => wrap(r.ty, a << b),
+        Bit::Left => a << b,
         Bit::Right => a >> b,
     }
 }
@@ -456,11 +458,8 @@ fn known(r: &Range) -> Option<i128> {
         Bit::Right => Some(r.most >> r.other),
         Bit::Left => {
             let (low, high) = (r.least << r.other, r.most << r.other);
-            Some(if low >= r.ty.min() && high <= r.ty.max() {
-                high
-            } else {
-                r.ty.max()
-            })
+            // A result the type does not hold is refused, so nothing is known.
+            (low >= r.ty.min() && high <= r.ty.max()).then_some(high)
         }
     }
 }
@@ -714,8 +713,13 @@ fn the_bound_of_shift_left_is_not_one_too_small_and_not_one_too_large() {
 /// tests it when the program runs.
 fn a_shift_by_a_number_compiles_exactly_when_it_is_below_the_bits_of_the_type() {
     for ty in INTS {
-        for function in ["shift_left", "shift_right"] {
-            for by in [0, 1, ty.bits - 1, ty.bits, ty.bits + 1, 255] {
+        for function in ["wrapping_shift_left", "shift_right"] {
+            for by in [0, 1, ty.bits - 1, ty.bits, ty.bits + 1, 63, 64, 255] {
+                let below = if function == "shift_right" && !ty.signed {
+                    64
+                } else {
+                    ty.bits
+                };
                 let source = with_header(format!(
                     "fn f(x: {0}) -> {0} {{ {function}(x, {by}) }}\n\nfn main() ! console, alloc {{\n  print(\"{{f(1)}}\")\n}}\n",
                     ty.name
@@ -723,7 +727,7 @@ fn a_shift_by_a_number_compiles_exactly_when_it_is_below_the_bits_of_the_type() 
                 let result = check(source.as_bytes());
                 assert_eq!(
                     result.is_ok(),
-                    by < ty.bits,
+                    by < below,
                     "{function} of a {} by {by}",
                     ty.name
                 );
@@ -731,7 +735,7 @@ fn a_shift_by_a_number_compiles_exactly_when_it_is_below_the_bits_of_the_type() 
                     assert!(
                         errors.iter().any(|e| e.message.contains(&format!("{by} <"))),
                         "{errors:?} does not state `{by} < {}`",
-                        ty.bits
+                        below
                     );
                 }
             }

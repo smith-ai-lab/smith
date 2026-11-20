@@ -430,7 +430,7 @@ impl Builder<'_, '_> {
                 }
             }
             BitOp::ShiftRight if !t.signed() => {
-                if let Some(power) = self.power(&b, t) {
+                if let Some(power) = self.power(&b) {
                     // `power * result <= a <= power * result + power - 1`.
                     let scaled = self.scaled(power, &result);
                     let low = self.combine(&a, -1, &scaled);
@@ -443,7 +443,7 @@ impl Builder<'_, '_> {
                 }
             }
             BitOp::ShiftLeft => {
-                if let Some(power) = self.power(&b, t) {
+                if let Some(power) = self.power(&b) {
                     let product = self.scaled(power, &a);
                     let (mut up, down) = (
                         product.negated().unwrap_or_default(),
@@ -462,10 +462,10 @@ impl Builder<'_, '_> {
         Some(result)
     }
 
-    /// Two to the power of the amount `by` of a shift of a number of type
-    /// `t`, when the amount is a number below the bits of `t`.
-    fn power(&self, by: &Lin, t: Int) -> Option<i128> {
-        let k = u32::try_from(by.constant).ok().filter(|k| *k < t.bits())?;
+    /// Two to the power of the amount `by` of a shift, when the amount is a
+    /// number below 64.
+    fn power(&self, by: &Lin) -> Option<i128> {
+        let k = u32::try_from(by.constant).ok().filter(|k| *k < 64)?;
         by.terms.is_empty().then(|| 1i128 << k)
     }
 
@@ -1047,35 +1047,77 @@ impl<'a> Checker<'a> {
     /// type `t` is below the number of bits of `t`, and if it does not, the
     /// goal it could not prove.
     pub(super) fn shifts(&mut self, body: &mut Body<'a>, by: &Expr, t: Int, pos: Pos) {
+        let bits = i128::from(t.bits());
+        let what = format!("a shift of a `{}`", self.defs.spelling(t));
+        self.amount_below(body, by, bits, &what, pos);
+    }
+
+    /// Whether `arith` proves that `by` is below `limit`, and if it does not,
+    /// the goal it could not prove, for `what`, which needs it.
+    pub(super) fn amount_below(
+        &mut self,
+        body: &mut Body<'a>,
+        by: &Expr,
+        limit: i128,
+        what: &str,
+        pos: Pos,
+    ) {
         if !Self::decided(body) || body.contract {
             return;
         }
+        if !self.proves_at_most(body, by, limit - 1) {
+            let by = written_expr(by);
+            self.errors.push(
+                Error::new(
+                    pos,
+                    format!("cannot prove that `{by} < {limit}`, which {what} needs"),
+                )
+                .with_fix(format!(
+                    "check `{by} < {limit}` with an `if`, or state it in a `requires`"
+                )),
+            );
+        }
+    }
+
+    /// Whether `arith` proves that the number `a` times `power` is a value of
+    /// `t`, which is so when a shift of `a` drops no bit.
+    pub(super) fn proves_product_fits(
+        &mut self,
+        body: &mut Body<'a>,
+        a: &Expr,
+        power: i128,
+        t: Int,
+    ) -> bool {
+        let mut facts = std::mem::take(&mut body.facts);
+        let mut builder = self.builder(body, &mut facts, true);
+        let value = builder.lin(a).filter(|_| !builder.overflow);
+        let goals: Option<Vec<Formula>> = value.and_then(|value| {
+            let product = builder.scaled(power, &value);
+            let mut up = product.negated()?;
+            up.constant = up.constant.checked_add(t.max())?;
+            let mut down = product;
+            down.constant = down.constant.checked_sub(t.min())?;
+            Some(vec![Formula::Ge(up), Formula::Ge(down)])
+        });
+        let goals = goals.filter(|_| !builder.overflow);
+        let used = background(&facts, goals.iter().flatten());
+        body.facts = facts;
+        goals.is_some_and(|goals| goals.iter().all(|g| proves(&used, g)))
+    }
+
+    /// Whether `arith` proves that the number `by` is at most `most`.
+    pub(super) fn proves_at_most(&mut self, body: &mut Body<'a>, by: &Expr, most: i128) -> bool {
         let mut facts = std::mem::take(&mut body.facts);
         let mut builder = self.builder(body, &mut facts, true);
         let value = builder.lin(by).filter(|_| !builder.overflow);
         let goal = value.and_then(|value| {
             let mut up = value.negated()?;
-            up.constant = up.constant.checked_add(i128::from(t.bits()) - 1)?;
+            up.constant = up.constant.checked_add(most)?;
             Some(Formula::Ge(up))
         });
         let used = background(&facts, goal.iter());
         body.facts = facts;
-        if !goal.as_ref().is_some_and(|g| proves(&used, g)) {
-            let by = written_expr(by);
-            let bits = t.bits();
-            self.errors.push(
-                Error::new(
-                    pos,
-                    format!(
-                        "cannot prove that `{by} < {bits}`, which a shift of a `{}` needs",
-                        self.defs.spelling(t)
-                    ),
-                )
-                .with_fix(format!(
-                    "check `{by} < {bits}` with an `if`, or state it in a `requires`"
-                )),
-            );
-        }
+        goal.as_ref().is_some_and(|g| proves(&used, g))
     }
 
     /// Whether `arith` proves that `value`, a whole number of type `from`,
