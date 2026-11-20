@@ -5,6 +5,7 @@ description: Typed parameters, a return type, a block whose last expression is i
 status: partial
 built:
   - "typed parameters and return types over `str`, `bool`, and the types a program defines, blocks, named arguments, defaults, a final lambda parameter after them, a name for the result, `requires` and `ensures` over whole numbers, and `//` comments"
+  - "a default for a parameter that takes a function, a lambda that uses no parameter and carries only the effects the type of the parameter lists, filled in where the call is written, so a call that leaves it out costs what the call that writes the lambda after it costs"
 ---
 
 # Functions
@@ -150,6 +151,14 @@ Two rules keep defaults simple.
 - Parameters with defaults come after those without. The one exception is a final lambda parameter, described under [`with`](with.md). `fn f(a: str = "p", b: str)` is refused: "`b` has no default, and comes after `a`, which has one", with the fix "move `b` before `a`, or give it a default".
 - A default is a fixed value. It is an expression that uses no parameter, and it is worked out when the program is built, so it never depends on when or where the call happens. `fn tag(label: str, n: str = label)` is refused: "a default uses no parameter, and `label` is one".
 - A default carries no effect. A list that holds elements needs `alloc`, so `fn f(a: List[u8] = [1, 2])`, with a call of `f()` in `main`, is refused: "a default carries no effect, and a list that holds elements needs the `alloc` effect", at the `[`. So is a text that holds an expression, and so is a call of `push`. `[]` needs none, and is allowed.
+
+The default of a parameter that takes a function is a lambda. It uses no parameter, as any default, and it carries the effects that the type of the parameter lists and no other, since the function that is given it calls it under them.
+
+```
+fn p(inside: str = "", class: str = "", body: fn() ! markup = { }) ! markup { ... }
+```
+
+`p("x")` and `p() { ... }` both call it, and a call that leaves `body` out gets `{ }` where the call is written. A function that takes a function cannot be passed as a value yet, with a default or without one.
 
 The compiler fills in a missing argument where the call is written. The function always receives every argument, so a default costs nothing at run time.
 

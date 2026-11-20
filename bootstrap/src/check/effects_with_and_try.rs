@@ -247,7 +247,10 @@ impl<'a> Checker<'a> {
         call: &Call,
         signature: &Signature,
     ) -> bool {
-        let (Some(_), Some(effect)) = (&body.default, signature.effects.first()) else {
+        // The default of a parameter that takes a function carries the effects
+        // the type of the parameter lists, as the function calls it under them.
+        let unlisted = (signature.effects.iter()).find(|e| !body.extra.contains(e));
+        let (Some(_), Some(effect)) = (&body.default, unlisted) else {
             return false;
         };
         self.errors.push(Error::new(
