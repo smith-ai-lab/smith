@@ -75,18 +75,26 @@ pub(super) fn copies(f: &Function) -> Vec<Value> {
         }
         r
     };
-    // The jumps into each block, and where each value is given as the
-    // argument of a parameter.
-    let mut into: Vec<Vec<&Jump>> = vec![Vec::new(); f.blocks.len()];
-    let mut given_to: Vec<Vec<(usize, usize)>> = vec![Vec::new(); f.types.len()];
-    for (_, block) in f.blocks.iter().enumerate().filter(|(b, _)| reached[*b]) {
-        for j in jumps(&block.end) {
-            into[j.block].push(j);
-            for (k, v) in j.args.iter().enumerate() {
-                given_to[v.0].push((j.block, k));
+    // The jumps into each block, as the block that jumps and the place of the
+    // jump among its jumps, and where each value is given as the argument of a
+    // parameter, as the block and the place of the parameter.
+    let each_jump = |each: &mut dyn FnMut(usize, usize, usize, &Jump)| {
+        for (b, block) in f.blocks.iter().enumerate().filter(|(b, _)| reached[*b]) {
+            for (at, j) in jumps(&block.end).iter().enumerate() {
+                each(b, at, j.block, j);
             }
         }
-    }
+    };
+    let into = Lists::of(f.blocks.len(), (0, 0), |put| {
+        each_jump(&mut |b, at, to, _| put(to, (b, at)));
+    });
+    let given_to = Lists::of(f.types.len(), (0, 0), |put| {
+        each_jump(&mut |_, _, to, j| {
+            for (k, v) in j.args.iter().enumerate() {
+                put(v.0, (to, k));
+            }
+        });
+    });
     let mut copy: Vec<Value> = (0..f.types.len()).map(Value).collect();
     fn find(copy: &mut [Value], v: Value) -> Value {
         let mut root = v;
@@ -114,8 +122,8 @@ pub(super) fn copies(f: &Function) -> Vec<Value> {
         }
         let mut same: Option<Value> = None;
         let mut one = true;
-        for j in &into[b] {
-            let a = find(&mut copy, j.args[k]);
+        for &(from, at) in into.of_key(b) {
+            let a = find(&mut copy, jumps(&f.blocks[from].end)[at].args[k]);
             if a == p {
                 continue;
             }
@@ -130,11 +138,54 @@ pub(super) fn copies(f: &Function) -> Vec<Value> {
         }
         if let (true, Some(v)) = (one, same) {
             copy[p.0] = v;
-            work.extend(given_to[p.0].iter().rev().copied().filter(|(b, _)| *b != 0));
+            work.extend(
+                given_to
+                    .of_key(p.0)
+                    .iter()
+                    .rev()
+                    .copied()
+                    .filter(|(b, _)| *b != 0),
+            );
         }
     }
     for v in 0..copy.len() {
         copy[v] = find(&mut copy, Value(v));
     }
     copy
+}
+
+/// Lists of pairs, one list for each key, held in one buffer, so that a walk
+/// that makes a list for each block or value asks for two buffers and not a
+/// list for each key. The order of a list is the order the pairs are given.
+struct Lists {
+    start: Vec<usize>,
+    items: Vec<(usize, usize)>,
+}
+
+impl Lists {
+    /// The lists of `keys` keys that `give` puts pairs in: it is called twice,
+    /// to count and then to fill, and `fill` is what the buffer holds before.
+    fn of(
+        keys: usize,
+        fill: (usize, usize),
+        give: impl Fn(&mut dyn FnMut(usize, (usize, usize))),
+    ) -> Lists {
+        let mut start = vec![0usize; keys + 1];
+        give(&mut |key, _| start[key + 1] += 1);
+        for key in 0..keys {
+            start[key + 1] += start[key];
+        }
+        let mut items = vec![fill; start[keys]];
+        let mut next = start.clone();
+        give(&mut |key, pair| {
+            items[next[key]] = pair;
+            next[key] += 1;
+        });
+        Lists { start, items }
+    }
+
+    /// The pairs of the key, in the order they were given.
+    fn of_key(&self, key: usize) -> &[(usize, usize)] {
+        &self.items[self.start[key]..self.start[key + 1]]
+    }
 }
