@@ -15,16 +15,26 @@ impl Parser<'_> {
         from: usize,
         nested: bool,
     ) -> Result<Option<Function>, Error> {
-        let (name, pos, generics, params, result, mut result_name, effects, requires, ensures) =
-            match self.body_signature() {
-                Ok(signature) => signature,
-                Err(e) if nested => return Err(e),
-                Err(e) => {
-                    self.errors.push(e);
-                    self.skip_item(from);
-                    return Ok(None);
-                }
-            };
+        let (
+            name,
+            pos,
+            generics,
+            params,
+            result,
+            mut result_name,
+            effects,
+            requires,
+            ensures,
+            decreases,
+        ) = match self.body_signature() {
+            Ok(signature) => signature,
+            Err(e) if nested => return Err(e),
+            Err(e) => {
+                self.errors.push(e);
+                self.skip_item(from);
+                return Ok(None);
+            }
+        };
         let mut block = Block::default();
         block.inner.append(&mut self.binds);
         let mut ok = true;
@@ -101,6 +111,7 @@ impl Parser<'_> {
             requires,
             needs: Vec::new(),
             ensures,
+            decreases,
             body: block.finish(end),
             end,
         }))
@@ -113,18 +124,39 @@ impl Parser<'_> {
         self.bound_names_allowed = false;
         let (name, pos, generics, params, result, result_name, effects) = signature?;
         let (mut requires, mut ensures) = (Vec::new(), Vec::new());
+        let mut decreases: Vec<Expr> = Vec::new();
         loop {
             self.skip_newlines();
             let keyword = match self.tok() {
                 Tok::Keyword(k @ ("requires" | "ensures")) => *k,
+                Tok::Ident(name) if name == "decreases" => "decreases",
                 _ => break,
             };
+            let at = self.pos();
             self.bump();
             let no_lambda = std::mem::replace(&mut self.no_lambda, true);
             let statement = self.expr();
             self.no_lambda = no_lambda;
             match keyword {
                 "requires" => requires.push(statement?),
+                "decreases" => {
+                    if !decreases.is_empty() {
+                        return Err(Error::new(
+                            at,
+                            "a function has one `decreases`, which may name more than one part, as `decreases a, b`",
+                        ));
+                    }
+                    decreases.push(statement?);
+                    // The parts after the first, each after a comma.
+                    while self.tok() == &Tok::Punct(",") {
+                        self.bump();
+                        self.skip_newlines();
+                        let no_lambda = std::mem::replace(&mut self.no_lambda, true);
+                        let part = self.expr();
+                        self.no_lambda = no_lambda;
+                        decreases.push(part?);
+                    }
+                }
                 _ => ensures.push(statement?),
             }
         }
@@ -142,6 +174,7 @@ impl Parser<'_> {
             effects,
             requires,
             ensures,
+            decreases,
         ))
     }
 
