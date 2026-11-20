@@ -840,7 +840,24 @@ fn parse_file(tokens: &[Token], library: bool) -> Result<File, Vec<Error>> {
             }
         }
         if public {
-            exports.extend(functions[before.0..].iter().map(|f| f.name.clone()));
+            // An operation of an effect is exported when it is written `pub`,
+            // and not otherwise, whatever the effect is.
+            if effects.len() == effects_before {
+                exports.extend(functions[before.0..].iter().map(|f| f.name.clone()));
+            } else {
+                let private: Vec<&str> = (effects[effects_before..].iter())
+                    .flat_map(|e| {
+                        (e.operations.iter().zip(&e.public))
+                            .filter(|(_, p)| p.is_none())
+                            .map(|(o, _)| o.as_str())
+                    })
+                    .collect();
+                exports.extend(
+                    (functions[before.0..].iter())
+                        .filter(|f| !private.contains(&f.name.as_str()))
+                        .map(|f| f.name.clone()),
+                );
+            }
             exports.extend(structs[before.1..].iter().map(|s| s.name.clone()));
             exports.extend(enums[before.2..].iter().map(|e| e.name.clone()));
             exports.extend(traits[before.3..].iter().map(|t| t.name.clone()));
@@ -856,6 +873,9 @@ fn parse_file(tokens: &[Token], library: bool) -> Result<File, Vec<Error>> {
             if let Some(pos) = field.public {
                 p.unbuilt.push(Error::unsupported(pos, "`pub`"));
             }
+        }
+        for pos in effects.iter().flat_map(|e| &e.public).flatten() {
+            p.unbuilt.push(Error::unsupported(*pos, "`pub`"));
         }
     }
     if p.errors.is_empty() {

@@ -118,7 +118,9 @@ pub(super) fn renamed_tokens(
             _ => {}
         }
         match &t.tok {
-            Tok::Keyword("fn") => signature = true,
+            // A function type in the parameters is not the start of a
+            // signature, and the call after the parameters is not one's.
+            Tok::Keyword("fn") if params == 0 => signature = true,
             Tok::Punct("(") if params > 0 => params += 1,
             Tok::Punct("(") if signature => {
                 signature = false;

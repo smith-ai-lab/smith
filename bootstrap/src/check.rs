@@ -3051,8 +3051,8 @@ impl<'l, 'a> Resolver<'l, 'a> {
     /// The module of the standard library that exports each name. A module's
     /// source is not lexed or parsed for it: an item that a module exports is
     /// written with `pub` at the start of a line, as `fn`, `struct`, `enum`,
-    /// `trait`, or `effect`, and the operations of an effect are its indented
-    /// `fn` lines, so the names are read off those lines.
+    /// `trait`, or `effect`, and the operations of an effect that are exported
+    /// are its indented `pub fn` lines, so the names are read off those lines.
     fn homes(&self) -> &HashMap<String, &'a str> {
         self.homes.get_or_init(|| {
             let mut homes = HashMap::new();
@@ -3062,7 +3062,7 @@ impl<'l, 'a> Resolver<'l, 'a> {
                 };
                 let mut in_effect = false;
                 for line in source.lines() {
-                    let operation = in_effect.then(|| line.trim_start().strip_prefix("fn "));
+                    let operation = in_effect.then(|| line.trim_start().strip_prefix("pub fn "));
                     in_effect &= line != "}";
                     let Some(rest) = operation.flatten().or_else(|| {
                         let rest = [

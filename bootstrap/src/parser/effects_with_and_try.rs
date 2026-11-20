@@ -12,6 +12,9 @@ pub struct EffectDef {
     pub pos: Pos,
     /// The names of its operations, in the order written.
     pub operations: Vec<String>,
+    /// For each operation, where `pub` is written before it, if it is. An
+    /// operation is private to its module unless it is.
+    pub public: Vec<Option<Pos>>,
 }
 
 /// Whether a function is an operation of an effect, which has no body and
@@ -145,13 +148,20 @@ impl Parser<'_> {
         let (name, pos) = self.defined("the effect's name")?;
         self.expect_punct("{", "`{` to open the effect's operations")?;
         let mut operations = Vec::new();
+        let mut public = Vec::new();
         loop {
             self.skip_newlines();
+            let mut marked = None;
+            if self.tok() == &Tok::Keyword("pub") {
+                marked = Some(self.pos());
+                self.bump();
+            }
             match self.tok() {
-                Tok::Punct("}") => break,
+                Tok::Punct("}") if marked.is_none() => break,
                 Tok::Keyword("fn") => {}
                 tok => return Err(self.expected("an operation's signature or `}`", tok)),
             }
+            public.push(marked);
             let (op, at, generics, params, result, result_name, mut effects) = self.signature()?;
             match self.tok() {
                 Tok::Newline | Tok::Punct("}") => {}
@@ -187,6 +197,7 @@ impl Parser<'_> {
                 name,
                 pos,
                 operations: names,
+                public,
             },
             operations,
         ))
