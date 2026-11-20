@@ -114,7 +114,15 @@ A client that lists the prompts is told of `summarise`, with its comment and its
 
 ## Who may call
 
-`std.mcp` checks no one. Who may reach a server is a question about the request that carried the message, and so it belongs to what carries it: a server a client starts on the same machine is reached only by that client, and a server on the network is behind whatever [`std.http`](http.md) does to a request before it reaches [`at`](http.md#a-server-of-messages-at-a-path). Nothing of authorization is written in a tool, a resource, or a prompt.
+`std.mcp` does not ask who a caller is. Who may reach a server is a question about the request that carried the message, and so it belongs to what carries it: a server a client starts on the same machine is reached only by that client, and a server on the network is behind whatever [`std.http`](http.md) does to a request before it reaches [`at`](http.md#a-server-of-messages-at-a-path). Nothing of authorization is written in a tool, a resource, or a prompt.
+
+One check is `mcp`'s own, because the protocol asks it of every server whatever else guards it: where a message came from. A page in a browser can send a request to any server the browser reaches, and the browser says which page with the `Origin` header.
+
+```
+with mcp(name: "notes", version: "1", origins: ["https://notes.example"])
+```
+
+`origins` is a list of the origins a browser's page may call from, and it is empty when it is not given. A message with no `Origin` header is answered, as a client that is no browser sends none. A message with one is answered only when the list holds it, exactly as written, and is refused otherwise with status 403. So a server that names no origin is closed to every page in a browser, and one that is to be called from a page names that page's origin. A message that came by the standard input has no headers and is always answered.
 
 ## Where the messages come from
 
