@@ -72,13 +72,17 @@ const FUNCTIONS: &[(&str, &str)] = &[
     ("text", ""),
     ("nothing", ""),
     ("optional", ""),
+    ("end_optional", ""),
     ("sequence", ""),
+    ("end_sequence", ""),
     ("tuple", "size: Nat"),
+    ("end_tuple", ""),
     ("structure", "name: str, about: str, fields: Nat"),
     ("field", "name: str, about: str, optional: bool"),
     ("end_structure", ""),
     ("enumeration", "name: str, about: str, cases: Nat"),
     ("case", "name: str, about: str, holds: bool"),
+    ("end_case", ""),
     ("end_enumeration", ""),
     ("map", ""),
 ];
@@ -220,13 +224,24 @@ fn calls(defs: &Defs, notes: &Notes, t: &Ty) -> Vec<String> {
         }
         Ty::Text => vec!["text".to_string()],
         Ty::Unit => vec!["nothing".to_string()],
-        Ty::Option(of) => [vec!["optional".to_string()], calls(defs, notes, of)].concat(),
-        Ty::List(of) => [vec!["sequence".to_string()], calls(defs, notes, of)].concat(),
+        Ty::Option(of) => [
+            vec!["optional".to_string()],
+            calls(defs, notes, of),
+            vec!["end_optional".to_string()],
+        ]
+        .concat(),
+        Ty::List(of) => [
+            vec!["sequence".to_string()],
+            calls(defs, notes, of),
+            vec!["end_sequence".to_string()],
+        ]
+        .concat(),
         Ty::Tuple(of) => {
             let mut out = vec![format!("tuple {}", of.len())];
             for t in of {
                 out.extend(calls(defs, notes, t));
             }
+            out.push("end_tuple".to_string());
             out
         }
         Ty::Struct(s) => {
@@ -251,6 +266,7 @@ fn calls(defs: &Defs, notes: &Notes, t: &Ty) -> Vec<String> {
                 if let Some(t) = held {
                     out.extend(calls(defs, notes, t));
                 }
+                out.push("end_case".to_string());
             }
             out.push("end_enumeration".to_string());
             out
@@ -349,7 +365,7 @@ fn a_types_own_impl_is_the_description_used_wherever_it_is_a_part() {
     assert!(found.is_empty(), "{found:?}\n{source}");
     assert_eq!(
         prints(&source),
-        "structure Reading  2\nfield at  false\ntext\nfield past  false\nsequence\ntext\nend_structure\n\n",
+        "structure Reading  2\nfield at  false\ntext\nfield past  false\nsequence\ntext\nend_sequence\nend_structure\n\n",
         "{source}"
     );
 }
