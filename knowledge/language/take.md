@@ -83,6 +83,18 @@ fn collect(acc: take List[Byte], xs: take List[Byte]) -> u64 {
 
 This is refused at the lambda: "this lambda gives away `acc`, and the function it is passed to may call it more than once". `twice` may call its function any number of times, and the lambda can give `acc` away once.
 
+A lambda that gives away a `var` and assigns it again before it ends has given nothing away. The name holds a value when the lambda returns, as it did when the lambda began, so the function may be called any number of times.
+
+```
+fn gather(parts: List[str]) -> str ! alloc {
+  var page = text()
+  each(parts) fn(part) { page = append(page, part) }
+  finish(page)
+}
+```
+
+`append` takes `page`, and the same statement assigns what it gives back. This is accepted when every path through the lambda assigns the name after it is given away, a `return` and a `try` that leaves among them. A path that leaves with the name given away is refused with the error above. A [handler](handlers.md) keeps a value that is owned this way: its function takes the value its `var` holds and puts the next one there.
+
 A value the lambda gives away is spent in `collect` from the call the lambda is passed to: a use of `acc` after the call is refused, as a use after any give-away is, and a use before it is not. A second lambda of the same call that gives `acc` away is refused at the second use.
 
 A function that takes its function calls it at most once, and may leave it uncalled. So a lambda that takes a value without [`Discard`](resources.md) is refused there, as the value is dropped when the function is not called. A function that must run exactly once is written with a type parameter, as the end of this section says.
