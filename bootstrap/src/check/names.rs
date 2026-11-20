@@ -12,7 +12,7 @@ pub(super) fn renamed_tokens(
     tokens: &[crate::lexer::Token],
     rename: &dyn Fn(&str) -> Option<String>,
     through: &HashMap<String, HashMap<String, String>>,
-    record: &mut dyn FnMut(crate::diag::Pos, &str),
+    record: &mut dyn FnMut(crate::diag::Pos, &str, &str),
 ) -> Vec<crate::lexer::Token> {
     use crate::lexer::{Piece, Tok, Token};
     // The depth of parentheses inside the parameters of a function, which is 0
@@ -174,7 +174,7 @@ pub(super) fn renamed_tokens(
                         Tok::Ident(member.cloned().unwrap_or_default())
                     }
                     Some(to) if !after_dot && !labelled && !case_defined && !is_parameter => {
-                        record(t.pos, name);
+                        record(t.pos, name, &to);
                         Tok::Ident(to)
                     }
                     _ => t.tok.clone(),
@@ -308,8 +308,10 @@ pub(super) struct Naming {
 /// and not from the tokens that were rewritten.
 #[derive(Default)]
 pub(super) struct Resolution {
-    /// The name each rewritten token was written as, by its place.
-    pub(super) written: HashMap<crate::diag::Pos, String>,
+    /// The name each rewritten token was written as, by its place and the name
+    /// it was rewritten to, since a name the parser makes up may share the place
+    /// of a token.
+    pub(super) written: HashMap<(crate::diag::Pos, String), String>,
     /// What each module calls what, by the module's number.
     pub(super) modules: HashMap<usize, Naming>,
 }
@@ -318,7 +320,9 @@ impl Resolution {
     /// The name as the module wrote it at `pos`, where `text` is what the
     /// tokens say.
     pub(super) fn written_at<'s>(&'s self, pos: crate::diag::Pos, text: &'s str) -> &'s str {
-        self.written.get(&pos).map_or(text, String::as_str)
+        self.written
+            .get(&(pos, text.to_string()))
+            .map_or(text, String::as_str)
     }
 
     /// What the name `text` at `pos` is called in the file that holds every
