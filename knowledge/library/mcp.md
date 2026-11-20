@@ -53,7 +53,7 @@ fn main() ! messages, net, alloc {
 
 `mcp` takes the name and the version of the server, and what else the protocol lets a server say of itself as arguments with defaults, so a server that says no more writes no more.
 
-One of those arguments is `ttl`, how many milliseconds a client may keep what it was told of the tools, the resources, and the prompts, and of a resource it read, before asking again. It is 0 when not given, so a client asks each time, and each such answer says it is `private`, for the caller who asked alone, since a [guard](http.md#guards) may give two callers different lists.
+One of those arguments is `ttl`, how many milliseconds a client may keep what it was told of the tools, the resources, and the prompts, and of a resource it read, before asking again. It is 0 when not given, so a client asks each time, and each such answer says it is `private`, for the caller who asked alone, since a [guard](http.md#who-may-call) may give two callers different lists.
 
 The server speaks the version of the protocol dated 2026-07-28, which has no handshake and keeps nothing between two requests. A client that sends `server/discover` is told the versions the server speaks, the capabilities its lines imply, and the instructions `mcp` was given, if any, and every result carries the server's name and version. A request that names a version the server does not speak is answered with the failure -32022 and the versions it does, and a client of an earlier version that begins with `initialize` is answered the same way.
 
