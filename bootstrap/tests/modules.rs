@@ -15,8 +15,16 @@ use crate::targets::any;
 
 pub const ONCE: &[Test] = &[
     (
-        "project_modules_print_what_the_same_items_print_in_one_file",
-        project_modules_print_what_the_same_items_print_in_one_file,
+        "project_modules_print_what_the_same_items_print_in_one_file_part_1_of_3",
+        || project_modules_print_what_the_same_items_print_in_one_file(0),
+    ),
+    (
+        "project_modules_print_what_the_same_items_print_in_one_file_part_2_of_3",
+        || project_modules_print_what_the_same_items_print_in_one_file(1),
+    ),
+    (
+        "project_modules_print_what_the_same_items_print_in_one_file_part_3_of_3",
+        || project_modules_print_what_the_same_items_print_in_one_file(2),
     ),
     (
         "project_each_mistake_in_a_tree_of_modules_is_one_error_at_its_place",
@@ -167,8 +175,8 @@ fn main_text(t: &Tree, with_uses: bool) -> String {
 /// print in one file. The modules share the name of a private function, each
 /// keeps its field private, an `impl` is found where the main never names it,
 /// and a module imports from another.
-fn project_modules_print_what_the_same_items_print_in_one_file() {
-    generate::check(5, 40, tree, |t| {
+fn project_modules_print_what_the_same_items_print_in_one_file(part: u64) {
+    generate::check_part(5, 40, part, 3, tree, |t| {
         let modules: Vec<String> = (0..t.modules.len()).map(|i| items(t, i, true)).collect();
         let files: Vec<(&str, &str)> = t
             .modules
