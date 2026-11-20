@@ -93,13 +93,11 @@ const STD: &[(&str, &[&str])] = &[
         &[
             "checked_add",
             "checked_mul",
-            "checked_narrow",
             "checked_sub",
             "clamp",
             "narrow",
             "saturating_add",
             "saturating_mul",
-            "saturating_narrow",
             "saturating_sub",
             "wrapping_add",
             "wrapping_mul",
@@ -426,19 +424,14 @@ pub fn bits(function: &str, ty: Int, a: i128, b: i128) -> i128 {
 }
 
 /// What `narrow` and its relatives give for the value of the type `from`
-/// when it is taken to `to`, as text, or `None` for `narrow` when the value
-/// does not fit.
-pub fn narrowed(kind: &str, to: Int, a: i128) -> Option<String> {
+/// when it is taken to `to`, as text.
+pub fn narrowed(kind: &str, to: Int, a: i128) -> String {
     let fits = (to.min()..=to.max()).contains(&a);
     match kind {
-        "narrow" => fits.then(|| a.to_string()),
-        "wrapping_narrow" => Some(to.wrap(a).to_string()),
-        "saturating_narrow" | "clamp" => Some(a.clamp(to.min(), to.max()).to_string()),
-        _ => Some(if fits {
-            format!(".some({a})")
-        } else {
-            ".none".to_string()
-        }),
+        "wrapping_narrow" => to.wrap(a).to_string(),
+        "clamp" => a.clamp(to.min(), to.max()).to_string(),
+        _ if fits => format!(".some({a})"),
+        _ => ".none".to_string(),
     }
 }
 
@@ -536,19 +529,15 @@ fn line(g: &mut Gen, vars: &[Var], at: usize) -> Line {
         }
         8 => {
             // The type it is taken to is one that does not hold every value
-            // of its own. `narrow` is for a value that fits.
+            // of its own.
             let others: Vec<Int> = (INTS.iter())
                 .filter(|t| !t.holds_all(first.ty))
                 .copied()
                 .collect();
             let to = *g.pick(&others);
-            let mut kinds = vec!["wrapping_narrow", "saturating_narrow", "clamp", "checked_narrow"];
-            if narrowed("narrow", to, first.value).is_some() {
-                kinds.push("narrow");
-            }
-            let kind = *g.pick(&kinds);
-            let given = narrowed(kind, to, first.value).expect("a value");
-            let ty = if kind == "checked_narrow" {
+            let kind = *g.pick(&["wrapping_narrow", "clamp", "narrow"]);
+            let given = narrowed(kind, to, first.value);
+            let ty = if kind == "narrow" {
                 format!("Option[{}]", to.name)
             } else {
                 to.name.to_string()
@@ -801,7 +790,7 @@ pub fn program_with_mistake(g: &mut Gen) -> NumberCase {
             fix = Some("`requires`".to_string());
             (
                 format!("big: {} = {v}\n  small: {} = ", from.name, to.name),
-                "narrow(big)\n  print(\"{small}\")".into(),
+                "big\n  print(\"{small}\")".into(),
                 "cannot prove".into(),
             )
         }
@@ -827,7 +816,7 @@ pub fn program_with_mistake(g: &mut Gen) -> NumberCase {
             fix = (from != to).then(|| "convert".to_string());
             (
                 format!("x: {} = 1\n  y: {} = ", from.name, to.name),
-                "narrow(x)\n  print(\"{y}\")".into(),
+                "clamp(x)\n  print(\"{y}\")".into(),
                 "nothing to narrow".into(),
             )
         }

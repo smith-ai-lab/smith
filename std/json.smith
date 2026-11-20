@@ -1,6 +1,6 @@
 use std.bits (bit_and, bit_not, bit_or, shift_left, shift_right, u32, u64)
 use std.deserialize (Deserialize, Problem, ReadError, Reader, fail, read)
-use std.int (checked_add, checked_mul, narrow, saturating_add, saturating_sub, wrapping_add, wrapping_mul, wrapping_narrow, wrapping_sub)
+use std.int (checked_add, checked_mul, saturating_add, saturating_sub, wrapping_add, wrapping_mul, wrapping_narrow, wrapping_sub)
 use std.list (freeze, push)
 use std.serialize (Serialize, Writer, write)
 use std.text (Text, append, append_ascii, finish, text)
@@ -1151,7 +1151,7 @@ fn top_closes(r: In) -> bool {
   if r.cases == 0 {
     false
   } else if n < 64 {
-    by: Byte = narrow(n)
+    by: Byte = n
     bit_and(shift_right(r.forms, by), 1) == 1
   } else {
     m = r.deep.size
@@ -1171,7 +1171,7 @@ fn top_not_closing(r: take In) -> In ! alloc {
   if w.cases == 0 {
     w
   } else if n < 64 {
-    by: Byte = narrow(n)
+    by: Byte = n
     one: u64 = 1
     w.forms = bit_and(w.forms, bit_not(shift_left(one, by)))
     w
@@ -1188,7 +1188,7 @@ fn left_case(r: take In) -> In {
   if w.cases == 0 {
     w
   } else if n < 64 {
-    by: Byte = narrow(n)
+    by: Byte = n
     one: u64 = 1
     w.forms = bit_and(w.forms, bit_not(shift_left(one, by)))
     w.cases = n
@@ -1356,7 +1356,7 @@ fn pushed(r: take In, form: u64) -> Result[In, Bad] ! alloc {
   var w = r
   n = w.cases
   if n < 64 {
-    by: Byte = narrow(n)
+    by: Byte = n
     w.forms = bit_or(w.forms, shift_left(form, by))
   } else {
     w.deep = grown_byte(w.deep, wrapping_narrow(form))
@@ -1443,7 +1443,7 @@ impl Reader[In] {
             w = moved(r, n.end, a)
             if n.negative {
               if n.size <= 9223372036854775807 {
-                v: Int = narrow(n.size)
+                v: Int = n.size
                 (w, Result.ok(0 - v))
               } else if n.size == 9223372036854775808 {
                 (w, Result.ok(wrapping_sub(0 - 9223372036854775807, 1)))
@@ -1451,7 +1451,7 @@ impl Reader[In] {
                 failed_i64(w, range_of(a, "i64"))
               }
             } else if n.size <= 9223372036854775807 {
-              (w, Result.ok(narrow(n.size)))
+              (w, Result.ok(n.size))
             } else {
               failed_i64(w, range_of(a, "i64"))
             }

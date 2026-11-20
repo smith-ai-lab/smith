@@ -2144,7 +2144,6 @@ fn check_file(
         comparing: false,
         settled: false,
         value_calls: Set::default(),
-        narrowed: HashSet::new(),
         fn_values: Map::default(),
         no_impl: false,
         refusals: 0,
@@ -5611,9 +5610,6 @@ struct Checker<'a> {
     settled: bool,
     /// The calls of a name that holds a function, by their addresses.
     value_calls: Set<usize>,
-    /// The calls of `narrow`, by their addresses, which give the number
-    /// they are given, as `arith` knows.
-    narrowed: HashSet<usize>,
     /// The names of functions passed as values, by their addresses, with
     /// the function each names.
     fn_values: Map<usize, usize>,
