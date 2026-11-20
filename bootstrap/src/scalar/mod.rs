@@ -785,29 +785,45 @@ impl Place {
 /// The names a place holds, which are kept once for the process: a name is the
 /// number it is given, and the same name is always the same number.
 pub mod names {
-    use std::sync::Mutex;
+    use std::collections::HashMap;
+    use std::sync::{Mutex, OnceLock};
 
-    static NAMES: Mutex<Vec<&'static str>> = Mutex::new(Vec::new());
+    /// The names in the order they were given, and the number of each.
+    struct Names {
+        list: Vec<&'static str>,
+        number: HashMap<&'static str, u32>,
+    }
 
-    /// The number of the name. The names are few, a file and a function each.
-    /// The name that is nothing has the number 0, which is the number of no name.
+    fn names() -> &'static Mutex<Names> {
+        static NAMES: OnceLock<Mutex<Names>> = OnceLock::new();
+        NAMES.get_or_init(|| {
+            Mutex::new(Names {
+                list: vec![""],
+                number: HashMap::from([("", 0)]),
+            })
+        })
+    }
+
+    /// The number of the name. The names grow with the program, a file and a
+    /// function each, so a name is found by a lookup and not by a scan. The
+    /// name that is nothing has the number 0, which is the number of no name.
     pub fn intern(name: &str) -> u32 {
-        let mut names = NAMES.lock().expect("the names are not left held");
-        if names.is_empty() {
-            names.push("");
+        let mut names = names().lock().expect("the names are not left held");
+        if let Some(&at) = names.number.get(name) {
+            return at;
         }
-        if let Some(at) = names.iter().position(|n| *n == name) {
-            return at as u32;
-        }
-        names.push(Box::leak(name.to_string().into_boxed_str()));
-        names.len() as u32 - 1
+        let kept: &'static str = Box::leak(name.to_string().into_boxed_str());
+        let at = names.list.len() as u32;
+        names.list.push(kept);
+        names.number.insert(kept, at);
+        at
     }
 
     /// The name with the number.
     pub fn name(number: u32) -> &'static str {
         match number {
             0 => "",
-            n => NAMES.lock().expect("the names are not left held")[n as usize],
+            n => names().lock().expect("the names are not left held").list[n as usize],
         }
     }
 }
