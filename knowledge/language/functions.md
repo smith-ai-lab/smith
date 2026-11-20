@@ -5,6 +5,7 @@ description: Typed parameters, a return type, a block whose last expression is i
 status: partial
 built:
   - "typed parameters and return types over `str`, `bool`, and the types a program defines, blocks, named arguments, defaults, a final lambda parameter after them, a name for the result, `requires` and `ensures` over whole numbers, and `//` comments"
+  - "the comment on a function, a parameter, a struct, a field, an enum, and a case, found from the lines of `//` directly above it, which a library asks for by the line the item starts on, and which a program that asks for none pays nothing for"
   - "a default for a parameter that takes a function, a lambda that uses no parameter and carries only the effects the type of the parameter lists, filled in where the call is written, so a call that leaves it out costs what the call that writes the lambda after it costs"
 ---
 
@@ -189,6 +190,8 @@ A comment starts with `//` and stands on its own line. It describes the definiti
 // Gives the first of two words.
 fn first(a: str, b: str) -> str { a }
 ```
+
+The comment on an item is the run of `//` lines directly above the line the item starts on, with no blank line between. The `//` and one space after it are taken off each line, and the lines stay lines, joined by a line break, so nothing the author wrote is lost. A blank line, or a line of code, between a comment and what follows leaves that item with no comment, and an item with none has the empty text, as a comment of `//` alone does.
 
 A comment may describe one parameter, when the parameters stand on lines of their own.
 
