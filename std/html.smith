@@ -1,0 +1,73 @@
+use std.text (Text, append, finish, text as new_text)
+use std.utf8 (utf8)
+
+// The bytes of `s` from `from` up to `end`, which are whole characters, as
+// they are. The piece lies between two escaped bytes, which are ASCII, or at an
+// end of `s`, so `utf8` never refuses it. It is written with `utf8` until
+// `s[from..end]` is built (#778), which makes the piece with nothing read again.
+fn run(to: take Text, s: str, from: Nat, end: Nat) -> Text ! alloc {
+  var t = to
+  if from == 0 and end == s.size {
+    t = append(t, s)
+  } else if from < end and end <= s.size {
+    match utf8(s.bytes[from..end]) {
+      .ok(piece) { t = append(t, piece) }
+      .err(e) { }
+    }
+  }
+  t
+}
+
+// How HTML writes a byte that is not text where it stands, or nothing for a
+// byte that is.
+fn entity(b: Byte) -> str {
+  if b == '<' {
+    "&lt;"
+  } else if b == '>' {
+    "&gt;"
+  } else if b == '&' {
+    "&amp;"
+  } else if b == '"' {
+    "&quot;"
+  } else if b == '\'' {
+    "&#39;"
+  } else {
+    ""
+  }
+}
+
+// The text as HTML holds it as text and nothing else: `<`, `>`, `&`, `"`, and
+// `'` are written as entities, and every other byte as it is. The bytes between
+// two that are escaped are written together.
+// What a page is written through, as it runs. A tag is left open until
+// something that is not an attribute is written, so that `attribute` may
+// follow `start`. A handler writes what it is given as it is: the texts are
+// escaped by `text` and by the elements, before they reach it.
+pub effect markup {
+  fn start(tag: str)
+  fn attribute(name: str, value: str)
+  fn emit(escaped: str)
+  fn void()
+  fn end(tag: str)
+}
+
+// The text as HTML holds it as text and nothing else: `<`, `>`, `&`, `"`, and
+// `'` are written as entities, and every other byte as it is. The bytes between
+// two that are escaped are written together.
+pub fn escape(s: str) -> str ! alloc {
+  var t = new_text()
+  var from: Nat = 0
+  loop i in 0..s.size {
+    written = entity(s[i])
+    if written.size > 0 {
+      t = append(run(t, s, from, i), written)
+      from = i + 1
+    }
+  }
+  finish(run(t, s, from, s.size))
+}
+
+// A text among other elements, written so that it is text and nothing else.
+pub fn text(s: str) ! markup, alloc {
+  emit(escape(s))
+}
