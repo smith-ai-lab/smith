@@ -13,7 +13,7 @@ const MACHINE: Machine = Machine {
     cpu_type: 0x0100_0007, // x86-64
     cpu_subtype: 3,        // every x86-64 processor
     page: 0x1000,
-    min_os: 0x000a_0f00, // 10.15
+    min_os: 0x000a_1000, // 10.16
 };
 
 /// The executable for the program.
