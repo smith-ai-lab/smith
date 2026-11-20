@@ -66,6 +66,9 @@ struct Facts {
     chosen: Vec<Option<(Value, Value, Value)>>,
     /// Whether a block can be gone through.
     through: Vec<bool>,
+    /// The buffer that each `resolve` uses for what it knows of the values of a
+    /// block, kept so that each does not ask for one.
+    scratch: std::cell::RefCell<Vec<(Value, Bind)>>,
 }
 
 fn threaded(f: &Function) -> Function {
@@ -438,6 +441,7 @@ fn facts(f: &Function, reached: &[bool]) -> Facts {
         compared,
         chosen,
         through,
+        scratch: Default::default(),
     }
 }
 
@@ -554,8 +558,21 @@ fn step(
 /// to and what it gives, if the block ends with a jump or a choice on a known
 /// value, and every value it gives is known or is in the block that jumps.
 fn resolve(f: &Function, facts: &Facts, b: usize, binds: &[Bind]) -> Option<(usize, Vec<Arg>)> {
+    let mut env = Env(facts.scratch.take());
+    env.0.clear();
+    let chosen = resolved(f, facts, b, binds, &mut env);
+    facts.scratch.replace(env.0);
+    chosen
+}
+
+fn resolved(
+    f: &Function,
+    facts: &Facts,
+    b: usize,
+    binds: &[Bind],
+    env: &mut Env,
+) -> Option<(usize, Vec<Arg>)> {
     let block = &f.blocks[b];
-    let mut env = Env(Vec::new());
     for (&p, &bind) in block.params.iter().zip(binds) {
         env.insert(p, bind);
     }
@@ -570,26 +587,24 @@ fn resolve(f: &Function, facts: &Facts, b: usize, binds: &[Bind]) -> Option<(usi
         let ty = f.types[r.0];
         let answer = match &i.op {
             Op::Constant(Constant::Int(c)) => Some(c & mask(bits_of(ty))),
-            Op::Binary { op, a, b } => match (known(&env, *a), known(&env, *b)) {
+            Op::Binary { op, a, b } => match (known(env, *a), known(env, *b)) {
                 (Some(x), Some(y)) if matches!(ty, Type::Int(_)) => {
                     Some(binary(*op, bits_of(ty), x, y))
                 }
                 _ => None,
             },
-            Op::Compare { op, a, b } => match (known(&env, *a), known(&env, *b)) {
+            Op::Compare { op, a, b } => match (known(env, *a), known(env, *b)) {
                 (Some(x), Some(y)) => Some(compare(*op, bits_of(f.types[a.0]), x, y)),
                 _ => None,
             },
-            Op::Widen { signed, value } => known(&env, *value)
+            Op::Widen { signed, value } => known(env, *value)
                 .map(|n| widen(*signed, bits_of(f.types[value.0]), bits_of(ty), n)),
-            Op::Narrow(value) => known(&env, *value).map(|n| narrow(bits_of(ty), n)),
+            Op::Narrow(value) => known(env, *value).map(|n| narrow(bits_of(ty), n)),
             Op::Choose {
                 on,
                 then,
                 otherwise,
-            } => {
-                known(&env, *on).and_then(|c| known(&env, if c != 0 { *then } else { *otherwise }))
-            }
+            } => known(env, *on).and_then(|c| known(env, if c != 0 { *then } else { *otherwise })),
             _ => None,
         };
         env.insert(
@@ -602,7 +617,7 @@ fn resolve(f: &Function, facts: &Facts, b: usize, binds: &[Bind]) -> Option<(usi
     }
     let chosen = match &block.end {
         End::Jump(j) => j,
-        End::Switch { on, jumps } => jumps.get(known(&env, *on)? as usize)?,
+        End::Switch { on, jumps } => jumps.get(known(env, *on)? as usize)?,
         End::Return(_) => return None,
     };
     let mut args = Vec::with_capacity(chosen.args.len());
