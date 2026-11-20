@@ -269,6 +269,21 @@ pub enum Binary {
     MulHighU,
     /// The high half of `a * b`, with `a` and `b` as signed numbers.
     MulHighS,
+    /// `a / b`, with `a` and `b` as unsigned numbers, rounded toward zero. `b`
+    /// is not zero: an instruction is given a divisor that is not, and what a
+    /// program does that gives one is not defined, as the processors differ.
+    DivU,
+    /// `a / b`, with `a` and `b` as signed numbers, rounded toward zero. `b`
+    /// is not zero, and `a` is not the least number of the size when `b` is
+    /// -1, whose quotient the size cannot hold.
+    DivS,
+    /// What is left of `a` when it is divided by `b`, with both as unsigned
+    /// numbers: `a - (a / b) * b`. `b` is not zero.
+    RemU,
+    /// What is left of `a` when it is divided by `b`, with both as signed
+    /// numbers, which has the sign of `a`: `a - (a / b) * b`. `b` is not zero,
+    /// and `a` is not the least number of the size when `b` is -1.
+    RemS,
     /// The bits `a` and `b` both have.
     And,
     /// The bits that only one of `a` and `b` has.

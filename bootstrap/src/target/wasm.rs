@@ -1106,6 +1106,30 @@ impl Lowering<'_> {
                     _ => I32_XOR,
                 });
             }
+            // A number of fewer than 32 bits is held as the number, so the
+            // engine divides it as it is; a signed one is extended first, and
+            // the answer has its bits above the size cleared.
+            Binary::DivU | Binary::RemU => {
+                self.get(a);
+                self.get(b);
+                self.code.op(if op == Binary::DivU {
+                    I32_DIV_U
+                } else {
+                    I32_REM_U
+                });
+            }
+            Binary::DivS | Binary::RemS => {
+                self.get(a);
+                self.sign_extend(bits);
+                self.get(b);
+                self.sign_extend(bits);
+                self.code.op(if op == Binary::DivS {
+                    I32_DIV_S
+                } else {
+                    I32_REM_S
+                });
+                self.clear_above(bits);
+            }
             Binary::MulHighU if bits == Bits::B32 => {
                 self.get_extended(a, false);
                 self.get_extended(b, false);
@@ -1199,6 +1223,16 @@ impl Lowering<'_> {
                     Binary::ShiftLeft => I64_SHL,
                     Binary::ShiftRightU => I64_SHR_U,
                     _ => I64_SHR_S,
+                });
+            }
+            Binary::DivU | Binary::DivS | Binary::RemU | Binary::RemS => {
+                self.get(a);
+                self.get(b);
+                self.code.op(match op {
+                    Binary::DivU => I64_DIV_U,
+                    Binary::DivS => I64_DIV_S,
+                    Binary::RemU => I64_REM_U,
+                    _ => I64_REM_S,
                 });
             }
             _ => {

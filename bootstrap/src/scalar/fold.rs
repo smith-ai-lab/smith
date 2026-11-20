@@ -14,8 +14,9 @@
 use std::collections::{HashMap, HashSet};
 
 use super::eval::{
-    binary, bits_of, compare, float_binary, float_bits_of, float_compare, float_from_int,
-    float_fused, float_mask, float_negate, float_resize, int_from_float, mask, narrow, widen,
+    binary, bits_of, compare, divides_wrongly, float_binary, float_bits_of, float_compare,
+    float_from_int, float_fused, float_mask, float_negate, float_resize, int_from_float, mask,
+    narrow, widen,
 };
 use super::graph::{self, jumps};
 use super::vector::{
@@ -266,7 +267,13 @@ fn folded(mut f: Function) -> Function {
                         continue;
                     }
                     match (known[a.0], known[b.0]) {
-                        (Some(x), Some(y)) if matches!(ty, Type::Int(_)) => {
+                        // A division that is not given what it may be given is not
+                        // worked out: a program that holds one is in a block that
+                        // nothing reaches.
+                        (Some(x), Some(y))
+                            if matches!(ty, Type::Int(_))
+                                && !divides_wrongly(*op, bits_of(ty), x, y) =>
+                        {
                             Some(binary(*op, bits_of(ty), x, y))
                         }
                         _ => None,

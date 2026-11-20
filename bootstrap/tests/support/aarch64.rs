@@ -376,6 +376,21 @@ impl Machine {
             self.set(rd, u64::from(self.get(rn).leading_zeros()));
         } else if w & 0xffe0_fc00 == 0x9b00_7c00 {
             self.set(rd, self.get(rn).wrapping_mul(self.get(rm)));
+        } else if w & 0xffe0_f800 == 0x9ac0_0800 {
+            // udiv and sdiv of 64 bits, which do not trap: a divisor of 0
+            // gives 0, and the least number by -1 gives the least number.
+            let (a, b) = (self.get(rn), self.get(rm));
+            let result = match (w >> 10 & 1 == 1, b) {
+                (_, 0) => 0,
+                (false, _) => a / b,
+                (true, _) => (a as i64).wrapping_div(b as i64) as u64,
+            };
+            self.set(rd, result);
+        } else if w & 0xffe0_8000 == 0x9b00_8000 {
+            // msub xd, xn, xm, xa: xa - xn * xm.
+            let ra = w >> 10 & 31;
+            let product = self.get(rn).wrapping_mul(self.get(rm));
+            self.set(rd, self.get(ra).wrapping_sub(product));
         } else if w & 0xffe0_fc00 == 0x9bc0_7c00 {
             let product = self.get(rn) as u128 * self.get(rm) as u128;
             self.set(rd, (product >> 64) as u64);

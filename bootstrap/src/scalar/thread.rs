@@ -20,7 +20,7 @@
 //! through stays for the jumps that could not be sent past it, and `remove`
 //! takes it away when none is left.
 
-use super::eval::{binary, bits_of, compare, mask, narrow, widen};
+use super::eval::{binary, bits_of, compare, divides_wrongly, mask, narrow, widen};
 use super::{Constant, End, Function, Instruction, Jump, Op, Place, Program, Type, Value};
 
 /// The program with each jump that goes into a block that only chooses sent
@@ -587,7 +587,9 @@ fn resolved(
         let answer = match &i.op {
             Op::Constant(Constant::Int(c)) => Some(c & mask(bits_of(ty))),
             Op::Binary { op, a, b } => match (known(env, *a), known(env, *b)) {
-                (Some(x), Some(y)) if matches!(ty, Type::Int(_)) => {
+                (Some(x), Some(y))
+                    if matches!(ty, Type::Int(_)) && !divides_wrongly(*op, bits_of(ty), x, y) =>
+                {
                     Some(binary(*op, bits_of(ty), x, y))
                 }
                 _ => None,

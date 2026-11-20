@@ -306,6 +306,11 @@ impl Asm {
         });
     }
 
+    /// `cqo`: fills rdx with the sign of rax.
+    pub fn cqo(&mut self) {
+        self.writing(Some(RDX), |a| a.bytes(&[0x48, 0x99]));
+    }
+
     /// `test r64, r64`.
     pub fn test(&mut self, r: Reg) {
         self.writing(None, |a| {
@@ -2288,6 +2293,30 @@ impl<S: System> Writer<'_, S> {
                 asm.shr_imm(RAX, bits as u8);
                 self.finish(asm, result, RAX, false);
             }
+            // The dividend is in rdx:rax, extended to 128 bits as its sign
+            // says, and `div` and `idiv` leave the quotient in rax and what is
+            // left in rdx. The numbers are extended to 64 bits first, so one
+            // instruction serves every size, and the answer is cut to the size.
+            Binary::DivU | Binary::RemU => {
+                self.read_into(asm, RAX, a);
+                let b = self.read(asm, RCX, b);
+                asm.mov32(RDX, 0);
+                asm.group(6, b);
+                let (from, extended) = if op == Binary::DivU {
+                    (RAX, true)
+                } else {
+                    (RDX, true)
+                };
+                self.finish(asm, result, from, extended);
+            }
+            Binary::DivS | Binary::RemS => {
+                self.read_signed_into(asm, RAX, a);
+                let b = self.read_signed(asm, RCX, b);
+                asm.cqo();
+                asm.group(7, b);
+                let from = if op == Binary::DivS { RAX } else { RDX };
+                self.finish(asm, result, from, false);
+            }
             Binary::MulHighS => {
                 let a = self.read_signed(asm, RAX, a);
                 let b = self.read_signed(asm, RCX, b);
@@ -2412,6 +2441,10 @@ impl<S: System> Writer<'_, S> {
                     Binary::Or => asm.or(t, b),
                     Binary::MulHighU
                     | Binary::MulHighS
+                    | Binary::DivU
+                    | Binary::DivS
+                    | Binary::RemU
+                    | Binary::RemS
                     | Binary::ShiftLeft
                     | Binary::ShiftRightU
                     | Binary::ShiftRightS => unreachable!(),

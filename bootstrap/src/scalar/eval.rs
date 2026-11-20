@@ -286,6 +286,21 @@ fn signed(n: u64, bits: Bits) -> i128 {
     (((n << up) as i64) >> up) as i128
 }
 
+/// Whether `op` is a division or a remainder that is not given what it may be
+/// given: a divisor of zero, or, for the signed ones, the least number of the
+/// size divided by -1, whose quotient the size cannot hold. A processor faults
+/// or gives a number that depends on which it is, so the form does not say
+/// what such an instruction does.
+pub(super) fn divides_wrongly(op: Binary, bits: Bits, x: u64, y: u64) -> bool {
+    match op {
+        Binary::DivU | Binary::RemU => y == 0,
+        Binary::DivS | Binary::RemS => {
+            y == 0 || (signed(y, bits) == -1 && signed(x, bits) == -(1i128 << (bits.count() - 1)))
+        }
+        _ => false,
+    }
+}
+
 /// What `op` gives for two integers of the size, as bits of that size. The
 /// evaluator and the pass that folds constants both work it out here.
 pub(super) fn binary(op: Binary, bits: Bits, x: u64, y: u64) -> u64 {
@@ -296,6 +311,18 @@ pub(super) fn binary(op: Binary, bits: Bits, x: u64, y: u64) -> u64 {
         Binary::Mul => x.wrapping_mul(y),
         Binary::MulHighU => ((x as u128 * y as u128) >> size) as u64,
         Binary::MulHighS => ((signed(x, bits) * signed(y, bits)) >> size) as u64,
+        Binary::DivU | Binary::DivS | Binary::RemU | Binary::RemS => {
+            assert!(
+                !divides_wrongly(op, bits, x, y),
+                "{op:?} of {x} and {y} at {size} bits is given a divisor that it may not be"
+            );
+            match op {
+                Binary::DivU => x / y,
+                Binary::RemU => x % y,
+                Binary::DivS => (signed(x, bits) / signed(y, bits)) as u64,
+                _ => (signed(x, bits) % signed(y, bits)) as u64,
+            }
+        }
         Binary::And => x & y,
         Binary::Xor => x ^ y,
         Binary::Or => x | y,
