@@ -6,6 +6,7 @@ status: partial
 built:
   - "`effect e { fn op(a: T = x) -> U }` declares an effect, and each operation is a function with no body that carries the effect, with the parameters, result, and defaults of any function, so a caller lists the effect, whether it calls the operation or a function that carries it, and a default may be left out of a call"
   - "`pub effect` in a module is imported with `use` by its name, and each operation by its own name, and an effect or an operation used with no import is refused as any name is"
+  - "not `pub` on an operation: today every operation of a `pub effect` is imported by its own name"
   - "`console` is declared by `std/console.smith` and `print` is its operation, which a program that reaches `main` with no handler has answered by the target"
   - "the effect's name is a function that takes a lambda for each operation, each taking every parameter of the operation, and the body to run, and gives what the body gives"
   - "an effect that the program declares and lists in `main`, which the target does not provide and no handler answers, is one error at its name in the list that names the effect"
@@ -72,11 +73,35 @@ A program declares its own effects in the same way, so nothing about `time` is s
 
 ```
 pub effect log {
-  fn write(text: str, level: i32 = 0)
+  pub fn write(text: str, level: i32 = 0)
 }
 ```
 
 Written in `app/log.smith`, this effect is imported by another file with `use app.log (log, write)`: importing an effect brings in its name and nothing else, so each operation the file calls is imported by its own name, as [Nothing is imported implicitly](use.md#nothing-is-imported-implicitly) describes. The effects the standard library declares need no import, as [The effects Smith provides](provided-effects.md) says.
+
+## An operation is private unless it is marked pub
+
+An operation follows the rule of everything in a module, as a field of a struct does: it is private unless `pub` is written before it. `pub effect` opens the effect's name, and `pub fn` inside it opens that operation.
+
+```
+use std.console (console, print)
+
+pub effect ledger {
+  fn record(line: str)
+}
+
+pub fn pay(amount: Nat) ! ledger, alloc {
+  record("paid {amount}")
+}
+
+pub fn audit[T](body: fn() -> T ! ledger) -> T ! console {
+  ledger(record: fn(line) { print(line) }, body: body)
+}
+```
+
+Another module imports `ledger`, writes `! ledger` on its own functions, calls `pay`, and runs under `audit`. It cannot call `record`: `use app.ledger (record)` is refused as any private name is. It cannot handle `ledger` either, since a handler names every operation, and one it cannot name it cannot give a function for. So what is recorded is what this module's functions record, and nothing else.
+
+An effect that any program may ask and answer, as `log` above, marks each operation `pub`.
 
 ## The forms
 
@@ -86,5 +111,7 @@ Written in `app/log.smith`, this effect is imported by another file with `use ap
 | `fn op(a: T = x)` in an effect | An operation whose parameter has a default |
 | `e(op: { ... }, body: b)` | `e`, called with a lambda for each operation and then the body, handles it |
 | `pub effect e { ... }` | An effect that other modules may import |
+| `pub fn op(...)` in an effect | An operation that other modules may call, and give a function for in a handler |
+| `fn op(...)` in a `pub effect` | An operation that only its own module calls and handles |
 
 Next: [Handlers](handlers.md)

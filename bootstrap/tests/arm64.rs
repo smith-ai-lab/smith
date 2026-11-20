@@ -28,14 +28,27 @@ pub const ONCE: &[Test] = &[
     ),
 ];
 
+/// The targets that the compiler builds for arm64 that the machine in
+/// `aarch64` runs, which are those whose executable for a function that does
+/// nothing is one that it runs. Finding them by that costs a function that does
+/// nothing for each target, and not the program of a test for each, which the
+/// test of a large frame builds in 250 ms for each target, and keeps for one.
+fn arm64_targets() -> &'static [Target] {
+    static TARGETS: std::sync::OnceLock<Vec<Target>> = std::sync::OnceLock::new();
+    TARGETS.get_or_init(|| {
+        let nothing = holding(1);
+        Target::ALL
+            .iter()
+            .copied()
+            .filter(|t| aarch64::is_executable(&t.emit(&nothing)))
+            .collect()
+    })
+}
+
 /// The executables for arm64 of the program, one for each target the
 /// compiler builds for arm64 that the machine in `aarch64` runs.
 fn executables(program: &scalar::Program) -> Vec<Vec<u8>> {
-    Target::ALL
-        .iter()
-        .map(|t| t.emit(program))
-        .filter(|bytes| aarch64::is_executable(bytes))
-        .collect()
+    arm64_targets().iter().map(|t| t.emit(program)).collect()
 }
 
 fn program(function: scalar::Function) -> scalar::Program {

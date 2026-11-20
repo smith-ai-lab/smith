@@ -82,11 +82,17 @@ impl<'a> Lowering<'a> {
         call: &'a Call,
         env: &[Ty],
     ) -> (Ty, Vec<form::Value>) {
-        let a = self.expr(out, &call.args[0].value, env).1[0];
-        let b = self.expr(out, &call.args[1].value, env).1[0];
+        let (ta, a) = self.expr(out, &call.args[0].value, env);
+        let (tb, b) = self.expr(out, &call.args[1].value, env);
+        if let Some(mixed) = Mixed::of(&ta, &tb) {
+            return (
+                self.typed.defs.bool_ty(),
+                vec![mixed.stand(out, a[0], b[0]).0],
+            );
+        }
         (
             self.typed.defs.bool_ty(),
-            vec![out.compare(form::Compare::Equal, a, b)],
+            vec![out.compare(form::Compare::Equal, a[0], b[0])],
         )
     }
 
@@ -136,10 +142,15 @@ impl<'a> Lowering<'a> {
                 _ => return None,
             });
         }
-        // Both sides are the same range, the first as it is given here.
+        // Both sides are the same range, the first as it is given here, or
+        // two that no type of 64 bits holds.
         let (ty, a) = self.expr(out, &call.args[0].value, env);
         let a = a[0];
-        let b = self.expr(out, &call.args[1].value, env).1[0];
+        let (other, b) = self.expr(out, &call.args[1].value, env);
+        let b = b[0];
+        if let Some(mixed) = Mixed::of(&ty, &other) {
+            return self.mixed_comparison(out, mixed, answers, (a, b));
+        }
         let less = match ty {
             Ty::Int(t) if t.signed() => form::Compare::LessS,
             _ => form::Compare::LessU,
@@ -158,6 +169,70 @@ impl<'a> Lowering<'a> {
         }
         let one = out.int(form::Bits::B8, 1);
         Some(vec![out.binary(form::Binary::Xor, below, one)])
+    }
+
+    /// What the comparison of two ranges that no type of 64 bits holds, as the
+    /// answers of `less`, `equal`, and `greater` say, gives: the numbers of the
+    /// one range that has negative ones are below those of the other when it
+    /// has a negative number, and the two are otherwise compared as numbers
+    /// that are not negative.
+    fn mixed_comparison(
+        &mut self,
+        out: &mut Out<'a>,
+        mixed: Mixed,
+        answers: [Option<bool>; 3],
+        (a, b): (form::Value, form::Value),
+    ) -> Option<Vec<form::Value>> {
+        let (equal, below) = mixed.stand(out, a, b);
+        // The answer for each of `less`, `equal`, and `greater`.
+        let said = |out: &mut Out<'a>, answer: Option<bool>| {
+            out.int(form::Bits::B8, i128::from(answer == Some(true)))
+        };
+        let (l, e, g) = (
+            said(out, answers[0]),
+            said(out, answers[1]),
+            said(out, answers[2]),
+        );
+        let inner = out.choose(equal, e, g);
+        Some(vec![out.choose(below, l, inner)])
+    }
+
+    /// Whether the call is `Ord::compare` of two ranges that no type of 64 bits
+    /// holds, which is a call of its own and not a `match` on `<` or `>=`.
+    pub(super) fn compares_mixed(&self, call: &Call, env: &[Ty]) -> bool {
+        matches!(&call.qualifier, Some((q, _)) if q == "Ord")
+            && call.callee == "compare"
+            && call.args.len() == 2
+            && Mixed::of(
+                &self.typed.type_of(&call.args[0].value, env),
+                &self.typed.type_of(&call.args[1].value, env),
+            )
+            .is_some()
+    }
+
+    /// Lowers `Ord::compare` of two ranges that no type of 64 bits holds, as the
+    /// `Order` of the numbers.
+    pub(super) fn compare_mixed(
+        &mut self,
+        out: &mut Out<'a>,
+        call: &'a Call,
+        env: &[Ty],
+    ) -> (Ty, Vec<form::Value>) {
+        let defs = self.typed.defs;
+        let (ta, a) = self.expr(out, &call.args[0].value, env);
+        let (tb, b) = self.expr(out, &call.args[1].value, env);
+        let mixed = Mixed::of(&ta, &tb).expect("checked");
+        let (equal, below) = mixed.stand(out, a[0], b[0]);
+        let case = |out: &mut Out<'a>, name: &str| {
+            let k = defs.case_of(defs.order, name).expect("a case");
+            out.int(form::Bits::B8, k as i128)
+        };
+        let (less, same, greater) = (case(out, "less"), case(out, "equal"), case(out, "greater"));
+        let inner = out.choose(equal, same, greater);
+        (
+            Ty::Enum(defs.order, Vec::new()),
+            vec![out.choose(below, less, inner)],
+        )
     }
 
     /// Lowers a call of `narrow` or one of its relatives.
@@ -419,9 +494,9 @@ impl<'a> Lowering<'a> {
     }
 
     /// The value `a`, a whole number of type `from`, taken to type `to`,
-    /// which does not hold all of its values: as `narrow` and `wrapping_narrow`
-    /// do, which keep the bits, as `saturating_narrow` does, which gives the
-    /// nearest value that fits, and as `checked_narrow` does, which gives an
+    /// which does not hold all of its values: as `wrapping_narrow`
+    /// does, which keeps the bits, as `clamp` does, which gives the
+    /// nearest value that fits, and as `narrow` does, which gives an
     /// `Option` that holds the value if it fits. A narrowing to a smaller type
     /// is one instruction, and to a type of the same size none.
     pub(super) fn narrowing(
@@ -435,7 +510,7 @@ impl<'a> Lowering<'a> {
         let defs = self.typed.defs;
         let (wide, narrow) = (bits_of(from), bits_of(to));
         let r = out.resize(from.signed(), a, narrow);
-        if matches!(narrowing, Narrowing::Plain | Narrowing::Wrapping) {
+        if narrowing == Narrowing::Wrapping {
             return vec![r];
         }
         let less = if from.signed() { LessS } else { LessU };
@@ -491,4 +566,60 @@ pub(super) fn number_function(f: &Function) -> Option<(&'static str, &'static st
     let op = ["add", "sub", "mul"].into_iter().find(|o| *o == op)?;
     (f.body.len() == 1 && f.params.len() == 2 && (of_prelude(f.pos) || of_std(f.pos)))
         .then_some((kind, op))
+}
+
+/// Two ranges that no type of 64 bits holds: one has negative numbers and is
+/// kept as an `i64`, and the other has numbers from 2^63 up and is kept as a
+/// `u64`.
+#[derive(Clone, Copy)]
+pub(super) struct Mixed {
+    /// Whether the first of the two is the one with negative numbers.
+    first_signed: bool,
+}
+
+impl Mixed {
+    /// Whether the two types are such ranges.
+    pub(super) fn of(first: &Ty, second: &Ty) -> Option<Mixed> {
+        let (Ty::Int(a), Ty::Int(b)) = (first, second) else {
+            return None;
+        };
+        if a == b || a.hull(*b).is_some() {
+            return None;
+        }
+        Some(Mixed {
+            first_signed: a.signed(),
+        })
+    }
+
+    /// Whether the numbers are equal, and whether the first is below the
+    /// second, as bytes that are 0 or 1.
+    fn stand<'a>(
+        self,
+        out: &mut Out<'a>,
+        a: form::Value,
+        b: form::Value,
+    ) -> (form::Value, form::Value) {
+        let (signed, unsigned) = if self.first_signed { (a, b) } else { (b, a) };
+        let signed = out.resize(true, signed, form::Bits::B64);
+        let unsigned = out.resize(false, unsigned, form::Bits::B64);
+        let zero = out.int(form::Bits::B64, 0);
+        let one = out.int(form::Bits::B8, 1);
+        let negative = out.compare(form::Compare::LessS, signed, zero);
+        let not_negative = out.binary(form::Binary::Xor, negative, one);
+        let same_bits = out.compare(form::Compare::Equal, signed, unsigned);
+        let equal = out.binary(form::Binary::And, not_negative, same_bits);
+        // The signed number is below the unsigned one when it is negative, and
+        // otherwise as the bits say; the unsigned one is below it when the
+        // signed one is not negative and the bits say so.
+        if self.first_signed {
+            let below_bits = out.compare(form::Compare::LessU, signed, unsigned);
+            (equal, out.binary(form::Binary::Or, negative, below_bits))
+        } else {
+            let below_bits = out.compare(form::Compare::LessU, unsigned, signed);
+            (
+                equal,
+                out.binary(form::Binary::And, not_negative, below_bits),
+            )
+        }
+    }
 }

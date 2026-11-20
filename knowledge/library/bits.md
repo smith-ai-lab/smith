@@ -1,7 +1,7 @@
 ---
 type: specification
 title: Bit functions
-description: The functions of std.bits, which work on the bits of a range that fills a size through the Bits trait, and the names of those sizes.
+description: The functions of std.bits, which work on the bits of a whole number and give the exact range of what they make, the Bits trait of the ranges that fill a size, and the names of those sizes.
 status: partial
 built:
   - "`use std.bits (u8, u16, u32, u64, i8, i16, i32, i64)`, or any of them, brings the types of those names, which a file that writes one with no import is refused, and `Bits` with its six functions"
@@ -26,10 +26,10 @@ fn second_byte(x: u32) -> u32 { bit_and(shift_right(x, 8), 0xff) }
 | --- | --- |
 | `u8`, `u16`, `u32`, `u64` | The ranges `0..256`, `0..65536`, `0..4294967296`, and `0..18446744073709551616` |
 | `i8`, `i16`, `i32`, `i64` | The ranges `-128..128` up to the 64-bit signed range |
-| `Bits` | The trait, which each range that fills a size has, and no other |
-| `bit_and`, `bit_or`, `bit_xor` | The bits of two numbers joined, place by place |
+| `Bits` | The trait, which each range that fills a size has, and no other, for `bit_not` and for a number that may be negative |
+| `bit_and`, `bit_or`, `bit_xor` | The bits of two numbers joined, place by place, with the exact range of the result for numbers that are not negative |
 | `bit_not` | Every bit turned over |
-| `shift_left`, `shift_right` | The bits moved by a number of places |
+| `shift_left`, `shift_right` | The bits moved by a number of places, none dropped |
 
 A name of a size is another way to write a range, so `u8` is the `Byte`, `u64` is the `Nat`, and `i64` is the `Int`, as [Number types](../language/number-types.md#three-names) says. A file that works with sizes imports the names it uses. A function is imported by its own name, as any function of a trait is, so a file that only calls `bit_and` lists `bit_and` alone.
 

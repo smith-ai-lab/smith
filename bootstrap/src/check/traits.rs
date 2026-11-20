@@ -439,7 +439,7 @@ impl<'a> Defs<'a> {
         };
         let written = written_name(name);
         (scope.iter())
-            .filter_map(|t| self.trait_names.get(t.as_str()).copied())
+            .filter_map(|t| self.trait_named(t))
             .filter(|&j| j != k)
             .filter_map(|j| Some((j, trait_function(&self.file.traits[j], written)?)))
             .collect()

@@ -37,5 +37,6 @@ Both take a value of any range, or a float, as [A float entering a range](../lan
 | Multiplies | `wrapping_mul` |
 | Divides | `wrapping_div` |
 | Gives what is left over | `wrapping_rem` |
+| Shifts the bits up | `wrapping_shift_left` |
 
-Each function that wraps is a function of the ranges that fill a size exactly, `0..256`, `0..65536`, and the others that [Bit operations](../language/bits.md#the-ranges-that-fill-a-size) lists, and of no other range. A `Nat` and an `Int` fill a size, so each has them. The functions on bits are in [`std.bits`](bits.md).
+Each function that wraps is a function of the ranges that fill a size exactly, `0..256`, `0..65536`, and the others that [Bit operations](../language/bits.md#a-number-that-may-be-negative-and-bit_not) lists, and of no other range. A `Nat` and an `Int` fill a size, so each has them. The functions on bits are in [`std.bits`](bits.md).

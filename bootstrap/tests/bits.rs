@@ -18,20 +18,20 @@ pub const ONCE: &[Test] = &[
         a_function_of_bits_is_one_instruction_and_no_call,
     ),
     (
-        "narrow_is_one_instruction_or_none_and_no_call",
-        narrow_is_one_instruction_or_none_and_no_call,
+        "going_to_another_size_is_one_instruction_or_none_and_no_call",
+        going_to_another_size_is_one_instruction_or_none_and_no_call,
     ),
     (
         "a_shift_compiles_exactly_when_its_amount_is_proven_below_the_bits_of_the_type",
         a_shift_compiles_exactly_when_its_amount_is_proven_below_the_bits_of_the_type,
     ),
     (
-        "narrow_compiles_exactly_when_the_value_is_proven_to_fit",
-        narrow_compiles_exactly_when_the_value_is_proven_to_fit,
+        "a_value_goes_to_a_narrower_type_exactly_when_it_is_proven_to_fit",
+        a_value_goes_to_a_narrower_type_exactly_when_it_is_proven_to_fit,
     ),
     (
-        "what_arith_knows_of_a_value_it_knows_of_its_narrow_and_of_no_other_narrowing",
-        what_arith_knows_of_a_value_it_knows_of_its_narrow_and_of_no_other_narrowing,
+        "what_arith_knows_of_a_value_that_goes_to_a_narrower_type_and_of_no_narrowing",
+        what_arith_knows_of_a_value_that_goes_to_a_narrower_type_and_of_no_narrowing,
     ),
     (
         "narrow_to_a_type_that_holds_every_value_is_an_error_that_says_to_convert",
@@ -193,11 +193,11 @@ fn narrowings() -> Vec<(Int, Int)> {
     out
 }
 
-/// For every pair of types that `narrow` goes between, it adds to a function
-/// that gives a number of the type it goes to one `narrow` or `widen`, or
-/// none when both have the same size, and `wrapping_narrow` does the same,
-/// which neither is a call.
-fn narrow_is_one_instruction_or_none_and_no_call() {
+/// For every pair of types that `narrow` goes between, a value that is proven
+/// to fit is one `narrow` or `widen` added to a function that gives a number of
+/// the type it goes to, or none when both have the same size, and
+/// `wrapping_narrow` does the same, which neither is a call.
+fn going_to_another_size_is_one_instruction_or_none_and_no_call() {
     for (from, to) in narrowings() {
         let requires = format!("  requires {}\n", bounds(from, to).join(" and "));
         let params = format!("x: {}", from.name);
@@ -207,13 +207,12 @@ fn narrow_is_one_instruction_or_none_and_no_call() {
             std::cmp::Ordering::Greater => vec![("Widen", 1), ("Constant", -1)],
             std::cmp::Ordering::Equal => vec![("Constant", -1)],
         };
-        for function in ["narrow", "wrapping_narrow"] {
-            let body = format!("{function}(x)");
-            let program = with(&params, to.name, &requires, &body, "1");
+        for body in ["x", "wrapping_narrow(x)"] {
+            let program = with(&params, to.name, &requires, body, "1");
             assert_eq!(
                 difference(&base, &program),
                 expected(&kind),
-                "{function} from {} to {}",
+                "{body} from {} to {}",
                 from.name,
                 to.name
             );
@@ -250,12 +249,12 @@ fn a_shift_compiles_exactly_when_its_amount_is_proven_below_the_bits_of_the_type
     }
 }
 
-/// `narrow` compiles when the value is in the range of the type it goes to,
-/// by a `requires`, and does not when either side of the range is made one
-/// wider, and the relatives compile either way.
-fn narrow_compiles_exactly_when_the_value_is_proven_to_fit() {
+/// A value goes to the type it goes to when it is in its range, by a
+/// `requires`, and does not when either side of the range is made one wider,
+/// and `wrapping_narrow` and `clamp` compile either way.
+fn a_value_goes_to_a_narrower_type_exactly_when_it_is_proven_to_fit() {
     for (from, to) in narrowings() {
-        let make = |function: &str, requires: &str| {
+        let make = |body: &str, requires: &str| {
             let requires = if requires.is_empty() {
                 String::new()
             } else {
@@ -265,14 +264,14 @@ fn narrow_compiles_exactly_when_the_value_is_proven_to_fit() {
                 &format!("x: {}", from.name),
                 to.name,
                 &requires,
-                &format!("{function}(x)"),
+                body,
                 "1",
             )
         };
         let exact = bounds(from, to);
         assert!(
-            compiles(&make("narrow", &exact.join(" and "))).is_ok(),
-            "narrow from {} to {} in its range",
+            compiles(&make("x", &exact.join(" and "))).is_ok(),
+            "a value of {} goes to {} in its range",
             from.name,
             to.name
         );
@@ -292,18 +291,18 @@ fn narrow_compiles_exactly_when_the_value_is_proven_to_fit() {
                     }
                 })
                 .collect();
-            let unproven = compiles(&make("narrow", &widened.join(" and ")));
+            let unproven = compiles(&make("x", &widened.join(" and ")));
             assert!(
                 unproven.is_err(),
-                "narrow from {} to {} with `{}`",
+                "a value of {} goes to {} with `{}`",
                 from.name,
                 to.name,
                 widened.join(" and ")
             );
         }
-        for function in ["wrapping_narrow", "saturating_narrow"] {
+        for function in ["wrapping_narrow", "clamp"] {
             assert!(
-                compiles(&make(function, "")).is_ok(),
+                compiles(&make(&format!("{function}(x)"), "")).is_ok(),
                 "{function} from {} to {}",
                 from.name,
                 to.name
@@ -318,10 +317,15 @@ fn narrow_compiles_exactly_when_the_value_is_proven_to_fit() {
 fn narrow_to_a_type_that_holds_every_value_is_an_error_that_says_to_convert() {
     for from in INTS {
         for to in INTS.iter().filter(|t| t.holds_all(*from)) {
-            for function in ["narrow", "wrapping_narrow", "saturating_narrow"] {
+            for function in ["narrow", "wrapping_narrow", "clamp"] {
+                let gives = if function == "narrow" {
+                    format!("Option[{}]", to.name)
+                } else {
+                    to.name.to_string()
+                };
                 let source = with(
                     &format!("x: {}", from.name),
-                    to.name,
+                    &gives,
                     "",
                     &format!("{function}(x)"),
                     "1",
@@ -352,17 +356,17 @@ fn narrow_to_a_type_that_holds_every_value_is_an_error_that_says_to_convert() {
 /// For every pair of types that `narrow` goes between, a fact about a value
 /// that fits is known of what `narrow` gives, so a function that needs it
 /// of the result is called, and one that needs a fact that is false of the
-/// value is refused. `wrapping_narrow` and `saturating_narrow` give a number
+/// value is refused. `wrapping_narrow` and `clamp` give a number
 /// that `arith` knows nothing of when the value is not proven to fit, so
 /// each is refused whatever is known of the value.
-fn what_arith_knows_of_a_value_it_knows_of_its_narrow_and_of_no_other_narrowing() {
+fn what_arith_knows_of_a_value_that_goes_to_a_narrower_type_and_of_no_narrowing() {
     for (from, to) in narrowings() {
         let k = to.max().min(from.max()) / 2;
         let mut known = bounds(from, to);
         known.push(format!("x <= {k}"));
-        let program = |function: &str, needed: i128, requires: &str| {
+        let program = |value: &str, needed: i128, requires: &str| {
             with_header(format!(
-                "fn g(y: {to_t}) -> {to_t}\n  requires y <= {needed}\n{{\n  y\n}}\n\nfn f(x: {from_t}) -> {to_t}\n{requires}{{\n  y: {to_t} = {function}(x)\n  g(y)\n}}\n\nfn main() ! console, alloc {{\n  print(\"{{f(1)}}\")\n}}\n",
+                "fn g(y: {to_t}) -> {to_t}\n  requires y <= {needed}\n{{\n  y\n}}\n\nfn f(x: {from_t}) -> {to_t}\n{requires}{{\n  y: {to_t} = {value}\n  g(y)\n}}\n\nfn main() ! console, alloc {{\n  print(\"{{f(1)}}\")\n}}\n",
                 to_t = to.name,
                 from_t = from.name,
             ))
@@ -370,17 +374,17 @@ fn what_arith_knows_of_a_value_it_knows_of_its_narrow_and_of_no_other_narrowing(
         let requires = format!("  requires {}\n", known.join(" and "));
         let name = format!("{} to {}", from.name, to.name);
         assert!(
-            compiles(&program("narrow", k, &requires)).is_ok(),
-            "narrow from {name}"
+            compiles(&program("x", k, &requires)).is_ok(),
+            "a value from {name}"
         );
         assert!(
-            compiles(&program("narrow", k - 1, &requires)).is_err(),
-            "narrow from {name} when the fact is false of the value"
+            compiles(&program("x", k - 1, &requires)).is_err(),
+            "a value from {name} when the fact is false of the value"
         );
         // The same fact is known of the value, and nothing of its narrowing.
-        for function in ["wrapping_narrow", "saturating_narrow"] {
+        for function in ["wrapping_narrow", "clamp"] {
             assert!(
-                compiles(&program(function, k, &requires)).is_err(),
+                compiles(&program(&format!("{function}(x)"), k, &requires)).is_err(),
                 "{function} from {name}"
             );
         }

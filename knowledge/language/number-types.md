@@ -10,11 +10,11 @@ built:
   - "`a..b` written as a type, with whole numbers for its bounds, held by a parameter, a result, a field, a list, an `Option`, and a tuple, an empty range as a type, a range of more than 64 bits refused, a literal that must be in the range, and `==`, `<`, and the rest between two of one range, and the text of one. A range is one type of its bounds, so one range meets another only where their bounds are the same, and a range whose second bound is below its first refused"
   - "a range taken where a range that holds every number of it is needed, with nothing written, at a binding, a `var`, an argument, a field, an item of a list, a result, and a block of an `if` or a `match` given where a type is needed, kept at the size of the wider range, and the smallest range that holds the blocks of an `if` or a `match` that give ranges where no type is needed"
   - "a range taken where a narrower one is needed, at the same places, which compiles when a condition or a `requires` shows that it fits, and is refused otherwise with an error that says what could not be proven"
-  - "`==`, `!=`, `<`, `<=`, `>`, and `>=` between two different ranges, as the numbers they hold are, where one type of 64 bits holds the numbers of both"
+  - "`==`, `!=`, `<`, `<=`, `>`, and `>=` between two different ranges, as the numbers they hold are, whatever their bounds, among them an `Int` and a `Nat`, which no type of 64 bits holds both of"
   - "a range whose bound is the name of a parameter, `0..n` or `m..256`, as the type of a parameter: the body knows that the parameter is below `n` or at least `m`, as a `requires` says, and a call compiles when its argument is shown to be, and is the empty type where `n` is not above the first bound"
   - "a name for a bound in the type of a result, as `0..n` or `m..256`, which the function is shown to give and a caller knows, and in the type of a binding made with `=`, which is shown where it is written and known wherever the name is used, and a name in the type of a field, of a `var`, or inside another type refused with the reason, and a `var` or an unbound name refused as a bound"
   - "the `size` of a name as a bound, `0..xs.size` or `xs.size..256`, wherever a name is a bound, where `xs` is a `List` or a `Slice` that is a parameter or an `=` binding, and no other field and no bound that is worked out, such as `0..n + 1` or `0..g.rows`, which is refused with \"a bound is a whole number, a name, or the `size` of a name\""
-  - "not the `size` of a `str` or of an array as a bound, as no fact is known of the size of a text, and a comparison of two ranges that no type of 64 bits holds"
+  - "not the `size` of a `str` or of an array as a bound, as no fact is known of the size of a text"
 ---
 
 # Number types

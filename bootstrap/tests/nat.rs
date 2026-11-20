@@ -179,8 +179,7 @@ fn a_loop_over_the_size_gives_a_nat_that_indexes_and_no_other_type_indexes() {
 /// `+`, `-`, and `*` of two numbers give the exact range of the result where a
 /// type holds it, and the result is then taken where it is needed only if it
 /// is shown to fit. Where no type holds it, the two sides must be of one type,
-/// and are refused if they are not. A comparison takes any two ranges, and is
-/// refused only where no type holds the numbers of both.
+/// and are refused if they are not. A comparison takes any two ranges.
 fn an_operator_between_two_types_compiles_exactly_when_they_are_one_type_for_nat_and_every_whole_number_type()
 {
     const COMPARE: [&str; 6] = ["==", "!=", "<", "<=", ">", ">="];
@@ -223,11 +222,9 @@ fn an_operator_between_two_types_compiles_exactly_when_they_are_one_type_for_nat
                 ))
             };
             if compared {
-                // The numbers of both fit 64 bits, signed when one is.
-                let (low, high) = (a.min.min(b.min), a.max.max(b.max));
-                let held = low >= i64::MIN as i128
-                    && high <= if low < 0 { i64::MAX as i128 } else { u64::MAX as i128 };
-                assert_eq!(compiles(&source), held, "for\n{source}");
+                // Any two ranges are compared, whether or not one type of 64 bits
+                // holds the numbers of both.
+                assert!(compiles(&source), "for\n{source}");
                 continue;
             }
             assert_eq!(compiles(&source), expected, "for\n{source}");

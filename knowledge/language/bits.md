@@ -1,11 +1,11 @@
 ---
 type: specification
 title: Bit operations
-description: The functions that and, or, xor, and not the bits of a range that fills a size and shift them, with a shift proven to stay inside the range.
+description: The functions that and, or, xor, and shift the bits of a whole number and give the exact range of what they make, as arithmetic does, and what a number that may be negative and bit_not ask of a range.
 status: partial
 built:
   - "`bit_and`, `bit_or`, `bit_xor`, `bit_not`, `shift_left`, and `shift_right` on `u8` to `u64` and `i8` to `i64`, a shift compiling when `arith` proves that its amount is below the number of bits"
-  - "not a range as a type, or a range that fills a size written as a range"
+  - "not a range that does not fill a size given to a bit function, the exact range as the type of what one gives, a `shift_left` that drops no bit, or `wrapping_shift_left`: today each takes and gives a range that fills a size, what `arith` knows of the result is a fact and not its type, and `shift_left` drops the bits that leave the top"
 ---
 
 # Bit operations
@@ -23,9 +23,33 @@ trait Bits[T] {
 }
 ```
 
-## The ranges that fill a size
+## A number that is not negative
 
-`Bits` is implemented for the ranges that are all the values of 8, 16, 32, or 64 bits, signed or not, and for no other range.
+`bit_and`, `bit_or`, `bit_xor`, `shift_left`, and `shift_right` take whole numbers of any range that holds no negative number, and give the exact range of what they make, from the least number they can give to the greatest, as [arithmetic](arithmetic.md) does. So what they give enters a narrower range with nothing written, wherever its range fits.
+
+```
+use std.bits (bit_and, bit_or, shift_right)
+
+fn low(x: Nat) -> Byte { bit_and(x, 255) }
+
+fn lead(code: 0..2048) -> Byte { bit_or(192, shift_right(code, 6)) }
+
+fn rest(code: 0..2048) -> Byte { bit_or(128, bit_and(code, 63)) }
+```
+
+`bit_and(x, 255)` is a `0..256` whatever `x` is. `shift_right(code, 6)` is a `0..32`, and `bit_or(192, ...)` of it is a `192..224`. Each fits a `Byte`. `lead(1000)` is `207` and `rest(1000)` is `168`.
+
+- `bit_and(a, b)` is never above `a` and never above `b`.
+- `bit_or(a, b)` is never below `a` or `b`, and never above `a + b`.
+- `bit_xor(a, b)` is never above `a + b`.
+- `shift_right(a, by)` is `a` divided by two to the `by`, rounded down.
+- `shift_left(a, by)` is `a` times two to the `by`.
+
+The bits of a number that is not negative are the same however wide it is kept, so the two numbers need not be of one range: `bit_and(a, c)` of a `Byte` and a `0..65536` is a `0..256`.
+
+## A number that may be negative, and bit_not
+
+The bits of a negative number depend on how wide it is kept, and so do the bits that `bit_not` turns on. So `bit_not`, and each of the other functions when a number it is given may be negative, takes a range that is all the values of 8, 16, 32, or 64 bits, and gives that range.
 
 | Unsigned | Signed |
 | --- | --- |
@@ -34,38 +58,17 @@ trait Bits[T] {
 | `0..4294967296` | `-2147483648..2147483648` |
 | `0..18446744073709551616`, the `Nat` | `-9223372036854775808..9223372036854775808`, the `Int` |
 
-The names of these are the sizes, `u8` to `i64`, in [`std.bits`](../library/bits.md). A function over any other range is refused, as a range of fewer values has bits that no function can leave alone.
+The names of these are the sizes, `u8` to `i64`, in [`std.bits`](../library/bits.md). These are the functions of the `Bits` trait above, which each of these ranges has and no other range has.
 
 ```
-use std.bits (bit_and)
+use std.bits (bit_not)
 
-fn mask(x: 0..101) -> 0..101 { bit_and(x, 7) }
+fn flip(x: 0..101) -> 0..101 { bit_not(x) }
 ```
 
-This is refused, as `0..101` does not fill a size. A foreign declaration is written with these ranges, and they are always kept as themselves, as [How a whole number is kept](../compiler.md#how-a-whole-number-is-kept) says.
+This is refused, as `0..101` does not fill a size, and no function can say which bits above it to turn. Here the two numbers are of one range, written the same, as widening a number that may be negative would change what the function means.
 
-## Two values of one range
-
-A bit function takes values of one range, written the same. A wider range is not accepted for a narrower one here, as it is elsewhere, since widening one value would change what the function means.
-
-```
-use std.bits (bit_and)
-
-fn mix(a: Byte, c: 0..65536) -> 0..65536 { bit_and(a, c) }
-```
-
-This is refused, as `a` and `c` are of two ranges. The fix is to bind the narrower with the type of the other.
-
-```
-use std.bits (bit_and)
-
-fn mix(a: Byte, c: 0..65536) -> 0..65536 {
-  wide: 0..65536 = a
-  bit_and(wide, c)
-}
-```
-
-A literal takes the range of the other value, as every literal takes the range that is expected, so `bit_and(x, 0xff)` of a `u32` is a `u32` with a `u32` mask.
+`shift_left` of a number that may be negative is refused unless [`arith`](arith.md) proves that no bit is dropped, and `wrapping_shift_left` drops them.
 
 ## And, or, xor, and not
 
@@ -102,11 +105,14 @@ This prints `120`, which is `0x78`.
 
 ## Shifting
 
-`shift_left` moves the bits up by `by` places, and `shift_right` moves them down. `shift_left` drops the bits that leave the top. `shift_right` keeps the sign of a signed number and fills an unsigned one with zeros.
+`shift_left` moves the bits up by `by` places, and `shift_right` moves them down. `shift_left` drops no bit: it is `a` times two to the `by`, and where that may not fit the range it goes to it is refused, as a product is. `shift_right` keeps the sign of a signed number and fills an unsigned one with zeros.
+
+A shift that drops the bits that leave the top is `wrapping_shift_left` of [`std.int`](../library/int.md), a function of the ranges that fill a size, as `wrapping_mul` is. Nothing wraps unless a function that wraps is called.
 
 ```
 use std.bits (bit_and, i8, shift_left, shift_right, u32)
 use std.console (console, print)
+use std.int (wrapping_shift_left)
 
 fn second_byte(x: u32) -> u32 { bit_and(shift_right(x, 8), 0xff) }
 
@@ -116,41 +122,41 @@ fn main() ! console, alloc {
   s: i8 = -8
   print("{second_byte(0x12345678)}")
   print("{shift_left(a, 2)} {shift_right(a, 2)}")
-  print("{shift_left(u, 1)} {shift_right(u, 1)}")
+  print("{wrapping_shift_left(u, 1)} {shift_left(u, 1)} {shift_right(u, 1)}")
   print("{shift_left(s, 1)} {shift_right(s, 1)}")
 }
 ```
 
-This prints `86`, `48 3`, `224 120`, and `-16 -4`. The `240` of `u` loses its top bit going left, and a zero comes in at the top going right. The `-8` of `s` stays negative going right.
+This prints `86`, `48 3`, `224 480 120`, and `-16 -4`. The `240` of `u` loses its top bit in `wrapping_shift_left` and is `480` in `shift_left`, whose range is `0..511`, and a zero comes in at the top going right. The `-8` of `s` stays negative going right.
 
 ## An amount that must be proven
 
-A shift compiles only when `by` is proven to be below the number of bits in the range, as an index is proven below a size. Nothing tests it when the program runs.
+A shift compiles only when `by` is proven to be below 64 for a number that is not negative, and below the number of bits in the range for `wrapping_shift_left` and for a number that may be negative, as an index is proven below a size. Nothing tests it when the program runs.
 
 ```
-use std.bits (shift_left, u32)
+use std.bits (shift_right, u32)
 
-fn up(x: u32, by: Byte) -> u32 {
-  shift_left(x, by)
+fn down(x: u32, by: Byte) -> u32 {
+  shift_right(x, by)
 }
 ```
 
-This is refused: `by` may be 255, which a shift of a `u32` does not allow. A condition proves it for the block it guards.
+This is refused: `by` may be 255, which no shift allows. A condition proves it for the block it guards.
 
 ```
-use std.bits (shift_left, u32)
+use std.bits (shift_right, u32)
 use std.console (console, print)
 
-fn up(x: u32, by: Byte) -> u32 {
-  if by < 32 { shift_left(x, by) } else { 0 }
+fn down(x: u32, by: Byte) -> u32 {
+  if by < 64 { shift_right(x, by) } else { 0 }
 }
 
 fn main() ! console, alloc {
-  print("{up(1, 4)} {up(1, 40)}")
+  print("{down(256, 4)} {down(256, 70)}")
 }
 ```
 
-This prints `16 0`. An amount that is a number is proven by itself, so `shift_left(x, 8)` on a `Byte` is refused, as 8 is not below 8.
+This prints `16 0`. An amount that is a number is proven by itself, so `wrapping_shift_left(x, 8)` on a `Byte` is refused, as 8 is not below 8.
 
 ## Packing small numbers
 
@@ -168,10 +174,6 @@ fn main() ! console, alloc {
 
 This prints `29`. The range of `reg * 8 + rm` is `0..64`, which is the result.
 
-## What is known of a result
-
-What `bit_and`, `bit_or`, `bit_xor`, and the shifts give has a range that `arith` knows, so `bit_and(x, 31) + 200` of a `Byte` fits a `Byte`. [What arith proves](arith.md#what-it-starts-from) says what is known of each.
-
 ## The forms
 
 | Written | Is |
@@ -180,8 +182,10 @@ What `bit_and`, `bit_or`, `bit_xor`, and the shifts give has a range that `arith
 | `bit_or(a, b)` | The bits set in either |
 | `bit_xor(a, b)` | The bits set in one only |
 | `bit_not(a)` | Every bit turned around |
-| `shift_left(a, by)` | The bits moved up, those past the top dropped |
+| `shift_left(a, by)` | The bits moved up, none dropped: `a` times two to the `by` |
+| `wrapping_shift_left(a, by)` | The bits moved up, those past the top dropped, for a range that fills a size |
 | `shift_right(a, by)` | The bits moved down, filled with the sign or with zeros |
-| Any of them on a range that does not fill a size | Refused |
+| Any of them on numbers that are not negative | The exact range of the result |
+| `bit_not`, or any of them on a number that may be negative, on a range that does not fill a size | Refused |
 
 Next: [Conversion](conversion.md)

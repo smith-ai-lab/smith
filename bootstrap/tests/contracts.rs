@@ -28,8 +28,12 @@ pub const ONCE: &[Test] = &[
         a_function_compiles_exactly_when_what_it_returns_satisfies_every_ensures,
     ),
     (
-        "after_a_call_what_it_ensures_is_a_fact_so_calls_chain_exactly_as_far_as_the_numbers_allow",
-        after_a_call_what_it_ensures_is_a_fact_so_calls_chain_exactly_as_far_as_the_numbers_allow,
+        "after_a_call_what_it_ensures_is_a_fact_so_calls_chain_exactly_as_far_as_the_numbers_allow_part_1_of_2",
+        || after_a_call_what_it_ensures_is_a_fact_so_calls_chain_exactly_as_far_as_the_numbers_allow(0),
+    ),
+    (
+        "after_a_call_what_it_ensures_is_a_fact_so_calls_chain_exactly_as_far_as_the_numbers_allow_part_2_of_2",
+        || after_a_call_what_it_ensures_is_a_fact_so_calls_chain_exactly_as_far_as_the_numbers_allow(1),
     ),
     (
         "an_ensures_on_a_function_that_does_not_name_its_result_is_an_error_that_says_so",
@@ -311,8 +315,8 @@ fn chain(g: &mut Gen) -> Chain {
 /// After a call, what the function ensures of its arguments and its result
 /// is a fact, so `depth` calls one on the result of another compile exactly
 /// when the `requires` of the caller leaves room for them, and then add up.
-fn after_a_call_what_it_ensures_is_a_fact_so_calls_chain_exactly_as_far_as_the_numbers_allow() {
-    generate::check(113, 150, chain, |c| match check(c.source.as_bytes()) {
+fn after_a_call_what_it_ensures_is_a_fact_so_calls_chain_exactly_as_far_as_the_numbers_allow(part: u64) {
+    generate::check_part(113, 150, part, 2, chain, |c| match check(c.source.as_bytes()) {
         Ok(_) => {
             assert!(c.fits, "accepted, though the calls can pass the limit");
             assert_eq!(

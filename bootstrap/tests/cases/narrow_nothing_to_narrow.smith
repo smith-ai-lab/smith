@@ -2,7 +2,7 @@ use std.bits (u32)
 use std.console (console, print)
 use std.int (narrow)
 
-fn widen(n: Byte) -> u32 {
+fn widen(n: Byte) -> Option[u32] {
   narrow(n)
 }
 

@@ -34,18 +34,14 @@ pub fn checked_mul[T](a: T, b: T) -> Option[T] {
   __checked_mul(a, b)
 }
 
-pub fn narrow[A, B](x: A) -> B {
-  __narrow(x)
+pub fn narrow[A, B](x: A) -> Option[B] {
+  __checked_narrow(x)
 }
 
 pub fn wrapping_narrow[A, B](x: A) -> B {
   __wrapping_narrow(x)
 }
 
-pub fn saturating_narrow[A, B](x: A) -> B {
+pub fn clamp[A, B](x: A) -> B {
   __saturating_narrow(x)
-}
-
-pub fn checked_narrow[A, B](x: A) -> Option[B] {
-  __checked_narrow(x)
 }

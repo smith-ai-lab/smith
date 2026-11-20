@@ -71,6 +71,8 @@ li() {
 
 This writes `<li data-id="7">First</li>`.
 
+The value is escaped, as every text is. The name cannot be escaped, since a name that holds a space or a `=` is more markup and no name. So the name is a text written in the source, and it is checked when the program is built: letters, digits, `-`, `_`, `:`, and `.`, and nothing else. `attr("data id", "7")` is refused, and so is a name that is not written out, as `attr(key, "7")`. `attr` is a [function over code](../language/code.md), which is how it reads the name where the call is written. No page is built that holds a name the library did not check.
+
 ## Every text is escaped
 
 A text given to an element, to `text`, or to an attribute is written so that it is text and nothing else: `<`, `>`, `&`, and a quote are written as HTML writes them. `h1("{name}")` is safe whatever `name` holds, as the element escapes the finished text.
@@ -146,6 +148,8 @@ fn about() -> Html {
 
 Each element writes through the effect `markup`, and `render` is the [handler](../language/handlers.md) that answers it: it runs its block, gathers what the block writes into one text, and gives it as an `Html`. So a function that calls `render` carries no `markup`, and a component, which does not, carries it.
 
+The operations of `markup` are private to `std.html`, as [an operation is unless it is marked `pub`](../language/effect-declarations.md#an-operation-is-private-unless-it-is-marked-pub). A program writes `! markup` and calls the elements, `text`, `attr`, and `insert`, and nothing else reaches the page, so `render` is the only handler and no function writes a text as HTML.
+
 Nothing is sent or printed while a page is written.
 
 ## What can fail
@@ -176,6 +180,22 @@ fn note_card(id: str) ! markup, store {
 So a page is whole or is not made: no call inside `render` leaves it half written.
 
 An `Html` is given to whatever wants a page. A route of an [HTTP server](http.md#what-a-function-gives) that gives one answers with it as a page.
+
+An `Html` has [`Fmt`](fmt.md), which writes the page as its text. So a program prints a page, writes it to a file, or compares it in a test, as it does any value that has `Fmt`.
+
+```
+use std.console (console, print)
+use std.html (render, p)
+
+fn main() ! console, alloc {
+  page = render() {
+    p("a < b")
+  }
+  print("{page}")
+}
+```
+
+This prints `<p>a &lt; b</p>`. `Fmt` reads a page and makes none: the text it gives is a `str`, and a `str` given to an element or to `text` is escaped as any text is. What is inside an `Html` stays private, so `render` remains the only thing that makes one.
 
 ## Names
 

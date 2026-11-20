@@ -34,7 +34,7 @@ The files are a tour. Read them in the order below: each one uses only what the 
 - [literals.md](literals.md): how a number, a character, a text, `true`, `false`, or an array is written, the trait that backs each, and how a whole number is the range that holds it alone.
 - [number-types.md](number-types.md): every whole number as a range `a..b`, the floats, the names `Int`, `Nat`, and `Byte`, and the names of sizes in `std.bits`.
 - [arithmetic.md](arithmetic.md): the exact range that `+`, `-`, `*`, and `/` give, the proof asked where a value enters a narrower range, `narrow` and `clamp` where nothing proves it, and `wrapping_` for a range that fills a size.
-- [bits.md](bits.md): the functions that and, or, xor, and not the bits of a range that fills a size and shift them, with a shift proven to stay inside the range.
+- [bits.md](bits.md): the functions that and, or, xor, and shift the bits of a whole number and give the exact range of what they make, as arithmetic does, and what a number that may be negative and `bit_not` ask of a range.
 - [conversion.md](conversion.md): the `Convert` trait, which turns a value of one type into another where nothing is lost, how it lets two types meet in an operator, and why two whole numbers need none.
 
 ## Functions as values, and leaving early
@@ -136,7 +136,7 @@ The files are a tour. Read them in the order below: each one uses only what the 
 ## Modules and projects
 
 - [modules.md](modules.md): a file as a module, and how its path gives the module its name.
-- [pub.md](pub.md): everything in a module private unless marked `pub`, on an item or on a single field, and what that lets another module do with a struct.
+- [pub.md](pub.md): everything in a module private unless marked `pub`, on an item, on a single field, or on a single operation of an effect, and what that lets another module do with a struct.
 - [use.md](use.md): `use`, which brings the names of another module into a file from an explicit list, and what is said when a name is missing or unused.
 - [prelude.md](prelude.md): the names that are in scope in every file without a `use`, `Int`, `Nat`, and `Byte` among them, and what a file imports for everything else.
 - [qualified-names.md](qualified-names.md): a `use` with no list, which brings in the module itself under its last path segment, `as`, and a name two modules share.

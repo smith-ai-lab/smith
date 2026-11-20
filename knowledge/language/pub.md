@@ -1,7 +1,7 @@
 ---
 type: specification
 title: Public and private
-description: Everything in a module is private unless marked pub, on an item or on a single field, and what that lets another module do with a struct.
+description: Everything in a module is private unless marked pub, on an item, on a single field, or on a single operation of an effect, and what that lets another module do with a struct.
 status: partial
 built:
   - "`pub` before a `fn`, `struct`, `enum`, or `trait` of a module of a project, which is then the name another module lists in a `use`, and the functions of a `pub` trait, which are listed by their own names"
@@ -52,7 +52,7 @@ pub struct Rect {
 }
 ```
 
-`pub` is also written on a single field of a struct, as `w` and `h` are above. A field with no `pub` is private, whatever the struct is.
+`pub` is also written on a single field of a struct, as `w` and `h` are above. A field with no `pub` is private, whatever the struct is. An operation of an effect is the same: it is private unless `pub` is written before it, whatever the effect is, as [Declaring an effect](effect-declarations.md#an-operation-is-private-unless-it-is-marked-pub) says.
 
 ```
 pub struct Transaction {
