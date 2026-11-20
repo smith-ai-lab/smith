@@ -674,6 +674,22 @@ impl<'a> Defs<'a> {
         found
     }
 
+    /// The types of trait `k` as its implementations are written for them.
+    /// `Eq`, `Ord`, `Fmt`, `Repr`, and `Hash` are written once for every range,
+    /// which is the implementation of the size it is kept at, so a range is
+    /// the size it is kept at wherever one of these is looked up.
+    fn kept_at_size(&self, k: usize, types: &[Ty]) -> Vec<Ty> {
+        let by_size =
+            k == self.eq || k == self.ord() || k == self.fmt || k == self.repr || k == self.hash();
+        types
+            .iter()
+            .map(|t| match t {
+                Ty::Int(r) if by_size => Ty::Int(r.holder()),
+                other => other.clone(),
+            })
+            .collect()
+    }
+
     fn find_impl(
         &self,
         k: usize,
@@ -681,26 +697,8 @@ impl<'a> Defs<'a> {
         scope: &Scope,
         stack: &mut Vec<(usize, Vec<Ty>)>,
     ) -> Found {
-        // `Eq`, `Ord`, `Fmt`, `Repr`, and `Hash` are written once for every
-        // range, which is the implementation of the size it is kept at.
-        let kept: Vec<Ty>;
-        let types = if k == self.eq
-            || k == self.ord()
-            || k == self.fmt
-            || k == self.repr
-            || k == self.hash()
-        {
-            kept = types
-                .iter()
-                .map(|t| match t {
-                    Ty::Int(r) => Ty::Int(r.holder()),
-                    other => other.clone(),
-                })
-                .collect();
-            &kept[..]
-        } else {
-            types
-        };
+        let kept = self.kept_at_size(k, types);
+        let types = &kept[..];
         let mut fit: Option<(usize, Vec<Ty>, Vec<Ty>)> = None;
         'impls: for &i in &self.impls_of[k] {
             let Some(info) = &self.impls[i] else {
@@ -1053,7 +1051,7 @@ impl<'a> Defs<'a> {
         stack: &mut Vec<(usize, Vec<Ty>)>,
     ) -> Found {
         match self.find(k, types, scope, stack) {
-            Found::Yes(all, by) if all == types => Found::Yes(all, by),
+            Found::Yes(all, by) if all == self.kept_at_size(k, types) => Found::Yes(all, by),
             Found::Yes(..) => Found::No,
             other => other,
         }
