@@ -146,6 +146,8 @@ fn about() -> Html {
 
 Each element writes through the effect `markup`, and `render` is the [handler](../language/handlers.md) that answers it: it runs its block, gathers what the block writes into one text, and gives it as an `Html`. So a function that calls `render` carries no `markup`, and a component, which does not, carries it.
 
+The operations of `markup` are private to `std.html`, as [an operation is unless it is marked `pub`](../language/effect-declarations.md#an-operation-is-private-unless-it-is-marked-pub). A program writes `! markup` and calls the elements, `text`, `attr`, and `insert`, and nothing else reaches the page, so `render` is the only handler and no function writes a text as HTML.
+
 Nothing is sent or printed while a page is written.
 
 ## What can fail
