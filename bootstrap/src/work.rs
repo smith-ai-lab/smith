@@ -5,12 +5,33 @@
 //! by its hash compares it with one or two, so that the count grows with the
 //! program. The count does not depend on the machine, as a time does, and is
 //! read by `tests/build_scales.rs`.
+//!
+//! Inlining counts too, the parameters and instructions of the blocks it
+//! renames, which `tests/pass_depth.rs` reads.
 
 use std::cell::Cell;
 
 thread_local! {
     static ITEMS: Cell<u64> = const { Cell::new(0) };
     static INSTANCES: Cell<u64> = const { Cell::new(0) };
+    static MOVED: Cell<u64> = const { Cell::new(0) };
+}
+
+/// Inlining moved this many parameters and results of the blocks of a callee.
+pub(crate) fn moved(size: usize) {
+    MOVED.set(MOVED.get() + size as u64);
+}
+
+/// What the scalar passes have looked at so far, in this thread.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Looked {
+    /// The parameters and results that inlining moved.
+    pub moved: u64,
+}
+
+/// What the scalar passes have looked at so far, in the thread that asks.
+pub fn looked() -> Looked {
+    Looked { moved: MOVED.get() }
 }
 
 /// A definition was compared with another.

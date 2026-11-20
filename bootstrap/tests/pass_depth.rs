@@ -12,6 +12,8 @@
 
 use smith::scalar::{self, Function, Program};
 
+use smith::work::{Looked, looked};
+
 use crate::Test;
 use crate::counting::{Allocated, allocated};
 
@@ -90,15 +92,20 @@ fn size(program: &Program) -> u64 {
 
 /// For each pass, how large the program is when it is given
 /// to the pass and what it allocates.
-fn passes(source: &str) -> Vec<(&'static str, u64, u64, Allocated)> {
+fn passes(source: &str) -> Vec<(&'static str, u64, u64, Allocated, Looked)> {
     let mut program = smith::lower(source.as_bytes()).expect("the program builds");
     let mut seen = Vec::new();
     macro_rules! pass {
         ($name:literal, $pass:path) => {{
             let given = size(&program);
+            let before = looked();
             let (made, did) = allocated(|| $pass(program));
+            let after = looked();
             program = made;
-            seen.push(($name, given, size(&program), did));
+            let did_look = Looked {
+                moved: after.moved - before.moved,
+            };
+            seen.push(($name, given, size(&program), did, did_look));
         }};
     }
     pass!("inline", scalar::inline);
@@ -120,6 +127,7 @@ fn no_pass_does_more_for_a_program_twice_as_deep_than_in_proportion_to_what_it_i
         let counts = [
             ("leaves", a.2, b.2),
             ("asks to allocate", a.3.calls, b.3.calls),
+            ("moves", a.4.moved, b.4.moved),
         ];
         for (what, at_few, at_many) in counts {
             assert!(
