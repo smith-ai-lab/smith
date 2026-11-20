@@ -41,8 +41,16 @@ pub const ONCE: &[Test] = &[
 
 pub const MACHINE: &[Test] = &[
     (
-        "every_executable_prints_what_the_evaluator_says_when_values_are_built_passed_and_returned",
-        every_executable_prints_what_the_evaluator_says_when_values_are_built_passed_and_returned,
+        "every_executable_prints_what_the_evaluator_says_when_values_are_built_passed_and_returned_part_1_of_3",
+        || every_executable_prints_what_the_evaluator_says_when_values_are_built_passed_and_returned(0),
+    ),
+    (
+        "every_executable_prints_what_the_evaluator_says_when_values_are_built_passed_and_returned_part_2_of_3",
+        || every_executable_prints_what_the_evaluator_says_when_values_are_built_passed_and_returned(1),
+    ),
+    (
+        "every_executable_prints_what_the_evaluator_says_when_values_are_built_passed_and_returned_part_3_of_3",
+        || every_executable_prints_what_the_evaluator_says_when_values_are_built_passed_and_returned(2),
     ),
     (
         "every_executable_reads_what_was_returned_out_of_a_temporary_as_the_evaluator_does",
@@ -312,9 +320,9 @@ fn what_a_function_builds_prints_what_the_generator_says_when_every_value_is_rea
     });
 }
 
-fn every_executable_prints_what_the_evaluator_says_when_values_are_built_passed_and_returned() {
+fn every_executable_prints_what_the_evaluator_says_when_values_are_built_passed_and_returned(part: u64) {
     let targets = runnable();
-    generate::check(312, 25, program, |case| {
+    generate::check_part(312, 25, part, 3, program, |case| {
         let program = lower(case.source.as_bytes()).unwrap_or_else(|e| panic!("{e:?}"));
         let said = scalar::run(&scalar::passes(&program));
         assert_eq!(said.stdout, case.stdout);

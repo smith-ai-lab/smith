@@ -19,12 +19,24 @@ pub const ONCE: &[Test] = &[
         an_operation_on_two_numbers_compiles_exactly_when_its_true_result_fits_and_prints_it,
     ),
     (
-        "an_operation_inside_the_conditions_that_bound_its_operands_compiles_exactly_when_it_fits_and_never_wraps",
-        an_operation_inside_the_conditions_that_bound_its_operands_compiles_exactly_when_it_fits_and_never_wraps,
+        "an_operation_inside_the_conditions_that_bound_its_operands_compiles_exactly_when_it_fits_and_never_wraps_part_1_of_3",
+        || an_operation_inside_the_conditions_that_bound_its_operands_compiles_exactly_when_it_fits_and_never_wraps(0),
     ),
     (
-        "arith_says_yes_exactly_when_no_values_make_the_facts_true_and_the_goal_false",
-        arith_says_yes_exactly_when_no_values_make_the_facts_true_and_the_goal_false,
+        "an_operation_inside_the_conditions_that_bound_its_operands_compiles_exactly_when_it_fits_and_never_wraps_part_2_of_3",
+        || an_operation_inside_the_conditions_that_bound_its_operands_compiles_exactly_when_it_fits_and_never_wraps(1),
+    ),
+    (
+        "an_operation_inside_the_conditions_that_bound_its_operands_compiles_exactly_when_it_fits_and_never_wraps_part_3_of_3",
+        || an_operation_inside_the_conditions_that_bound_its_operands_compiles_exactly_when_it_fits_and_never_wraps(2),
+    ),
+    (
+        "arith_says_yes_exactly_when_no_values_make_the_facts_true_and_the_goal_false_part_1_of_2",
+        || arith_says_yes_exactly_when_no_values_make_the_facts_true_and_the_goal_false(0),
+    ),
+    (
+        "arith_says_yes_exactly_when_no_values_make_the_facts_true_and_the_goal_false_part_2_of_2",
+        || arith_says_yes_exactly_when_no_values_make_the_facts_true_and_the_goal_false(1),
     ),
     (
         "each_operation_of_an_expression_is_proven_by_itself",
@@ -319,9 +331,9 @@ fn ordered(a: i128, b: i128) -> (i128, i128) {
 /// every form a condition is written in, the program compiles exactly when
 /// the true result fits for every value inside the bounds, and then, at and
 /// next to the bounds, the operation gives the true result and never wraps.
-fn an_operation_inside_the_conditions_that_bound_its_operands_compiles_exactly_when_it_fits_and_never_wraps()
+fn an_operation_inside_the_conditions_that_bound_its_operands_compiles_exactly_when_it_fits_and_never_wraps(part: u64)
  {
-    generate::check(91, 150, boxed, |b| match check(b.source.as_bytes()) {
+    generate::check_part(91, 150, part, 3, boxed, |b| match check(b.source.as_bytes()) {
         Ok(_) => {
             assert!(b.fits, "accepted, though a result is out of range");
             assert_eq!(
@@ -506,8 +518,8 @@ fn facts_and_goal(g: &mut Gen) -> Facts {
 /// the variables make the facts true and the goal false. The test finds the
 /// right answer by trying every value, and the types range up to 64 bits, so
 /// an answer that took time in proportion to a range would not come.
-fn arith_says_yes_exactly_when_no_values_make_the_facts_true_and_the_goal_false() {
-    generate::check(92, 200, facts_and_goal, |f| {
+fn arith_says_yes_exactly_when_no_values_make_the_facts_true_and_the_goal_false(part: u64) {
+    generate::check_part(92, 200, part, 2, facts_and_goal, |f| {
         let accepted = check(f.source.as_bytes()).is_ok();
         assert_eq!(accepted, f.fits, "for\n{}", f.source);
     });
