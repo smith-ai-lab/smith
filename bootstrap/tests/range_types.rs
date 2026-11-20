@@ -114,6 +114,10 @@ pub const ONCE: &[Test] = &[
         || a_range_has_every_trait_a_whole_number_has_in_every_place_and_what_the_number_gives(5),
     ),
     (
+        "the_size_of_a_name_is_a_bound_in_a_parameter_a_result_and_a_binding_and_nothing_else_is",
+        the_size_of_a_name_is_a_bound_in_a_parameter_a_result_and_a_binding_and_nothing_else_is,
+    ),
+    (
         "a_sum_a_difference_and_a_product_give_the_exact_range_and_no_narrower_one",
         a_sum_a_difference_and_a_product_give_the_exact_range_and_no_narrower_one,
     ),
@@ -874,4 +878,79 @@ fn a_range_has_every_trait_a_whole_number_has_in_every_place_and_what_the_number
             }
         },
     );
+}
+
+/// `xs.size` is a bound where a name is: the type of a parameter, of a result,
+/// and of a binding made with `=`, of a `List`, a `Slice`, or a `str`, and
+/// what it says is known inside and shown at a call; no other field, and no
+/// bound that is worked out, is a bound.
+fn the_size_of_a_name_is_a_bound_in_a_parameter_a_result_and_a_binding_and_nothing_else_is() {
+    generate::check(
+        4013,
+        8,
+        |g: &mut Gen| (g.below(5) + 1, g.below(2)),
+        |&(size, kind)| {
+            let items: Vec<String> = (0..size).map(|i| (i * 7).to_string()).collect();
+            let ty = ["List[Nat]", "Slice[Nat]"][kind];
+            let make = format!("[{}]", items.join(", "));
+            let program = |body: &str, i: usize| {
+                with_header(format!(
+                    "fn pick(xs: {ty}, i: 0..xs.size) -> Nat {{ xs[i] }}\n\nfn last(xs: {ty}) -> 0..xs.size\n  requires xs.size > 0\n{{\n  xs.size - 1\n}}\n\nfn main() ! console, alloc {{\n  xs: {ty} = {make}\n{body}  print(\"{{pick(xs, {i})}}\")\n}}\n"
+                ))
+            };
+            let want = 7 * (size - 1);
+            let fits = program("", size - 1);
+            assert_eq!(stdout(&fits), format!("{want}\n"), "for\n{fits}");
+            let past = program("", size);
+            let errors = check(past.as_bytes()).expect_err("an index not below the size");
+            assert!(
+                errors.iter().any(|e| e
+                    .message
+                    .contains(&format!("cannot prove that `{size} < xs.size`"))),
+                "{errors:?} for\n{past}"
+            );
+            // A result and a binding that are shown to fit.
+            let bound = program(
+                "  k: 0..xs.size = last(xs)\n  print(\"{pick(xs, k)}\")\n",
+                size - 1,
+            );
+            assert_eq!(stdout(&bound), format!("{want}\n{want}\n"), "for\n{bound}");
+            // A binding that is not shown to fit is refused.
+            let unshown = program("  k: 0..xs.size = last(xs) + 1\n", size - 1);
+            let errors = check(unshown.as_bytes()).expect_err("a value not below the size");
+            assert!(
+                errors.iter().any(|e| e.message.contains("cannot prove that")),
+                "{errors:?} for\n{unshown}"
+            );
+        },
+    );
+    for (source, says) in [
+        (
+            "struct Grid {\n  rows: Nat\n}\n\nfn f(g: Grid, i: 0..g.rows) -> Nat { 0 }\n\nfn main() {}\n",
+            "a bound is a whole number, a name, or the `size` of a name",
+        ),
+        (
+            "fn f(n: Nat, i: 0..n + 1) -> Nat { 0 }\n\nfn main() {}\n",
+            "a bound is a whole number, a name, or the `size` of a name",
+        ),
+        (
+            "fn f(n: Nat, i: 0..n.size) -> Nat { 0 }\n\nfn main() ! console, alloc {\n  print(\"{f(1, 0)}\")\n}\n",
+            "the field `size` is read from a `Nat`",
+        ),
+        (
+            "fn f(i: 0..xs.size) -> Nat { 0 }\n\nfn main() {}\n",
+            "`xs` is not a parameter of this function, and a bound is one",
+        ),
+        (
+            "fn f(xs: List[Nat]) -> List[0..xs.size] { xs }\n\nfn main() {}\n",
+            "a name is not a bound in a type inside another type",
+        ),
+    ] {
+        let source = with_header(source.to_string());
+        let errors = check(source.as_bytes()).expect_err("a bound that is not allowed");
+        assert!(
+            errors.iter().any(|e| e.message.contains(says)),
+            "{errors:?} for\n{source}"
+        );
+    }
 }

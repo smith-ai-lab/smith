@@ -474,6 +474,18 @@ impl Builder<'_, '_> {
         by.terms.is_empty().then(|| 1i128 << k)
     }
 
+    /// The sum a bound stands for: the name, or the size of `xs` for `xs.size`.
+    fn bound(&mut self, name: &str, pos: Pos) -> Option<Lin> {
+        let name_of = |n: &str| Expr::Name {
+            name: n.to_string(),
+            pos,
+        };
+        match name.strip_suffix(".size") {
+            Some(list) => self.list_size(&name_of(list)),
+            None => self.lin(&name_of(name)),
+        }
+    }
+
     /// The sum the size of the list `of` stands for.
     fn list_size(&mut self, of: &Expr) -> Option<Lin> {
         let range = (0, u64::MAX as i128);
@@ -1140,13 +1152,9 @@ impl<'a> Checker<'a> {
         if !Self::decided(body) || body.contract {
             return;
         }
-        let bound = Expr::Name {
-            name: name.to_string(),
-            pos,
-        };
         let mut facts = std::mem::take(&mut body.facts);
         let mut builder = self.builder(body, &mut facts, true);
-        let (given, held) = (builder.lin(value), builder.lin(&bound));
+        let (given, held) = (builder.lin(value), builder.bound(name, pos));
         let overflow = builder.overflow;
         let goal = match (given, held) {
             (Some(given), Some(held)) if !overflow => {
@@ -1192,13 +1200,9 @@ impl<'a> Checker<'a> {
         let pos = Pos::START;
         let own = Expr::Name { name: me, pos };
         for (name, end) in named {
-            let bound = Expr::Name {
-                name: name.clone(),
-                pos,
-            };
             let mut facts = std::mem::take(&mut body.facts);
             let mut builder = self.builder(body, &mut facts, false);
-            let (mine, theirs) = (builder.lin(&own), builder.lin(&bound));
+            let (mine, theirs) = (builder.lin(&own), builder.bound(name, pos));
             let overflow = builder.overflow;
             if let (Some(mine), Some(theirs), false) = (mine, theirs, overflow) {
                 let said = if *end {
