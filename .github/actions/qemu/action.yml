@@ -1,0 +1,58 @@
+name: the emulator of x86-64 chips
+description: >
+  Puts `qemu-x86_64` on the path. The test of an executable started on a chip
+  without the level it was built for makes such a chip with it, and fails
+  where it is not there. It is the statically linked build, which is one file,
+  so it is kept between runs by the version of its package, and the mirror is
+  asked for it only when no run has kept that version.
+
+runs:
+  using: composite
+  steps:
+    # The version the package has now, as the lists the runner's image carries
+    # say, and as the mirror says when the image carries none.
+    - id: version
+      shell: bash
+      run: |
+        set -eu
+        version=$(apt-cache policy qemu-user-static | sed -n 's/^ *Candidate: //p')
+        if [ -z "$version" ] || [ "$version" = "(none)" ]; then
+          sudo apt-get update
+          version=$(apt-cache policy qemu-user-static | sed -n 's/^ *Candidate: //p')
+        fi
+        if [ -z "$version" ] || [ "$version" = "(none)" ]; then
+          echo "::error::no version of the package qemu-user-static, which has qemu-x86_64, is known"
+          exit 1
+        fi
+        echo "the version is $version"
+        echo "version=$version" >> "$GITHUB_OUTPUT"
+    - id: kept
+      uses: actions/cache@v4
+      with:
+        path: ~/.cache/qemu-x86_64
+        key: qemu-x86_64-${{ runner.os }}-${{ runner.arch }}-${{ steps.version.outputs.version }}
+    - name: Fetch it from the mirror, as no run has kept this version
+      if: steps.kept.outputs.cache-hit != 'true'
+      shell: bash
+      run: |
+        set -eu
+        sudo apt-get update
+        sudo apt-get install -y --no-install-recommends qemu-user-static
+        mkdir -p ~/.cache/qemu-x86_64
+        cp /usr/bin/qemu-x86_64-static ~/.cache/qemu-x86_64/qemu-x86_64
+    - name: Put it on the path
+      shell: bash
+      run: |
+        set -eu
+        dir=$HOME/.cache/qemu-x86_64
+        if [ ! -x "$dir/qemu-x86_64" ]; then
+          echo "::error::$dir/qemu-x86_64 is not there, so no chip can be made to lack a level; the test of that fails without it"
+          exit 1
+        fi
+        # A binary that needs libraries would not run from a cache on another image.
+        if ! ldd "$dir/qemu-x86_64" 2>&1 | grep -Eq 'not a dynamic executable|statically linked'; then
+          echo "::error::$dir/qemu-x86_64 is not a statically linked file, so it cannot be kept between runs"
+          exit 1
+        fi
+        "$dir/qemu-x86_64" --version | head -1
+        echo "$dir" >> "$GITHUB_PATH"
