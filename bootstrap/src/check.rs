@@ -1166,9 +1166,15 @@ impl<'a> Defs<'a> {
                 }
                 built
             },
-            fn_effects: (f.params.iter())
-                .map(|p| p.effects.iter().map(|(e, _)| e.clone()).collect())
-                .collect(),
+            // Few parameters are functions that carry an effect, and a function
+            // with none has no list to make.
+            fn_effects: if f.params.iter().any(|p| !p.effects.is_empty()) {
+                (f.params.iter())
+                    .map(|p| p.effects.iter().map(|(e, _)| e.clone()).collect())
+                    .collect()
+            } else {
+                Vec::new()
+            },
             scope,
         }
     }
@@ -2099,7 +2105,7 @@ fn check_file(
         return Err(errors);
     }
 
-    let program = to_scalar::lower(&typed, start);
+    let program = to_scalar::lower(&typed, start)?;
     let prelude_reached = reached.iter().fold((0, 0), |(f, i), item| match *item {
         Item::Fn(k) if of_prelude(file.functions[k].pos) => (f + 1, i),
         Item::Impl(k) if of_prelude(file.impls[k].pos) => (f, i + 1),
@@ -5286,15 +5292,6 @@ impl<'a> Typed<'a> {
             };
             let endless = (path.get(&callee.template).into_iter().flatten())
                 .any(|p| *p == callee || grows(p));
-            if let Some(effect) = self.defs.carries_handled(&callee) {
-                errors.push(Error::unsupported(
-                    pos,
-                    &format!(
-                        "a function that carries the `{}` effect, which a handler answers,",
-                        written_name(effect)
-                    ),
-                ));
-            }
             if endless {
                 errors.push(Error::unsupported(
                     pos,

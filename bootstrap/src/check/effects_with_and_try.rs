@@ -107,24 +107,6 @@ impl<'a> Defs<'a> {
         }
     }
 
-    /// The effect a handler answers that a copy carries, when it is a function
-    /// built as a function of its own, which is not built yet: only a function
-    /// that is given a function, and so is lowered in place, runs under a
-    /// handler.
-    pub(super) fn carries_handled(&self, instance: &Instance) -> Option<&str> {
-        let Template::Free(f) = instance.template else {
-            return None;
-        };
-        let sig = &self.signatures[f];
-        if self.is_operation(f) || sig.params.iter().any(|(_, t)| t.holds_fn()) {
-            return None;
-        }
-        sig.effects
-            .iter()
-            .map(String::as_str)
-            .find(|e| self.handled(e))
-    }
-
     /// Whether an effect is one a handler answers: it is declared, and the
     /// target does not answer it.
     pub(super) fn handled(&self, effect: &str) -> bool {
