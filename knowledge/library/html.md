@@ -2,7 +2,11 @@
 type: specification
 title: HTML
 description: std.html, with which a page is written as calls of plain functions, one for each element, that write the page as they run, with every text escaped, and render, which gives the page as an Html.
-status: planned
+status: partial
+built:
+  - "`std.html` declares the effect `markup`, which a page is written through as it runs, with `text` and `attr`, which write a text and an attribute's value with `<`, `>`, `&`, `\"`, and `'` written as `&lt;`, `&gt;`, `&amp;`, `&quot;`, and `&#39;` before any handler is given them"
+  - "a tag stays open until something that is not an attribute is written, so `attr` follows the tag it belongs to, and a handler answers `markup` with the operations `start`, `attribute`, `emit`, `void`, and `end`"
+  - "not the elements, which wait for a default of a parameter that takes a function, and not `render`, with `Html` and `insert`, which wait for a handler to append to a `Text`"
 ---
 
 # HTML

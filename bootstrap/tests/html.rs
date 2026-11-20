@@ -26,6 +26,18 @@ pub const ONCE: &[Test] = &[
         "an_escaped_text_holds_no_byte_of_markup_that_the_text_did_not_have_as_an_entity",
         an_escaped_text_holds_no_byte_of_markup_that_the_text_did_not_have_as_an_entity,
     ),
+    (
+        "text_and_attr_write_a_text_as_the_reference_escapes_it_whatever_the_handler_is",
+        text_and_attr_write_a_text_as_the_reference_escapes_it_whatever_the_handler_is,
+    ),
+    (
+        "what_text_writes_holds_no_byte_of_markup_that_the_text_did_not_have_as_an_entity",
+        what_text_writes_holds_no_byte_of_markup_that_the_text_did_not_have_as_an_entity,
+    ),
+    (
+        "an_attribute_is_written_after_the_tag_and_before_what_the_tag_holds",
+        an_attribute_is_written_after_the_tag_and_before_what_the_tag_holds,
+    ),
 ];
 
 /// What the page says a text becomes: `<`, `>`, `&`, `"`, and `'` are
@@ -162,5 +174,132 @@ fn an_escaped_text_holds_no_byte_of_markup_that_the_text_did_not_have_as_an_enti
                 assert_eq!(reference_unescape(&written).as_deref(), Some(text.as_str()));
             }
         },
+    );
+}
+
+/// A handler of `markup` that a program holds, so that what `text` and `attr`
+/// give a handler is checked with no `render`: it writes what it is given as it
+/// is, and leaves a tag open until something that is not an attribute comes.
+const HANDLER: &str = "fn show(body: fn() ! markup) ! console, alloc {
+  var open = false
+  var acc = \"\"
+  markup(
+    start: fn(tag) {
+      if open {
+        acc = \"{acc}>\"
+      }
+      acc = \"{acc}<{tag}\"
+      open = true
+    },
+    attribute: fn(name, value) {
+      acc = \"{acc} {name}=\\\"{value}\\\"\"
+    },
+    emit: fn(s) {
+      if open {
+        acc = \"{acc}>\"
+        open = false
+      }
+      acc = \"{acc}{s}\"
+    },
+    void: {
+      if open {
+        acc = \"{acc}>\"
+        open = false
+      }
+    },
+    end: fn(tag) {
+      if open {
+        acc = \"{acc}>\"
+        open = false
+      }
+      acc = \"{acc}</{tag}>\"
+    },
+    body: body,
+  )
+  print(acc)
+}
+";
+
+/// The lines a program prints that gives `markup` to `HANDLER`, a line for
+/// each of the `blocks`, which are the lines of what is written.
+fn written(blocks: &[Vec<String>]) -> Vec<String> {
+    let mut body = String::new();
+    for lines in blocks {
+        body += "  show() {\n";
+        for line in lines {
+            body += &format!("    {line}\n");
+        }
+        body += "  }\n";
+    }
+    let source = format!(
+        "use std.console (console, print)\nuse std.html (attr, attribute, emit, end, markup, start, text, void)\n\n{HANDLER}\nfn main() ! console, alloc {{\n{body}}}\n"
+    );
+    let lowered = lower(source.as_bytes()).unwrap_or_else(|e| panic!("{e:?} for {source}"));
+    let outcome = scalar::run(&lowered);
+    assert_eq!(outcome.status, 0, "for {source}");
+    let printed = String::from_utf8(outcome.stdout).unwrap();
+    let lines: Vec<String> = printed.lines().map(str::to_string).collect();
+    assert_eq!(lines.len(), blocks.len(), "for {source}");
+    lines
+}
+
+fn text_and_attr_write_a_text_as_the_reference_escapes_it_whatever_the_handler_is() {
+    generate::check(
+        8303,
+        6,
+        |g| (0..8).map(|_| any_text(g)).collect::<Vec<_>>(),
+        |texts| {
+            let blocks: Vec<Vec<String>> = texts
+                .iter()
+                .map(|t| {
+                    vec![
+                        "start(\"t\")".to_string(),
+                        format!("attr(\"n\", {})", literal(t)),
+                        format!("text({})", literal(t)),
+                        "end(\"t\")".to_string(),
+                    ]
+                })
+                .collect();
+            let expected: Vec<String> = texts
+                .iter()
+                .map(|t| {
+                    let e = reference_escape(t);
+                    format!("<t n=\"{e}\">{e}</t>")
+                })
+                .collect();
+            assert_eq!(written(&blocks), expected);
+        },
+    );
+}
+
+fn what_text_writes_holds_no_byte_of_markup_that_the_text_did_not_have_as_an_entity() {
+    generate::check(
+        8304,
+        6,
+        |g| (0..8).map(|_| any_text(g)).collect::<Vec<_>>(),
+        |texts| {
+            let blocks: Vec<Vec<String>> =
+                texts.iter().map(|t| vec![format!("text({})", literal(t))]).collect();
+            for (text, line) in texts.iter().zip(written(&blocks)) {
+                assert!(!line.contains(['<', '>', '"', '\'']), "{line:?} holds a byte of markup");
+                assert_eq!(reference_unescape(&line).as_deref(), Some(text.as_str()));
+            }
+        },
+    );
+}
+
+fn an_attribute_is_written_after_the_tag_and_before_what_the_tag_holds() {
+    let blocks = vec![
+        vec!["start(\"li\")".to_string(), "attr(\"data-id\", \"7\")".to_string(), "text(\"First\")".to_string(), "end(\"li\")".to_string()],
+        vec!["start(\"a\")".to_string(), "attr(\"href\", \"/x\")".to_string(), "attr(\"class\", \"b\")".to_string(), "text(\"Open\")".to_string(), "end(\"a\")".to_string()],
+        vec!["start(\"input\")".to_string(), "attr(\"name\", \"title\")".to_string(), "void()".to_string()],
+    ];
+    assert_eq!(
+        written(&blocks),
+        [
+            "<li data-id=\"7\">First</li>",
+            "<a href=\"/x\" class=\"b\">Open</a>",
+            "<input name=\"title\">"
+        ]
     );
 }

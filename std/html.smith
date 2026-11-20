@@ -37,18 +37,14 @@ fn entity(b: Byte) -> str {
 // The text as HTML holds it as text and nothing else: `<`, `>`, `&`, `"`, and
 // `'` are written as entities, and every other byte as it is. The bytes between
 // two that are escaped are written together.
-// A page, which only `render` makes.
-pub struct Html {
-  page: str
-}
-
-// What an element writes, as it runs. A tag is left open until something that
-// is not an attribute is written, so that `attr` may follow `start`.
+// What a page is written through, as it runs. A tag is left open until
+// something that is not an attribute is written, so that `attribute` may
+// follow `start`. A handler writes what it is given as it is: the texts are
+// escaped by `text` and `attr`, before they reach it.
 pub effect markup {
   fn start(tag: str)
-  fn attr(name: str, value: str)
-  fn text(s: str)
-  fn insert(page: Html)
+  fn attribute(name: str, value: str)
+  fn emit(escaped: str)
   fn void()
   fn end(tag: str)
 }
@@ -64,4 +60,15 @@ pub fn escape(s: str) -> str ! alloc {
     }
   }
   finish(run(t, s, from, s.size))
+}
+
+// A text among other elements, written so that it is text and nothing else.
+pub fn text(s: str) ! markup, alloc {
+  emit(escape(s))
+}
+
+// An attribute the library has no parameter for, on the tag that is open, with
+// its value written so that it is a value and nothing else.
+pub fn attr(name: str, value: str) ! markup, alloc {
+  attribute(name, escape(value))
 }
