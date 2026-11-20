@@ -937,8 +937,14 @@ fn every_target_builds_the_cases_to_the_hashes_another_machine_made() {
             .unwrap();
         let bytes = build(&source, target).unwrap_or_else(|e| panic!("{file}: {e:?}"));
         compared += 1;
-        if sha256::hex(&bytes) != hash {
-            differ.push(format!("{} {file}", target.name()));
+        let built = sha256::hex(&bytes);
+        if built != hash {
+            differ.push(format!(
+                "{} {file}: the first job made {}, this machine made {}",
+                target.name(),
+                &hash[..12],
+                &built[..12]
+            ));
         }
     }
     assert!(
