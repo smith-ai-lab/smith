@@ -8,6 +8,7 @@ built:
   - "every shape of the table below, a case of an enum as a key and as a tag, `Names.camel`, and the refusal of a tag that is also a member, with `Clash`"
   - "`from_json` and `from_json_as` of any type that has `Deserialize` and `Discard`, which read the text with a `Reader` written in Smith, with `Unknown` in the settings, the errors with their line, column, and path, `describe`, and `RawJson` with its `Deserialize`, and nothing is built between the text and the value"
   - "`RawJson` written with `to_json` as the bytes it holds, with `raw` of `Writer` and `Reader`, and under `value` where a case that is written with a tag holds it, `raw_json` and `raw_text`, and bytes that are not JSON, or not a text, written as a text"
+  - "`json_string(s)` and `written_member(name, json)`, which give a text as a string of JSON and a field's name as `to_json_as` writes it, for a format built on `std.json`, as [JSON Schema](jsonschema.md)"
   - "not a float, which waits for `f64`, not a `Map`, which is not built, and not `JsonValue`"
 ---
 
@@ -271,5 +272,7 @@ Reading asks for memory for the texts that hold an escape, for the lists of the 
 | `from_json(text)` | `.ok` of the value of the type the place needs, with a case as a key and names as written, or `.err` of the first `ReadError` |
 | `from_json_as(text, Json(cases: .tag("type"), names: .camel, unknown: .refuse))` | The same, with the case under `type`, names in camel case, and a member the type has no field of refused |
 | `describe(e)` | The words of an error, as `1:59: tools[2].timeout: expected a whole number, found a text` |
+| `json_string(s)` | `s` as a string of JSON, between its quotes |
+| `written_member(name, json)` | The name of a field as `to_json_as` writes it with the settings, as `input_schema` is `inputSchema` with `Names.camel` |
 | `RawJson` | One JSON value as its text, which `from_json` reads later and `to_json` writes as it is |
 | `raw_json(text)` | `.ok` of the `RawJson` of one whole JSON value, or the error that reading it gives |
