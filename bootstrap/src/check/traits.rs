@@ -1644,6 +1644,11 @@ impl<'a> Checker<'a> {
                 if shifts && self.errors.len() == mistakes {
                     self.shift(body, call, sig, &types[0]);
                 }
+                if matches!(function, "wrapping_div" | "wrapping_rem")
+                    && self.errors.len() == mistakes
+                {
+                    self.wrapping_division(body, call, sig);
+                }
                 let mut all = all;
                 all.extend(own);
                 sig.gives.subst(&all)

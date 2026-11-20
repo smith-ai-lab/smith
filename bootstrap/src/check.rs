@@ -2201,6 +2201,7 @@ fn check_file(
         type_args: Map::default(),
         no_impl: false,
         refusals: 0,
+        zero_divisors: Vec::new(),
         deciding: None,
     };
     checker.main(main);
@@ -5917,6 +5918,9 @@ struct Checker<'a> {
     /// function that cannot take them, so that a call that had one is not
     /// reported again for what it gives.
     refusals: usize,
+    /// Where a division was refused for a divisor that may be zero, which is
+    /// the one thing said of it.
+    zero_divisors: Vec<Pos>,
     /// While a number literal is checked against the type the uses of its
     /// name decided, the place of the use that decided it.
     deciding: Option<Pos>,

@@ -5,10 +5,11 @@ description: The exact range that a plain +, -, *, or / gives, the proof asked w
 status: partial
 built:
   - "a plain `+`, `-`, or `*` of two whole numbers, a literal included, which gives the exact range of the result with nothing proven where a type of 64 bits holds it, and where none does, as of two numbers of 64 bits, takes two sides of one type and compiles when `arith` proves that the result fits that type, and an error that says what could not be proven"
-  - "`wrapping_`, `saturating_`, and `checked_` of `add`, `sub`, and `mul`"
+  - "`wrapping_`, `saturating_`, and `checked_` of `add`, `sub`, and `mul`, and `wrapping_div`, `wrapping_rem`, `checked_div`, and `checked_rem` of the traits `Wrapping` and `Checked`, and `checked_div` and `checked_rem` of `std.int`"
   - "`/` and `%` of two whole numbers, which round toward zero, give the exact range of the quotient and of what is left over, bind as `*` does, and compile when `arith` proves that the divisor is not zero and, for a signed number, that the least number is not divided by -1 where the result would not fit"
   - "a value that enters a narrower range, at a binding, a `var`, an argument, and a result, which compiles when a condition or a `requires` shows that it fits, and an error that says what could not be proven"
   - "a unary `-`, which gives the negated range and groups tighter than `*`"
+  - "not `wrapping_div` and `wrapping_rem` of `std.int`, which no type can say the divisor of, since a function of a type parameter has no `requires` of a number, and not `saturating_` of `div` and `rem`"
   - "not the exact range of a result that no type of 64 bits holds, `narrow(x)` and `clamp(x)` of every range, or of a float, or a range of 65 to 128 bits, which is refused as a wider one is"
 ---
 
@@ -286,5 +287,7 @@ This is refused, as `a` and `b` are of two ranges. The fix is to bind the narrow
 | `narrow(x)` | `.some(x)` when `x` is in the range expected, `.none` when it is not |
 | `clamp(x)` | The value of the range expected that is nearest `x` |
 | `wrapping_add(a, b)`, `wrapping_sub(a, b)`, `wrapping_mul(a, b)` | The low bits, for a range that fills a size |
+| `checked_div(a, b)`, `checked_rem(a, b)` | `.none` for a zero divisor and for the quotient that does not fit, `.some` otherwise |
+| `Wrapping.wrapping_div(a, b)`, `Wrapping.wrapping_rem(a, b)` | The low bits, with the divisor proven not to be zero: the least number divided by -1 is itself, and leaves 0 |
 
 Next: [Bit operations](bits.md)

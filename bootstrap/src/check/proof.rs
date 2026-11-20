@@ -221,6 +221,81 @@ impl Builder<'_, '_> {
         self.variable(key)
     }
 
+    /// The value of the quotient or the remainder `e` of `l` by `r`, which is
+    /// a value of its own, about which what is true of every pair is said:
+    /// for a divisor that is a number above zero, the quotient times it is
+    /// within less than the divisor of the dividend, and the remainder is the
+    /// dividend less that; for an unsigned dividend, neither is above it, and
+    /// the remainder is below the divisor.
+    fn quotient(
+        &mut self,
+        e: &Expr,
+        (op, left): (ArithOp, &Expr),
+        (l, r): (Option<Lin>, Option<Lin>),
+    ) -> Lin {
+        let (lo, hi) = self.range_of(left);
+        let unsigned = lo >= 0 && matches!(self.types.get(&addr(left)), Some(Ty::Int(_)));
+        let k = r
+            .as_ref()
+            .filter(|r| r.terms.is_empty() && r.constant > 0)
+            .map(|r| r.constant);
+        let value = match (op, k, &l) {
+            (ArithOp::Rem, Some(k), Some(l)) => {
+                // Its quotient is a value, and the remainder is the dividend
+                // less k times it.
+                self.facts.fresh += 1;
+                let key = Key::Fresh(self.facts.fresh, lo.min(0), hi.max(0));
+                let q = self.variable(key);
+                self.bound_quotient(l, k, &q, unsigned);
+                let value = self.combine(l, -k, &q);
+                if unsigned {
+                    self.state(value.clone());
+                    let mut within = value.negated().expect("small");
+                    within.constant = within.constant.saturating_add(k - 1);
+                    self.state(within);
+                }
+                return value;
+            }
+            _ => self.fresh(e),
+        };
+        if let (ArithOp::Div, Some(k), Some(l)) = (op, k, &l) {
+            self.bound_quotient(l, k, &value, unsigned);
+        }
+        if unsigned && let Some(l) = &l {
+            // Neither the quotient nor the remainder is above the dividend,
+            // which is so for every divisor above zero.
+            if let Some(mut under) = value.negated() {
+                under = self.combine(&under, 1, l);
+                self.state(under);
+            }
+        }
+        if let (ArithOp::Rem, true, Some(r)) = (op, unsigned, &r) {
+            // And the remainder is below the divisor.
+            if let Some(mut below) = value.negated() {
+                below = self.combine(&below, 1, r);
+                below.constant = below.constant.saturating_sub(1);
+                self.state(below);
+            }
+        }
+        value
+    }
+
+    /// Says that `k * q` is within `k - 1` of `a`, which is so of `q`, the
+    /// quotient of `a` by the number `k` above zero, rounded toward zero.
+    fn bound_quotient(&mut self, a: &Lin, k: i128, q: &Lin, unsigned: bool) {
+        let scaled = self.scaled(k, q);
+        // a - k*q + (k - 1) >= 0 and k*q - a + (k - 1) >= 0, and for a number
+        // that is not negative, a - k*q >= 0.
+        let mut above = self.combine(a, -1, &scaled);
+        if !unsigned {
+            above.constant = above.constant.saturating_add(k - 1);
+        }
+        self.state(above);
+        let mut below = self.combine(&scaled, -1, a);
+        below.constant = below.constant.saturating_add(k - 1);
+        self.state(below);
+    }
+
     /// `a + k * b`, where a number that is too large is noted.
     fn combine(&mut self, a: &Lin, k: i128, b: &Lin) -> Lin {
         let mut out = a.clone();
@@ -329,7 +404,7 @@ impl Builder<'_, '_> {
                             constant: n,
                         });
                     }
-                    return self.goal.then(|| self.fresh(e));
+                    return Some(self.quotient(e, (*op, left), (l, r)));
                 }
                 let (l, r) = (self.lin(left), self.lin(right));
                 let (l, r) = (l?, r?);
@@ -998,12 +1073,24 @@ impl<'a> Checker<'a> {
     /// `left % right` is not zero, and if it does not, the goal it could not
     /// prove.
     pub(super) fn divisor(&mut self, body: &mut Body<'a>, e: &Expr, op_pos: Pos) {
-        if !Self::decided(body) || body.contract {
-            return;
-        }
         let Expr::Arith { op, right, .. } = e else {
             return;
         };
+        self.not_zero(body, right, (written_expr(e), *op), op_pos);
+    }
+
+    /// As `divisor`, for the divisor `right` of the division or remainder
+    /// `whole` of kind `op`, which may be a call of a function that divides.
+    pub(super) fn not_zero(
+        &mut self,
+        body: &mut Body<'a>,
+        right: &Expr,
+        (whole, op): (String, ArithOp),
+        op_pos: Pos,
+    ) {
+        if !Self::decided(body) || body.contract {
+            return;
+        }
         let mut facts = std::mem::take(&mut body.facts);
         let mut builder = self.builder(body, &mut facts, true);
         let value = builder.lin(right).filter(|_| !builder.overflow);
@@ -1020,16 +1107,29 @@ impl<'a> Checker<'a> {
         if goal.as_ref().is_some_and(|g| proves(&used, g)) {
             return;
         }
-        let (by, whole) = (written_expr(right), written_expr(e));
+        let by = written_expr(right);
+        self.zero_divisors.push(op_pos);
+        let literal = matches!(right, Expr::Number { magnitude: 0, .. });
+        if literal {
+            self.errors.push(Error::new(
+                op_pos,
+                format!("`{whole}` divides by zero, which no number is divided by"),
+            ));
+            return;
+        }
         self.errors.push(
             Error::new(
                 op_pos,
                 format!("cannot prove that `{by} != 0`, so `{whole}` may divide by zero"),
             )
             .with_fix(format!(
-                "check `{by} != 0` with an `if`, or use `{}` or `{}`",
-                named("checked", *op),
-                named("wrapping", *op)
+                "check `{by} != 0` with an `if`, or use `{}`{}",
+                named("checked", op),
+                if whole.contains('(') {
+                    String::new()
+                } else {
+                    format!(" or `{}`", named("wrapping", op))
+                }
             )),
         );
     }
@@ -1047,6 +1147,9 @@ impl<'a> Checker<'a> {
         else {
             return;
         };
+        if self.zero_divisors.contains(op_pos) {
+            return;
+        }
         let mut facts = std::mem::take(&mut body.facts);
         let mut builder = self.builder(body, &mut facts, true);
         let (a, b) = (builder.lin(left), builder.lin(right));
@@ -1379,6 +1482,27 @@ impl<'a> Checker<'a> {
     /// Reports a value of range `from` that enters the narrower range `to`
     /// where `arith` does not show that it fits.
     pub(super) fn enters(&mut self, body: &mut Body<'a>, value: &Expr, (from, to): (Int, Int)) {
+        // A quotient that leaves a signed type does so only for the least
+        // number divided by -1, which its own proof asks for, whatever else is
+        // known of its operands.
+        if let Expr::Arith { op_pos, .. } = value
+            && self.zero_divisors.contains(op_pos)
+        {
+            return;
+        }
+        if matches!(
+            value,
+            Expr::Arith {
+                op: ArithOp::Div,
+                ..
+            }
+        ) && to.signed()
+            && to.min() == -to.max() - 1
+            && from.min() >= to.min()
+            && from.max() <= to.max() + 1
+        {
+            return self.quotient_fits(body, value, to);
+        }
         let written = written_expr(value);
         self.narrows(
             body,

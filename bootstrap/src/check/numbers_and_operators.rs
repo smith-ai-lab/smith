@@ -921,6 +921,24 @@ impl<'a> Checker<'a> {
         }
     }
 
+    /// Checks a call of `wrapping_div` or `wrapping_rem`, which compiles only
+    /// when `arith` proves that the divisor is not zero.
+    pub(super) fn wrapping_division(&mut self, body: &mut Body<'a>, call: &Call, sig: &Signature) {
+        let by = (params_of(&sig.params, &call.args).into_iter().flatten())
+            .position(|p| p == 1)
+            .map(|i| &call.args[i].value);
+        let op = if call.callee == "wrapping_div" {
+            ArithOp::Div
+        } else {
+            ArithOp::Rem
+        };
+        let given: Vec<String> = call.args.iter().map(|a| written_expr(&a.value)).collect();
+        if let Some(by) = by {
+            let whole = format!("{}({})", call.callee, given.join(", "));
+            self.not_zero(body, by, (whole, op), call.pos);
+        }
+    }
+
     /// Checks the amount of a call of `shift_left` or `shift_right`, which
     /// compiles only when `arith` proves that it is below the number of bits
     /// of the type `ty` that is shifted.

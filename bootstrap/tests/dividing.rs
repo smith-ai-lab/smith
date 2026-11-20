@@ -34,6 +34,14 @@ pub const ONCE: &[Test] = &[
         an_unsigned_number_divided_by_a_power_of_two_is_a_shift_and_what_is_left_over_is_a_mask,
     ),
     (
+        "a_divisor_that_is_zero_or_may_be_is_the_one_thing_said_of_its_division",
+        a_divisor_that_is_zero_or_may_be_is_the_one_thing_said_of_its_division,
+    ),
+    (
+        "a_quotient_of_a_signed_number_by_a_positive_one_fits_the_type_of_both",
+        a_quotient_of_a_signed_number_by_a_positive_one_fits_the_type_of_both,
+    ),
+    (
         "division_and_what_is_left_over_bind_as_multiplication_does",
         division_and_what_is_left_over_bind_as_multiplication_does,
     ),
@@ -317,4 +325,42 @@ fn division_and_what_is_left_over_bind_as_multiplication_does() {
             "{expression}"
         );
     }
+}
+
+/// What the checker says of a file of one function.
+fn checked(function: &str) -> Result<(), String> {
+    let source = with_header(format!(
+        "use std.bits (i8)\nuse std.console (console, print)\n\n{function}\n\nfn main() ! console, alloc {{\n  print(\"{{f(1, 2)}}\")\n}}\n"
+    ));
+    lower(source.as_bytes()).map(|_| ()).map_err(|e| format!("{e:?}"))
+}
+
+/// A divisor of the literal zero is said to divide by zero and given no fix
+/// that checks `0 != 0`, and a divisor that may be zero is refused once, for
+/// that, and not again for the quotient not fitting.
+fn a_divisor_that_is_zero_or_may_be_is_the_one_thing_said_of_its_division() {
+    for op in ["/", "%"] {
+        let error = checked(&format!("fn f(a: Int, n: Int) -> Int {{ a {op} 0 }}")).unwrap_err();
+        assert!(error.contains("divides by zero"), "{error}");
+        assert!(!error.contains("0 != 0"), "{error}");
+        assert!(error.contains("fix: None"), "{error}");
+        let error = checked(&format!("fn f(a: Int, n: Int) -> Int {{ a {op} n }}")).unwrap_err();
+        assert_eq!(error.matches("message:").count(), 1, "{error}");
+        assert!(error.contains("`n != 0`"), "{error}");
+        let error = checked(&format!("fn f(a: i8, n: i8) -> i8 {{ a {op} n }}")).unwrap_err();
+        assert_eq!(error.matches("message:").count(), 1, "{error}");
+    }
+}
+
+/// The least number of a signed type divided by -1 is the only quotient that
+/// leaves the type, so a divisor that is above zero, or is not -1, is enough.
+fn a_quotient_of_a_signed_number_by_a_positive_one_fits_the_type_of_both() {
+    assert_eq!(checked("fn f(a: i8, b: i8) -> i8 requires b > 0 { a / b }"), Ok(()));
+    assert_eq!(
+        checked("fn f(a: i8, b: i8) -> i8 { if b > 0 { a / b } else { 0 } }"),
+        Ok(())
+    );
+    assert_eq!(checked("fn f(a: i8, b: i8) -> i8 requires b > 0 { a % b }"), Ok(()));
+    let error = checked("fn f(a: i8, b: i8) -> i8 requires b != 0 { a / b }").unwrap_err();
+    assert!(error.contains("a / b <= 127"), "{error}");
 }

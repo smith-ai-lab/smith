@@ -516,6 +516,33 @@ impl<'a> Lowering<'a> {
             "shift_left" => ShiftLeft,
             _ => Mul,
         };
+        if kind == "wrapping" && matches!(op, "div" | "rem") {
+            // The divisor is not zero, which the call proved. The least number
+            // divided by -1 is the one quotient that does not fit, and what a
+            // processor cannot do: it is divided by 1 instead, and the choice
+            // gives the number negated, which is the least number again, or,
+            // for what is left over, 0.
+            let (div, rem) = if t.signed() {
+                (DivS, RemS)
+            } else {
+                (DivU, RemU)
+            };
+            let how = if op == "div" { div } else { rem };
+            if !t.signed() {
+                return vec![out.binary(how, a, b)];
+            }
+            let minus = out.int(bits, -1);
+            let one = out.int(bits, 1);
+            let is_minus = out.compare(Equal, b, minus);
+            let by = out.choose(is_minus, one, b);
+            let done = out.binary(how, a, by);
+            if op == "rem" {
+                return vec![done];
+            }
+            let zero = out.int(bits, 0);
+            let negated = out.binary(Sub, zero, a);
+            return vec![out.choose(is_minus, negated, done)];
+        }
         if kind == "wrapping" {
             return vec![out.binary(word, a, b)];
         }
@@ -668,9 +695,11 @@ pub(super) fn number_function(f: &Function) -> Option<(&'static str, &'static st
     let kind = ["wrapping", "saturating", "checked"]
         .into_iter()
         .find(|k| *k == kind)?;
-    let op = ["add", "sub", "mul", "shift_left"]
+    let op = ["add", "sub", "mul", "shift_left", "div", "rem"]
         .into_iter()
-        .find(|o| *o == op && (*o != "shift_left" || kind == "wrapping"))?;
+        .find(|o| {
+            *o == op && (!matches!(*o, "shift_left" | "div" | "rem") || kind == "wrapping")
+        })?;
     (f.body.len() == 1 && f.params.len() == 2 && (of_prelude(f.pos) || of_std(f.pos)))
         .then_some((kind, op))
 }
