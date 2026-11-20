@@ -821,11 +821,13 @@ impl<'a> Defs<'a> {
     /// must be the same function.
     fn function(&self, pos: Pos, name: &str) -> Option<usize> {
         let found = self.function_names.get(name).copied();
-        let key = self
-            .resolution
-            .key(pos, name, &|n| self.function_names.contains_key(n));
-        let by_scope = self.function_names.get(key.as_str()).copied();
-        debug_assert_eq!(found, by_scope, "`{name}` at {pos:?}");
+        if cfg!(debug_assertions) {
+            let key = self
+                .resolution
+                .key(pos, name, &|n| self.function_names.contains_key(n));
+            let by_scope = self.function_names.get(key.as_str()).copied();
+            assert_eq!(found, by_scope, "`{name}` at {pos:?}");
+        }
         found
     }
 
@@ -3719,7 +3721,7 @@ fn splice<'a>(
         })
         .collect();
     let mut resolution = Resolution::default();
-    for (i, plan) in plans.iter().enumerate() {
+    for (i, plan) in plans.iter().enumerate().filter(|_| cfg!(debug_assertions)) {
         resolution.modules.insert(
             modules[i].number,
             Naming {
@@ -3753,7 +3755,9 @@ fn splice<'a>(
                 &|n| scope.rename(n, modules[i].defined.contains(n)),
                 &through,
                 &mut |pos, name| {
-                    resolution.written.insert(pos, name.to_string());
+                    if cfg!(debug_assertions) {
+                        resolution.written.insert(pos, name.to_string());
+                    }
                 },
             );
             let found = match crate::parser::parse_library(&tokens) {
@@ -3990,7 +3994,11 @@ impl LazyModule<'_> {
             &tokens,
             &|n| self.rename(n),
             &self.through,
-            &mut |pos, name| renamed.push((pos, name.to_string())),
+            &mut |pos, name| {
+                if cfg!(debug_assertions) {
+                    renamed.push((pos, name.to_string()));
+                }
+            },
         );
         self.written.extend(renamed);
         match crate::parser::parse_library(&tokens) {
