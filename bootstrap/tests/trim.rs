@@ -266,7 +266,7 @@ fn a_function_of_a_chain_is_passed_what_it_reads_and_gives_back_what_it_changes(
 /// be what it prints with none.
 fn prints_the_same_with_the_pass(program: &Program, said: &Outcome) {
     let inlined = scalar::inline(program);
-    assert_eq!(&scalar::run(&scalar::trim(&inlined)), said);
+    assert_eq!(&scalar::run(&scalar::trim(inlined.clone())), said);
     assert_eq!(&scalar::run(&scalar::passes(program)), said);
 }
 
@@ -633,7 +633,7 @@ fn a_function_whose_first_block_is_a_loop_gives_back_what_the_loop_made() {
 
     let program = program_of(vec![f, g]);
     assert_eq!(scalar::check(&program), Ok(()));
-    let trimmed = scalar::trim(&program);
+    let trimmed = scalar::trim(program.clone());
     assert_eq!(scalar::check(&trimmed), Ok(()));
     for start in [0u64, 5, 1 << 40] {
         let expected = scalar::call(&program, 1, &[start]);
@@ -657,7 +657,7 @@ fn a_function_in_a_ring_of_calls_is_left_as_it_is() {
     g.ret(made);
     let g = g.finish(&[INT]);
     let program = program_of(vec![f, g]);
-    assert_eq!(scalar::trim(&program), program);
+    assert_eq!(scalar::trim(program.clone()), program);
 }
 
 /// `f(a, b)` gives back `a`. A block that nothing reaches gives back `b`
@@ -690,7 +690,7 @@ fn what_only_a_block_that_nothing_reaches_gives_back_or_reads_is_not_counted() {
 
     let program = program_of(vec![f, h, g]);
     assert_eq!(scalar::check(&program), Ok(()));
-    let trimmed = scalar::trim(&program);
+    let trimmed = scalar::trim(program.clone());
     assert_eq!(scalar::check(&trimmed), Ok(()));
     assert_eq!(trimmed.functions[0].blocks[0].params.len(), 0, "{trimmed:?}");
     assert_eq!(trimmed.functions[0].results.len(), 0, "{trimmed:?}");
@@ -708,7 +708,7 @@ fn a_main_that_reads_nothing_it_is_given_is_still_given_it() {
         functions: vec![main.finish(&[])],
     };
     assert!(program.takes_arguments());
-    assert!(scalar::trim(&program).takes_arguments());
+    assert!(scalar::trim(program.clone()).takes_arguments());
     assert!(scalar::passes(&program).takes_arguments());
 
     let source = "use std.console (console, print)\n\nfn main(args: List[str]) ! console, alloc { print(\"done\") }\n";
@@ -753,7 +753,7 @@ fn a_parameter_that_a_function_only_hands_on_in_a_loop_to_itself_is_not_passed()
 
     let program = program_of(vec![f, g]);
     assert_eq!(scalar::check(&program), Ok(()));
-    let trimmed = scalar::trim(&program);
+    let trimmed = scalar::trim(program.clone());
     assert_eq!(scalar::check(&trimmed), Ok(()));
     assert_eq!(trimmed.functions[0].blocks[0].params.len(), 1, "{trimmed:?}");
     assert_eq!(scalar::call(&trimmed, 1, &[4]), vec![0]);

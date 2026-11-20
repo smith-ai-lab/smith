@@ -43,12 +43,13 @@ impl Trimmed {
 
 /// The program with every function passed what it reads and giving back what
 /// it makes.
-pub fn trim(program: &Program) -> Program {
+pub fn trim(program: Program) -> Program {
     let mut trimmed: Vec<Trimmed> = (program.functions.iter())
         .map(|f| Trimmed::same(f.blocks[0].params.len(), f.results.len()))
         .collect();
-    let mut functions = program.functions.clone();
-    for component in components(program) {
+    let components = components(&program);
+    let mut functions = program.functions;
+    for component in components {
         let ring = component.len() > 1 || calls(&functions[component[0]]).contains(&component[0]);
         for f in component {
             rewrite_calls(&mut functions[f], &trimmed);
@@ -58,7 +59,7 @@ pub fn trim(program: &Program) -> Program {
         }
     }
     Program {
-        data: program.data.clone(),
+        data: program.data,
         functions,
         main: program.main,
     }
