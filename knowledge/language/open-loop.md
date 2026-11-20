@@ -32,6 +32,8 @@ fn takes(from: u64, step: u64) -> u64 ! diverge {
 
 There is no `while`. A loop that goes on while something holds is an open-ended loop that breaks when it does not, as `takes` does with `if left < step { break }`.
 
+A loop that goes on until something is found, and not once for each of a known number of things, is an open-ended loop with a measure. A loop over a range that is left by `break` before its end, with a counter nothing reads, is this loop written the long way.
+
 ## Why the function says `diverge`
 
 An open-ended loop may not end, as `takes(10, 0)` does not, since `left` is never below `0`. So the function that has one lists the `diverge` effect, and so does every function that calls it. Without it, `takes` is refused: "an open-ended `loop` needs the `diverge` effect, which `takes` does not declare", with the fix "write `fn takes(from: u64, step: u64) -> u64 ! diverge`".
