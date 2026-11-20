@@ -55,7 +55,7 @@ pub const ONCE: &[Test] = &[
     ),
     (
         "cases_in_the_values_of_cases_are_read_to_any_depth_part_2_of_2",
-        || cases_in_the_values_of_cases_are_read_to_any_depth(&[50]),
+        || cases_in_the_values_of_cases_are_read_to_any_depth(&[70]),
     ),
     (
         "the_members_of_an_object_are_read_in_any_order_with_the_tag_wherever_it_is",
