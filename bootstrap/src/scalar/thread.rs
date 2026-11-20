@@ -25,10 +25,10 @@ use super::{Constant, End, Function, Instruction, Jump, Op, Place, Program, Type
 
 /// The program with each jump that goes into a block that only chooses sent
 /// on to the block the choice takes.
-pub fn thread(program: &Program) -> Program {
+pub fn thread(program: Program) -> Program {
     Program {
-        data: program.data.clone(),
-        functions: program.functions.iter().map(threaded).collect(),
+        data: program.data,
+        functions: program.functions.into_iter().map(threaded).collect(),
         main: program.main,
     }
 }
@@ -68,8 +68,7 @@ struct Facts {
     through: Vec<bool>,
 }
 
-fn threaded(f: &Function) -> Function {
-    let mut f = f.clone();
+fn threaded(mut f: Function) -> Function {
     let n = f.blocks.len();
     let reached = reached_by(&f);
     localize(&mut f, &reached);
