@@ -181,7 +181,7 @@ fn each_name_of_the_library_used_with_no_import_is_one_error_at_its_first_use_na
 
 /// The same programs with the name imported are not refused for it.
 fn each_name_of_the_library_that_the_file_imports_is_not_refused(part: usize) {
-    for (name, module) in names().into_iter().skip(part).step_by(3) {
+    for (name, module) in names().iter().skip(part).step_by(3) {
         let program = SHAPES[0].program.replace("NAME", name);
         let source = format!("use std.{module} ({name})\n\n{program}");
         let said: Vec<Error> = missing(&source);
