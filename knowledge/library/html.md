@@ -4,10 +4,12 @@ title: HTML
 description: std.html, with which a page is written as calls of plain functions, one for each element, that write the page as they run, with every text escaped, and render, which gives the page as an Html.
 status: partial
 built:
-  - "`std.html` declares the effect `markup`, which a page is written through as it runs, with `text`, which writes a text with `<`, `>`, `&`, `\"`, and `'` written as `&lt;`, `&gt;`, `&amp;`, `&quot;`, and `&#39;` before any handler is given it"
-  - "a tag stays open until something that is not an attribute is written, so an attribute follows the tag it belongs to, and a handler answers `markup` with the operations `start`, `attribute`, `emit`, `void`, and `end`"
-  - "not `attr`, whose name is a text written in the source and checked when the program is built, which waits on functions over code"
-  - "not the elements, which wait for a default of a parameter that takes a function, and not `render`, with `Html` and `insert`, which wait for a handler to append to a `Text`"
+  - "`std.html` declares the effect `markup`, which a page is written through as it runs, with `text`, which writes a text with `<`, `>`, `&`, `\"`, and `'` written as `&lt;`, `&gt;`, `&amp;`, `&quot;`, and `&#39;` before any handler is given it, and `insert`, which puts an `Html` inside the page being written"
+  - "`render`, the handler of `markup`, which keeps the page in a `Text` its operations append to and gives it as an `Html`, whose field is private to `std.html`"
+  - "a tag stays open until something that is not an attribute is written, so an attribute follows the tag it belongs to, and a handler answers `markup` with the operations `start`, `attribute`, `emit`, `include`, `void`, and `end`"
+  - "the elements `html`, `head`, `title`, `body`, `h1`, `h2`, `p`, `b`, `span`, `ul`, `li`, `article`, `a`, `br`, and `input`, each called with its text, with a block, or with both, and with its attributes as named arguments, each written only when it is given and not empty; every function that writes a page carries `alloc`"
+  - "not `div`, whose name the prelude holds for division, not `attr`, whose name is a text written in the source and checked when the program is built, which waits on functions over code, and not the operations being private to `std.html`, which waits on the compiler"
+  - "not a program reading the text of an `Html`: the page says only that it is given to whatever wants a page"
 ---
 
 # HTML
@@ -17,7 +19,7 @@ built:
 ```
 use std.html (render, Html, html, head, title, body, h1, p)
 
-fn hello(name: str) -> Html {
+fn hello(name: str) -> Html ! alloc {
   render() {
     html() {
       head() {
@@ -85,7 +87,7 @@ A text given to an element, to `text`, or to an attribute is written so that it 
 No function writes a text as HTML. What is already HTML is an `Html`, which only `render` makes, and `insert` puts one inside another page.
 
 ```
-fn frame(inside: Html) -> Html {
+fn frame(inside: Html) -> Html ! alloc {
   render() {
     div(class: "frame") {
       insert(inside)
@@ -100,7 +102,7 @@ A part of a page is a function that carries the effect `markup`, which every ele
 
 ```
 // One note of the list.
-fn note_card(note: Note) ! markup {
+fn note_card(note: Note) ! markup, alloc {
   article(class: "card") {
     h2(note.title)
     p(note.body)
@@ -110,7 +112,7 @@ fn note_card(note: Note) ! markup {
   }
 }
 
-fn notes(all: List[Note]) -> Html {
+fn notes(all: List[Note]) -> Html ! alloc {
   render() {
     ul() {
       loop note in all {
@@ -128,7 +130,7 @@ fn notes(all: List[Note]) -> Html {
 A component that puts its caller's content somewhere takes it as a block, a lambda that carries `markup`.
 
 ```
-fn layout(heading: str, inside: fn() ! markup) -> Html {
+fn layout(heading: str, inside: fn() ! markup) -> Html ! alloc {
   render() {
     html() {
       head() {
@@ -142,7 +144,7 @@ fn layout(heading: str, inside: fn() ! markup) -> Html {
   }
 }
 
-fn about() -> Html {
+fn about() -> Html ! alloc {
   layout("About") {
     p("Smith is a programming language.")
   }
@@ -174,7 +176,7 @@ fn note_page(id: str) -> Result[Html, str] ! alloc, store {
 A component that meets a failure handles it where it is, and writes what stands in its place.
 
 ```
-fn note_card(id: str) ! markup, store {
+fn note_card(id: str) ! markup, alloc, store {
   match load(id) {
     .ok(note) => h2(note.title)
     .err(_) => p("This note is gone.", class: "missing")
@@ -215,7 +217,7 @@ A file imports each element it uses, as any name, or imports the module and writ
 | `text("Hello")` | A text among other elements |
 | `a("Open", href: "/")` | An attribute, as an argument with a name |
 | `attr("data-id", "7")` | An attribute the library has no parameter for |
-| `fn card(n: Note) ! markup` | A component |
+| `fn card(n: Note) ! markup, alloc` | A component |
 | `fn layout(inside: fn() ! markup)` | A component that takes its caller's content |
 | `render() { ... }` | The page its block writes, as an `Html` |
 | `insert(page)` | An `Html` put inside another |
