@@ -528,8 +528,8 @@ fn every_pass_keeps_what_a_generated_function_of_vectors_gives() {
             ("inline", scalar::inline),
             ("trim", scalar::trim),
             ("thread", scalar::thread),
-            ("fold", scalar::fold),
-            ("common", scalar::common),
+            ("fold", |p| scalar::fold(p.clone())),
+            ("common", |p| scalar::common(p.clone())),
             ("remove", |p| scalar::remove(p.clone())),
         ];
         for (name, stage) in stages {
