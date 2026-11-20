@@ -73,6 +73,39 @@ impl<'a> Defs<'a> {
         self.file.effects.iter().position(|e| e.name == name)
     }
 
+    /// The error for a handler written at `at`, of an effect that another
+    /// module declares and has operations that it keeps private, if it is one.
+    pub(super) fn private_operations(&self, effect: usize, at: Pos) -> Option<Error> {
+        let def = &self.file.effects[effect];
+        if !of_library(def.pos) || module_of(def.pos) == module_of(at) {
+            return None;
+        }
+        let private: Vec<&str> = (def.operations.iter().zip(&def.public))
+            .filter(|(_, public)| public.is_none())
+            .map(|(name, _)| written_name(name))
+            .collect();
+        let first = private.first()?;
+        let module = (self.file.modules.iter())
+            .find(|(n, _)| *n == module_of(def.pos))
+            .map_or("its module", |(_, name)| name.as_str());
+        let file = match module.strip_prefix("std.") {
+            Some(name) => format!("std/{name}.smith"),
+            None => format!("{}.smith", module.replace('.', "/")),
+        };
+        let names: Vec<String> = private.iter().map(|n| format!("`{n}`")).collect();
+        Some(
+            Error::new(
+                at,
+                format!(
+                    "`{}` has operations that are private to `{module}`, so it cannot be handled here: {}",
+                    written_name(&def.name),
+                    names.join(", ")
+                ),
+            )
+            .with_fix(format!("write `pub` before `{first}` in `{file}`")),
+        )
+    }
+
     /// The signature of a call of an effect's name: a function for each
     /// operation, which takes all of the operation's parameters, and the body
     /// to run with them in force, which may carry the effect and gives what
@@ -207,7 +240,16 @@ impl<'a> Checker<'a> {
     /// for the operations and the body, which gives what the call gives.
     pub(super) fn handler_call(&mut self, body: &mut Body<'a>, call: &Call, effect: usize) -> Ty {
         let signature = self.defs.handler_signature(effect);
+        let before = self.errors.len();
+        let private = self.defs.private_operations(effect, call.name_pos);
         let sol = self.arguments(body, call, &signature, false, None, None);
+        // A handler names every operation, and one that is private to another
+        // module cannot be named here. That is the one mistake of the call.
+        if let Some(error) = private {
+            self.errors.truncate(before);
+            self.errors.push(error);
+            self.refusals += 1;
+        }
         signature.gives.solved(&sol)
     }
 

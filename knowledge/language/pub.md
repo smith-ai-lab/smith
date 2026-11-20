@@ -7,6 +7,7 @@ built:
   - "`pub` before a `fn`, `struct`, `enum`, or `trait` of a module of a project, which is then the name another module lists in a `use`, and the functions of a `pub` trait, which are listed by their own names"
   - "a name that is not `pub` refused in a `use` with its own error, and a name written with no `use` refused as any name that is not there"
   - "`pub` before a field of a struct of a module of a project or of the library, and a field without it refused, at its place, in another module when it is read, assigned, or built by a call of the struct"
+  - "`pub` before an operation of an effect of a module of a project or of the library, and an operation without it private to its module, which no other module imports, calls, or handles"
   - "not `pub` before an `effect`, or in the file that is built"
 ---
 

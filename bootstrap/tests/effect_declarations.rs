@@ -88,7 +88,9 @@ fn declaration(public: bool, ops: &[Op]) -> String {
             })
             .collect();
         let result = op.result.map_or(String::new(), |r| format!(" -> {r}"));
-        text += &format!("  fn op{k}({}){result}\n", params.join(", "));
+        // The operations of an effect that other modules use are `pub`.
+        let public = if public { "pub " } else { "" };
+        text += &format!("  {public}fn op{k}({}){result}\n", params.join(", "));
     }
     text + "}\n"
 }

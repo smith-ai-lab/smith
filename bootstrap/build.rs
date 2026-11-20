@@ -178,22 +178,30 @@ fn exports(source: &str) -> Vec<String> {
             .collect()
     };
     let mut found = Vec::new();
-    let mut in_trait = false;
+    // What the indented `fn` lines of the item that is open are: those of a
+    // trait are all exported, and those of an effect are when they are `pub`.
+    let mut open: Option<&str> = None;
     for line in source.lines() {
         if let Some(rest) = ["pub trait ", "pub effect "]
             .iter()
             .find_map(|k| line.strip_prefix(k))
         {
             found.push(name(rest));
-            in_trait = true;
+            open = Some(if line.starts_with("pub trait ") {
+                "fn "
+            } else {
+                "pub fn "
+            });
         } else if let Some(rest) = ["pub fn ", "pub struct ", "pub enum "]
             .iter()
             .find_map(|k| line.strip_prefix(k))
         {
             found.push(name(rest));
-        } else if in_trait && line == "}" {
-            in_trait = false;
-        } else if in_trait && let Some(rest) = line.trim_start().strip_prefix("fn ") {
+        } else if open.is_some() && line == "}" {
+            open = None;
+        } else if let Some(start) = open
+            && let Some(rest) = line.trim_start().strip_prefix(start)
+        {
             found.push(name(rest));
         }
     }
