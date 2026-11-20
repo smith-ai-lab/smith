@@ -388,6 +388,58 @@ impl<'a> Checker<'a> {
         for (at, (bound, is_end)) in [(first, false), (end, true)].into_iter().enumerate() {
             ends[at] = match bound {
                 Bound::Number(n) => *n,
+                Bound::Size(name) => {
+                    let found = body
+                        .names
+                        .iter()
+                        .rfind(|(n, _)| n == name)
+                        .map(|(_, ty)| ty);
+                    match found {
+                        None => {
+                            self.errors.push(
+                                Error::new(
+                                    t.pos,
+                                    format!(
+                                        "there is no name `{name}` defined before this, and a bound is one"
+                                    ),
+                                )
+                                .with_fix("write the bound as a number, or bind the name first"),
+                            );
+                            return None;
+                        }
+                        Some(_) if body.vars.contains(name) => {
+                            self.errors.push(
+                                Error::new(
+                                    t.pos,
+                                    format!("`{name}` is a `var`, which can change, so its size is not a bound"),
+                                )
+                                .with_fix("bind its value to a name with `=`, and write the name"),
+                            );
+                            return None;
+                        }
+                        Some(Ty::Text) => {
+                            self.errors.push(Error::unsupported(
+                                t.pos,
+                                "the `size` of a `str` as a bound",
+                            ));
+                            return None;
+                        }
+                        Some(Ty::List(_) | Ty::Slice(_)) => {
+                            named.push((format!("{name}.size"), is_end));
+                            if is_end { i128::from(u64::MAX) } else { 0 }
+                        }
+                        Some(Ty::Unknown) => return None,
+                        Some(_) => {
+                            self.errors.push(Error::new(
+                                t.pos,
+                                format!(
+                                    "`{name}` is not a list, a slice, or a str, and the `size` of one is a bound"
+                                ),
+                            ));
+                            return None;
+                        }
+                    }
+                }
                 Bound::Name(name) => {
                     let found = body
                         .names
