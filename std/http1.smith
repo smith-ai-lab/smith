@@ -1,5 +1,5 @@
 use std.bits (bit_and, shift_left, shift_right)
-use std.int (checked_add, checked_mul, checked_narrow, saturating_add)
+use std.int (checked_add, checked_mul, narrow, saturating_add)
 use std.list (freeze, push)
 use std.text (append_ascii, finish, text)
 use std.utf8 (utf8)
@@ -196,7 +196,7 @@ fn response_line(line: Slice[Byte]) -> Result[(100..600, str), str] {
     .some(n) { n }
     .none { return .err("a status that is not three digits") }
   }
-  found: Option[100..600] = checked_narrow(code)
+  found: Option[100..600] = narrow(code)
   status: 100..600 = match found {
     .some(s) { s }
     .none { return .err("a status below 100") }

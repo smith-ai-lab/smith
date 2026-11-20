@@ -196,30 +196,21 @@ pub(super) enum Numbers {
 /// What a narrowing does with a value that does not fit.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(super) enum Narrowing {
-    /// `narrow`, which compiles only when the value is proven to fit.
-    Plain,
     /// `wrapping_narrow`, which keeps the low bits.
     Wrapping,
-    /// `clamp` and `saturating_narrow`, which give the nearest value the type
-    /// holds.
+    /// `clamp`, which gives the nearest value the type holds.
     Saturating,
-    /// `checked_narrow`, which gives `.none`.
+    /// `narrow`, which gives `.none` where the value does not fit.
     Checked,
 }
 
 impl Narrowing {
     pub(super) fn name(self) -> &'static str {
         match self {
-            Narrowing::Plain => "narrow",
             Narrowing::Wrapping => "wrapping_narrow",
             Narrowing::Saturating => "clamp",
-            Narrowing::Checked => "checked_narrow",
+            Narrowing::Checked => "narrow",
         }
-    }
-
-    /// Whether `callee` is a name this narrowing is called by.
-    fn is_called(self, callee: &str) -> bool {
-        callee == self.name() || (self == Narrowing::Saturating && callee == "saturating_narrow")
     }
 }
 
@@ -227,13 +218,12 @@ impl Narrowing {
 /// no function of the program takes the name of.
 pub(super) fn narrowing(defs: &Defs, call: &Call) -> Option<Narrowing> {
     let named = [
-        Narrowing::Plain,
         Narrowing::Wrapping,
         Narrowing::Saturating,
         Narrowing::Checked,
     ]
     .into_iter()
-    .find(|n| n.is_called(&call.callee))?;
+    .find(|n| n.name() == call.callee)?;
     let (at, name) = (call.name_pos, call.callee.as_str());
     let taken = defs.function(at, name).is_some()
         || defs.struct_at(at, name).is_some()
@@ -651,9 +641,8 @@ impl<'a> Checker<'a> {
 
     /// Checks `narrow(x)` or one of its relatives, which take the whole
     /// number `x` to the whole number type that is expected, one that does
-    /// not hold all the values of the type of `x`. `checked_narrow` is
-    /// expected to give an `Option` of it. `narrow` compiles only when
-    /// `arith` proves that `x` fits.
+    /// not hold all the values of the type of `x`. `narrow` is expected to
+    /// give an `Option` of it.
     pub(super) fn narrow(
         &mut self,
         body: &mut Body<'a>,
@@ -719,19 +708,6 @@ impl<'a> Checker<'a> {
             self.errors.push(error);
             return Ty::Unknown;
         }
-        if narrowing == Narrowing::Plain {
-            // What it gives is the number it is given, which `arith` knows.
-            self.narrowed.insert(addr(call));
-            let written = format!("{name}({})", written_expr(value));
-            self.narrows(
-                body,
-                value,
-                (from, to),
-                (&written, call.pos),
-                "check the value first, state it in a `requires`, or use \
-                 `wrapping_narrow`, `saturating_narrow`, or `checked_narrow`",
-            );
-        }
         wanted
     }
 
@@ -754,8 +730,8 @@ impl<'a> Checker<'a> {
             _ => format!("`{name}` gives the type that is expected here, and none is"),
         };
         let fix = match name {
-            "checked_narrow" => "write the type, as in `y: Option[u8] = checked_narrow(x)`",
-            _ => "write the type, as in `y: u8 = narrow(x)`",
+            "narrow" => "write the type, as in `y: Option[u8] = narrow(x)`",
+            _ => "write the type, as in `y: u8 = clamp(x)`",
         };
         self.errors
             .push(Error::new(call.pos, message).with_fix(fix));
@@ -765,7 +741,7 @@ impl<'a> Checker<'a> {
     /// What a narrowing gives, in words.
     pub(super) fn narrowed(&self, name: &str) -> &'static str {
         match name {
-            "checked_narrow" => "an `Option` of a whole number",
+            "narrow" => "an `Option` of a whole number",
             _ => "a whole number",
         }
     }
