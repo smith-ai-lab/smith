@@ -25,6 +25,8 @@ fn uniform(k: take Key) -> f32
 
 `split` and `uniform` own the key they are given. A caller that has passed its `Key` to either has no key left.
 
+A function that changes one value and gives nothing else takes it and returns it, and the caller assigns the result to the same name, as `xs = push(xs, 4)`. Nothing is copied. When the functions give other results too, or may fail, the value is state for a [handler](handlers.md).
+
 ## Lending
 
 A parameter that is not marked `take` lends. The callee uses the value, and the caller still owns it afterwards.
