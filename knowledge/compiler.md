@@ -5,6 +5,7 @@ description: How the compiler is designed. It covers how for expressions and eff
 status: partial
 built:
   - "a handler is resolved at build time: the handler in force at each call of an operation is the one `with` or a call of the effect's name installed, found while the code is lowered, and the call is the lambda that answers it lowered in place"
+  - "a handler's state is passed and never global: a copy of a function that runs under a handler takes the values of the names its functions use after its own parameters, and gives back those they assign after its results, and a call sets them where it is made"
 ---
 
 # The Smith compiler
