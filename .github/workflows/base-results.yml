@@ -1,0 +1,29 @@
+name: base-results
+
+# Keeps, for each commit of `main`, what the `decide` job of `ci` makes of the
+# commit a change is based on: its fingerprint and its compiler. A cache that a
+# run saves can be read only by runs of the same branch and by those of the
+# default branch, and `ci` never runs on the default branch, so a pull request
+# or the merge queue finds what this makes and not what another one made.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  keep:
+    name: keep the fingerprint and the compiler of a commit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - id: kept
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/base-results
+          key: base-results-${{ runner.os }}-${{ runner.arch }}-${{ github.sha }}
+      - name: Make them
+        if: steps.kept.outputs.cache-hit != 'true'
+        run: sh .github/base-results.sh "$PWD" "$RUNNER_TEMP/base-results"
