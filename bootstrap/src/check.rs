@@ -186,6 +186,15 @@ pub(crate) struct PreludeImpl<'a> {
     types: &'a [&'a str],
 }
 
+/// A trait of the prelude that a program reads only when it calls for it: it
+/// writes the trait's name or the name of one of its functions, or imports a
+/// module that does.
+pub(crate) struct PreludeNumeric<'a> {
+    source: &'a str,
+    /// The trait's name, and then the names of its functions.
+    names: &'a [&'a str],
+}
+
 /// What is read of the prelude's source, `std/prelude.smith`, which
 /// `build.rs` divides into its items when the compiler is built. Every program
 /// reads the types and traits, which the checker finds by name wherever syntax
@@ -194,6 +203,8 @@ pub(crate) struct PreludeImpl<'a> {
 /// file can be confused with it.
 pub(crate) struct Prelude<'a> {
     declarations: &'a str,
+    /// The traits of numbers, each read for a program that calls for it.
+    numeric: &'a [PreludeNumeric<'a>],
     impls: &'a [PreludeImpl<'a>],
     /// The items read so far in the process, when the prelude is the one the
     /// compiler holds, so that a process that checks many programs reads each
@@ -211,33 +222,72 @@ struct Declared {
 /// The items of the prelude's own, parsed once in a process.
 struct Parsed {
     declarations: OnceLock<File>,
+    numeric: [OnceLock<File>; PRELUDE_NUMERIC.len()],
     impls: [OnceLock<Arc<Impl>>; PRELUDE_IMPLS.len()],
 }
 
 static PARSED: Parsed = Parsed {
     declarations: OnceLock::new(),
+    numeric: [const { OnceLock::new() }; PRELUDE_NUMERIC.len()],
     impls: [const { OnceLock::new() }; PRELUDE_IMPLS.len()],
 };
 
 /// The prelude the compiler holds.
 const PRELUDE: Prelude<'static> = Prelude {
     declarations: PRELUDE_DECLARATIONS,
+    numeric: PRELUDE_NUMERIC,
     impls: PRELUDE_IMPLS,
     parsed: Some(&PARSED),
 };
 
 impl Prelude<'_> {
-    /// The prelude's types and traits, which every program reads.
-    fn declared(&self) -> Declared {
-        let parse = || split_needs(prelude_file(self.declarations));
-        let of = |items: &File| Declared {
-            enums: items.enums.clone(),
-            structs: items.structs.clone(),
-            traits: items.traits.clone(),
+    /// The prelude's types and traits, which every program reads, and the
+    /// traits of numbers that `wanted` says the program calls for.
+    fn declared(&self, wanted: &[bool]) -> Declared {
+        let of = |items: &File, out: &mut Declared| {
+            out.enums.extend(items.enums.iter().cloned());
+            out.structs.extend(items.structs.iter().cloned());
+            out.traits.extend(items.traits.iter().cloned());
         };
+        let mut out = Declared {
+            enums: Vec::new(),
+            structs: Vec::new(),
+            traits: Vec::new(),
+        };
+        let parse = |text: &str| split_needs(prelude_file(text));
         match self.parsed {
-            Some(parsed) => of(parsed.declarations.get_or_init(parse)),
-            None => of(&parse()),
+            Some(parsed) => {
+                of(
+                    parsed.declarations.get_or_init(|| parse(self.declarations)),
+                    &mut out,
+                );
+                for (i, n) in self.numeric.iter().enumerate().filter(|(i, _)| wanted[*i]) {
+                    of(parsed.numeric[i].get_or_init(|| parse(n.source)), &mut out);
+                }
+            }
+            None => {
+                of(&parse(self.declarations), &mut out);
+                for n in self
+                    .numeric
+                    .iter()
+                    .zip(wanted)
+                    .filter(|(_, w)| **w)
+                    .map(|(n, _)| n)
+                {
+                    of(&parse(n.source), &mut out);
+                }
+            }
+        }
+        out
+    }
+
+    /// Which traits of numbers a name calls for: the trait, or one of its
+    /// functions.
+    fn call_for(&self, name: &str, wanted: &mut [bool]) {
+        for (i, n) in self.numeric.iter().enumerate() {
+            if n.names.contains(&name) {
+                wanted[i] = true;
+            }
         }
     }
 
@@ -294,8 +344,8 @@ fn prelude_file(source: &str) -> File {
 
 /// The file with the prelude's types and traits before its own, and the
 /// `impl`s of the prelude at the places `loaded` gives.
-fn with_prelude(mut file: File, prelude: &Prelude, loaded: &[usize]) -> File {
-    let declared = prelude.declared();
+fn with_prelude(mut file: File, prelude: &Prelude, loaded: &[usize], wanted: &[bool]) -> File {
+    let declared = prelude.declared(wanted);
     let start = prelude_file(&start_function(&file));
     file.enums.splice(0..0, declared.enums);
     file.structs.splice(0..0, declared.structs);
@@ -1707,6 +1757,9 @@ pub struct Checked {
     pub prelude_reached: (usize, usize),
     /// How many `impl`s of the prelude were read for the program.
     pub prelude_loaded: usize,
+    /// The traits of numbers of the prelude that were read: those the program,
+    /// or a module it imports, calls for.
+    pub prelude_numeric: Vec<String>,
 }
 
 /// Checks the file, and lowers what `main` reaches to the scalar form. Every
@@ -1730,8 +1783,15 @@ pub(crate) fn check_with_source(
             types: &im.types,
         })
         .collect();
+    let numeric: Vec<PreludeNumeric> = (divided.numeric.iter())
+        .map(|n| PreludeNumeric {
+            source: n.source,
+            names: &n.names,
+        })
+        .collect();
     let prelude = Prelude {
         declarations: &divided.declarations,
+        numeric: &numeric,
         impls: &impls,
         parsed: None,
     };
@@ -1741,6 +1801,21 @@ pub(crate) fn check_with_source(
 /// `check`, with the prelude given.
 fn check_with(file: File, library: &Library, prelude: &Prelude) -> Result<Checked, Vec<Error>> {
     check_reading(file, library, prelude, None)
+}
+
+/// Which of the prelude's traits of numbers the module writes a name of: a
+/// module of the standard library is looked up in a table made when the
+/// compiler was built, and any other is read.
+fn calls_for_numbers(prelude: &Prelude, (name, source): (&str, &str), wanted: &mut [bool]) {
+    if let Some(name) = name.strip_prefix("std.") {
+        for (i, users) in NUMERIC_USERS.iter().enumerate().take(wanted.len()) {
+            wanted[i] |= users.contains(&name);
+        }
+        return;
+    }
+    for word in source.split(|c: char| !(c.is_alphanumeric() || c == '_')) {
+        prelude.call_for(word, wanted);
+    }
 }
 
 /// `check_with`, in which `whole` names a module of the standard library that
@@ -1766,6 +1841,18 @@ fn check_reading(
         resolver.module(module, Pos::START);
     }
     let whole = whole.is_some();
+    // The traits of numbers are read when the file, or a module it imports,
+    // writes the name of one or of one of its functions.
+    let mut numeric = vec![false; prelude.numeric.len()];
+    for module in &resolver.read {
+        calls_for_numbers(prelude, (&module.name, &module.source), &mut numeric);
+    }
+    for (name, _) in &file.idents {
+        if numeric.iter().all(|w| *w) {
+            break;
+        }
+        prelude.call_for(name, &mut numeric);
+    }
     let Resolver {
         read,
         labels,
@@ -1791,7 +1878,15 @@ fn check_reading(
     let (mut file, items, mut lazy) = splice(file, read, &mut errors);
     lazy.written = written;
     file.modules = module_names(&labels, library);
-    let checked = check_file(file, items, lazy, errors, warnings, prelude, whole);
+    let checked = check_file(
+        file,
+        items,
+        lazy,
+        errors,
+        warnings,
+        (prelude, &numeric),
+        whole,
+    );
     if unimported.is_empty() {
         return checked
             .map(|mut checked| {
@@ -1863,11 +1958,11 @@ fn check_file(
     mut lazy: Lazy,
     mut errors: Vec<Error>,
     import_warnings: Vec<Error>,
-    prelude: &Prelude,
+    (prelude, numeric): (&Prelude, &[bool]),
     whole: bool,
 ) -> Result<Checked, Vec<Error>> {
     let mut loaded: Vec<usize> = Vec::new();
-    let mut file = split_needs(with_prelude(file, prelude, &loaded));
+    let mut file = split_needs(with_prelude(file, prelude, &loaded, numeric));
     let trait_names: Vec<String> = file.traits.iter().map(|t| t.name.clone()).collect();
     let base_impls: Vec<Arc<Impl>> = std::mem::take(&mut file.impls);
     let (base_functions, base_structs, base_enums) =
@@ -2093,7 +2188,7 @@ fn check_file(
         ord: prelude_item(&file, Kind::Trait, "Ord"),
         hash: prelude_item(&file, Kind::Trait, "Hash"),
         convert: prelude_item(&file, Kind::Trait, "Convert"),
-        bits: prelude_item(&file, Kind::Trait, "Bits"),
+        bits: try_prelude_trait(&file, "Bits").unwrap_or(usize::MAX),
         function: prelude_item(&file, Kind::Trait, "Function"),
         serialize: library_item(&file, &items, "std.serialize", Kind::Trait, "Serialize"),
         writer: library_item(&file, &items, "std.serialize", Kind::Trait, "Writer"),
@@ -2279,6 +2374,10 @@ fn check_file(
         program,
         prelude_reached,
         prelude_loaded: loaded.len(),
+        prelude_numeric: (prelude.numeric.iter().zip(numeric))
+            .filter(|(_, wanted)| **wanted)
+            .map(|(n, _)| n.names[0].to_string())
+            .collect(),
         warnings: {
             // An `impl` that is not built is dead code, as a function nothing calls is.
             let built: Vec<Item> = (reached.iter().copied())
@@ -2827,6 +2926,12 @@ fn library_item(file: &File, items: &Items, module: &str, kind: Kind, name: &str
 }
 
 /// An item of the prelude, which every program has.
+/// A trait of the prelude that is read only for a program that calls for it,
+/// or `None` when it is not read.
+fn try_prelude_trait(file: &File, name: &str) -> Option<usize> {
+    (file.traits.iter()).position(|t| t.name == name && of_prelude(t.pos))
+}
+
 fn prelude_item(file: &File, kind: Kind, name: &str) -> usize {
     library_item(file, &Items::default(), PRELUDE_MODULE, kind, name).expect("the prelude is read")
 }
