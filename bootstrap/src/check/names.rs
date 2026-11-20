@@ -336,6 +336,10 @@ impl Resolution {
     /// The name as the module wrote it at `pos`, where `text` is what the
     /// tokens say.
     pub(super) fn written_at<'s>(&'s self, pos: crate::diag::Pos, text: &'s str) -> &'s str {
+        // Only a debug build keeps what was rewritten.
+        if self.written.is_empty() {
+            return text;
+        }
         self.written
             .get(&(pos, text.to_string()))
             .map_or(text, String::as_str)
@@ -358,32 +362,73 @@ impl Resolution {
         }
     }
 
+    /// What `get` finds for the name `text` at `pos`, asked as `key` asks for the
+    /// key and without making it as a string unless it is very long.
+    pub(super) fn find<R>(
+        &self,
+        pos: crate::diag::Pos,
+        text: &str,
+        get: &dyn Fn(&str) -> Option<R>,
+    ) -> Option<R> {
+        let written = self.written_at(pos, text);
+        let Some(module) = self.modules.get(&(pos.line / super::STEP)) else {
+            return get(written);
+        };
+        if let Some((_, to, _)) = module.imports.iter().find(|(from, _, _)| from == written) {
+            return get(to);
+        }
+        if module.standard && written.starts_with("__") {
+            return get(written);
+        }
+        // The name the module defines it as, made in a buffer, which is the
+        // name of most of what a module calls that is not listed: one that the
+        // file writes as it is, or with `as`, is asked for after it.
+        let mut buffer = [0u8; 160];
+        let (a, b) = (written.as_bytes(), module.name.as_bytes());
+        let n = a.len() + 1 + b.len();
+        if n <= buffer.len() {
+            buffer[..a.len()].copy_from_slice(a);
+            buffer[a.len()] = b'@';
+            buffer[a.len() + 1..n].copy_from_slice(b);
+            if let Some(found) = std::str::from_utf8(&buffer[..n]).ok().and_then(get) {
+                return Some(found);
+            }
+        } else if let Some(found) = get(&module.final_name(written)) {
+            return Some(found);
+        }
+        match module.aliased.iter().find(|(from, _)| from == written) {
+            Some((_, alias)) => get(alias).or_else(|| get(written)),
+            None => get(written),
+        }
+    }
+
     /// What the name `text` at `pos` is called in the file that holds every
     /// module, from what the module that wrote it calls what, where it names
     /// what is not a type. `exists` says whether the file has an item of a
     /// kind that is wanted with the name it is asked about, which tells a name
     /// the module defines from one it does not.
-    pub(super) fn key(
-        &self,
+    pub(super) fn key<'s>(
+        &'s self,
         pos: crate::diag::Pos,
-        text: &str,
+        text: &'s str,
         exists: &dyn Fn(&str) -> bool,
-    ) -> String {
+    ) -> std::borrow::Cow<'s, str> {
+        use std::borrow::Cow;
         let written = self.written_at(pos, text);
         let Some(module) = self.modules.get(&(pos.line / super::STEP)) else {
-            return written.to_string();
+            return Cow::Borrowed(written);
         };
         if let Some((_, to, _)) = module.imports.iter().find(|(from, _, _)| from == written) {
-            return to.clone();
+            return Cow::Borrowed(to);
         }
         if module.standard && written.starts_with("__") {
-            return written.to_string();
+            return Cow::Borrowed(written);
         }
         let own = module.final_name(written);
-        if exists(&own) {
-            own
+        if own != written && exists(&own) {
+            Cow::Owned(own)
         } else {
-            written.to_string()
+            Cow::Borrowed(written)
         }
     }
 }

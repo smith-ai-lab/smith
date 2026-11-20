@@ -826,10 +826,7 @@ impl<'a> Defs<'a> {
     /// longer rewritten, the name the tokens hold is found too, and the two
     /// must be the same function.
     fn function(&self, pos: Pos, name: &str) -> Option<usize> {
-        let key = self
-            .resolution
-            .key(pos, name, &|n| self.function_names.contains_key(n));
-        let found = self.function_names.get(key.as_str()).copied();
+        let found = (self.resolution).find(pos, name, &|n| self.function_names.get(n).copied());
         // A function another module of the library defines is not what a name
         // means in a module that neither defines nor lists it, though the
         // program lists it, and so the file writes it as it is.
@@ -919,7 +916,7 @@ impl<'a> Defs<'a> {
             let key = self.resolution.key(pos, name, &|n| table.contains_key(n));
             assert_eq!(
                 found.map(std::ptr::from_ref),
-                table.get(key.as_str()).map(std::ptr::from_ref),
+                table.get(&*key).map(std::ptr::from_ref),
                 "`{name}` at {pos:?}, key `{key}`, written `{}`",
                 self.resolution.written_at(pos, name)
             );
@@ -2433,8 +2430,7 @@ impl<'a> Names<'a> {
 
     /// The function that the module that wrote `name` at `pos` calls it.
     fn function_at(&self, resolution: &Resolution, pos: Pos, name: &str) -> Option<usize> {
-        let key = resolution.key(pos, name, &|n| self.functions.contains_key(n));
-        self.functions.get(key.as_str()).copied()
+        resolution.find(pos, name, &|n| self.functions.get(n).copied())
     }
 
     /// The names of the items of the file, with no mistake reported.
@@ -4601,9 +4597,16 @@ fn names_in_function(f: &Function, out: &mut dyn FnMut(&str, Pos, Ask)) {
     types_named(f, &mut |n, pos| out(n, pos, Ask::Type));
     let defaults = f.params.iter().filter_map(|p| p.default.as_ref());
     let contracts = (f.requires.iter().chain(&f.ensures)).chain(&f.decreases);
+    // A name of a parameter is the parameter in the function, so it calls for
+    // no function of the module that has one of that name.
+    let params: Vec<&str> = f.params.iter().map(|p| p.name.as_str()).collect();
     names_in_expressions(
         values(&f.body).chain(defaults).chain(contracts).collect(),
-        out,
+        &mut |name, pos, ask| {
+            if !params.contains(&name) {
+                out(name, pos, ask)
+            }
+        },
     );
     needs_named(&f.needs, &mut |n, pos| out(n, pos, Ask::Type));
 }
