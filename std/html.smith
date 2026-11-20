@@ -228,3 +228,8 @@ pub fn input(name: str = "", placeholder: str = "", type: str = "", value: str =
   given("id", id)
   void()
 }
+
+// A page is written as its text, so that a program can print it and hand it on.
+impl Fmt[Html] {
+  fn fmt(value: Html) -> str ! alloc { value.page }
+}
