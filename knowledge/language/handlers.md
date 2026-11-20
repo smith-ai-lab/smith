@@ -42,6 +42,8 @@ fn fixture_config() -> Result[Config, FsError] ! alloc {
 
 ## A handler that keeps state
 
+A handler is where state belongs when several functions read it and change it: a place among tokens, a count, a buffer being filled. Each function carries the effect, so its signature says it touches that state, and none of them is given the state or gives it back.
+
 A handler is an ordinary function. This one is a clock for tests, which reads one tick later every time it is asked.
 
 ```
