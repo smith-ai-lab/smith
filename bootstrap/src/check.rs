@@ -1389,6 +1389,10 @@ fn written(f: &Function, effects: &[&str]) -> String {
     let params: Vec<String> = (f.params.iter())
         .map(|p| {
             let mut text = format!("{}: {}", p.name, written_type(&p.ty));
+            if !p.effects.is_empty() {
+                let effects: Vec<&str> = p.effects.iter().map(|(e, _)| e.as_str()).collect();
+                text.push_str(&format!(" ! {}", effects.join(", ")));
+            }
             if let Some(value) = &p.default {
                 text.push_str(&format!(" = {}", written_expr(value)));
             }
