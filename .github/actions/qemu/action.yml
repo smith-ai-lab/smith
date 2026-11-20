@@ -29,11 +29,12 @@ runs:
         fi
         echo "the version is $version, on the image ${ImageVersion:-unknown}"
         echo "version=$version" >> "$GITHUB_OUTPUT"
+        echo "image=${ImageVersion:-unknown}" >> "$GITHUB_OUTPUT"
     - id: kept
       uses: actions/cache@v4
       with:
         path: ~/.cache/qemu-x86_64
-        key: qemu-x86_64-${{ runner.os }}-${{ runner.arch }}-${{ env.ImageVersion }}-${{ steps.version.outputs.version }}
+        key: qemu-x86_64-${{ runner.os }}-${{ runner.arch }}-${{ steps.version.outputs.image }}-${{ steps.version.outputs.version }}
     - name: Fetch it from the mirror, as no run has kept this version
       if: steps.kept.outputs.cache-hit != 'true'
       shell: bash
