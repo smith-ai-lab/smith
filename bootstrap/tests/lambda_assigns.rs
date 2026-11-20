@@ -100,8 +100,8 @@ fn branch(g: &mut Gen) -> (Branch, bool) {
 }
 
 fn lambda(g: &mut Gen) -> Lambda {
-    // A line after one that leaves `page` given away would use a name that is
-    // gone, which is another mistake, so the lambda ends at the first line
+    // A line after one that may leave `page` given away would use a name that
+    // is gone, which is another mistake, so the lambda ends at the first line
     // that may leave it so.
     let mut lines = Vec::new();
     for _ in 0..g.below(3) + 1 {
@@ -115,8 +115,11 @@ fn lambda(g: &mut Gen) -> Lambda {
             let spends = |b: &(Branch, bool)| b.0 == Branch::Spends;
             let falls = (spends(&line.then) && !line.then.1)
                 || (spends(&line.otherwise) && !line.otherwise.1);
+            // When both sides leave, a line after it is never run, so the
+            // lambda ends there too.
+            let ends = line.then.1 && line.otherwise.1;
             lines.push(Some(line));
-            if falls {
+            if falls || ends {
                 break;
             }
         }
