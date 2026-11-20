@@ -84,8 +84,8 @@ pub const MACHINE: &[Test] = &[
         a_jump_gives_a_block_its_parameters_as_if_all_were_copied_at_once,
     ),
     (
-        "a_function_with_a_frame_of_any_size_up_to_6_pages_does_what_the_evaluator_says",
-        a_function_with_a_frame_of_any_size_up_to_6_pages_does_what_the_evaluator_says,
+        "a_function_with_a_frame_of_any_size_up_to_4_pages_does_what_the_evaluator_says",
+        a_function_with_a_frame_of_any_size_up_to_4_pages_does_what_the_evaluator_says,
     ),
     (
         "a_call_gives_its_arguments_and_takes_its_results_as_if_all_were_copied_at_once",
@@ -327,16 +327,16 @@ fn builds_identical_bytes_twice<T: Debug>(
 }
 
 fn every_target_builds_identical_bytes_twice() {
-    builds_identical_bytes_twice(6, 8, programs::program, |c| &c.source);
-    builds_identical_bytes_twice(19, 5, traits::program, |c| c.source.as_bytes());
-    builds_identical_bytes_twice(24, 5, enums::program, |c| c.source.as_bytes());
-    builds_identical_bytes_twice(36, 5, text::program, |c| c.source.as_bytes());
+    builds_identical_bytes_twice(6, 3, programs::program, |c| &c.source);
+    builds_identical_bytes_twice(19, 2, traits::program, |c| c.source.as_bytes());
+    builds_identical_bytes_twice(24, 2, enums::program, |c| c.source.as_bytes());
+    builds_identical_bytes_twice(36, 2, text::program, |c| c.source.as_bytes());
 }
 
 fn every_target_builds_identical_bytes_twice_for_the_rest() {
-    builds_identical_bytes_twice(65, 5, reprs::program, |c| c.source.as_bytes());
-    builds_identical_bytes_twice(69, 5, choices::program, |c| c.source.as_bytes());
-    builds_identical_bytes_twice(73, 5, numbers::program, |c| c.source.as_bytes());
+    builds_identical_bytes_twice(65, 1, reprs::program, |c| c.source.as_bytes());
+    builds_identical_bytes_twice(69, 1, choices::program, |c| c.source.as_bytes());
+    builds_identical_bytes_twice(73, 1, numbers::program, |c| c.source.as_bytes());
 }
 
 /// The program in the scalar form that the targets are given: what the
@@ -364,11 +364,11 @@ fn every_executable_agrees<T: Debug>(
 }
 
 fn every_executable_does_what_the_evaluator_says() {
-    every_executable_agrees(3, 100, programs::program, |case| &case.source);
+    every_executable_agrees(3, 40, programs::program, |case| &case.source);
 }
 
 fn every_executable_of_a_program_with_traits_does_what_the_evaluator_says() {
-    every_executable_agrees(18, 60, traits::program, |case| case.source.as_bytes());
+    every_executable_agrees(18, 30, traits::program, |case| case.source.as_bytes());
 }
 
 fn every_executable_of_a_program_with_enums_does_what_the_evaluator_says() {
@@ -380,7 +380,7 @@ fn every_executable_of_a_program_with_tuples_does_what_the_evaluator_says() {
 }
 
 fn every_executable_of_a_program_with_lambdas_does_what_the_evaluator_says() {
-    every_executable_agrees(32, 60, lambdas::program, |case| case.source.as_bytes());
+    every_executable_agrees(32, 20, lambdas::program, |case| case.source.as_bytes());
 }
 
 fn every_executable_keeps_a_var_a_lambda_assigns_however_the_function_calls_it() {
@@ -397,12 +397,12 @@ fn every_executable_keeps_a_var_a_lambda_assigns_however_the_function_calls_it()
 }
 
 fn every_executable_of_a_program_with_with_and_try_does_what_the_evaluator_says() {
-    every_executable_agrees(43, 24, tries::program, |case| case.source.as_bytes());
+    every_executable_agrees(43, 12, tries::program, |case| case.source.as_bytes());
 }
 
 fn a_struct_bound_to_two_names_is_two_equal_structs() {
     let targets = runnable();
-    generate::check(13, 100, programs::shared_and_copied, |(shared, copied)| {
+    generate::check(13, 40, programs::shared_and_copied, |(shared, copied)| {
         let said = scalar::run(&after_the_pass(shared.as_bytes()));
         let copy = scalar::run(&after_the_pass(copied.as_bytes()));
         assert_eq!(said, copy);
@@ -413,19 +413,19 @@ fn a_struct_bound_to_two_names_is_two_equal_structs() {
 }
 
 fn every_executable_of_a_program_with_text_does_what_the_evaluator_says() {
-    every_executable_agrees(37, 60, text::program, |case| case.source.as_bytes());
+    every_executable_agrees(37, 20, text::program, |case| case.source.as_bytes());
 }
 
 fn every_executable_of_a_program_with_reprs_does_what_the_evaluator_says() {
-    every_executable_agrees(64, 60, reprs::program, |case| case.source.as_bytes());
+    every_executable_agrees(64, 16, reprs::program, |case| case.source.as_bytes());
 }
 
 fn every_executable_of_a_program_with_numbers_does_what_the_evaluator_says() {
-    every_executable_agrees(74, 100, numbers::program, |case| case.source.as_bytes());
+    every_executable_agrees(74, 16, numbers::program, |case| case.source.as_bytes());
 }
 
 fn every_executable_of_a_program_with_choices_does_what_the_evaluator_says() {
-    every_executable_agrees(68, 60, choices::program, |case| case.source.as_bytes());
+    every_executable_agrees(68, 16, choices::program, |case| case.source.as_bytes());
 }
 
 pub const TYPES: [Type; 5] = [
@@ -551,14 +551,14 @@ fn a_jump_gives_a_block_its_parameters_as_if_all_were_copied_at_once() {
 /// A function holds as many values at once as it takes to need a frame of
 /// some pages, and writes them. A system that gives a program its stack one
 /// page at a time must have the frame reserved a page at a time, so that no
-/// page is passed over. The frame is 6 pages in the case that is always
+/// page is passed over. The frame is 4 pages in the case that is always
 /// run, and any size up to that in the others. A probe that skipped a page
-/// is caught by any frame of two pages or more, and 6 keeps the test well
+/// is caught by any frame of two pages or more, and 4 keeps the test well
 /// under the limit, because the allocator takes time that grows faster than
 /// the number of values the function holds: 12 pages took about 230 ms to
-/// build, and 6 take a small part of that.
-fn a_function_with_a_frame_of_any_size_up_to_6_pages_does_what_the_evaluator_says() {
-    const MOST: usize = 6;
+/// build, 6 about 260 ms with the cases beside it, and 4 take about 100 ms.
+fn a_function_with_a_frame_of_any_size_up_to_4_pages_does_what_the_evaluator_says() {
+    const MOST: usize = 4;
     let targets = runnable();
     let holding = |pages: usize| {
         // The registers hold some values, and each other value takes 8 bytes
