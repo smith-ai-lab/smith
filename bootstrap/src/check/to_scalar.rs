@@ -165,6 +165,8 @@ type HandlerId = u32;
 struct Captured<'a> {
     name: String,
     ty: Ty,
+    /// Whether a function of the handler assigns it.
+    assigned: bool,
     /// The scalars it is, when it holds a value.
     scalars: Vec<form::Type>,
     /// The function it holds, when it holds one.
@@ -195,6 +197,25 @@ struct Handler<'a> {
     def: Option<Rc<HandlerDef<'a>>>,
     frames: Vec<usize>,
     below: usize,
+}
+
+/// A name of a frame whose value a copy gives back, because a function of a
+/// handler it runs under assigns it, with the scalars it is.
+struct Slot {
+    frame: usize,
+    name: String,
+    types: Vec<form::Type>,
+}
+
+/// What a call of a copy takes besides its arguments, and what it gives back
+/// besides its results.
+struct Prepared {
+    function: usize,
+    /// The values of the names the functions of its handlers use, which it
+    /// takes after its own arguments.
+    extra: Vec<form::Value>,
+    /// The names it gives back after its own results.
+    slots: Vec<Slot>,
 }
 
 /// A `loop` being lowered: the names its body assigns, which each round
@@ -1107,7 +1128,7 @@ impl<'a> Lowering<'a> {
                 Callee::Run(instance, gives) => {
                     let inner = typed.env_of(&Callee::Run(instance.clone(), gives.clone()));
                     let params = defs.params(instance.template);
-                    let (function, extra) = self.copy_for(out, &instance);
+                    let prepared = self.copy_for(out, &instance);
                     // Arguments are worked out in the order they are
                     // written, and then passed in the order of the
                     // parameters.
@@ -1125,10 +1146,7 @@ impl<'a> Lowering<'a> {
                     for (at, default) in defs.left_out(call) {
                         args[at] = self.expr(out, default, &inner).1;
                     }
-                    let mut args = args.concat();
-                    args.extend(extra);
-                    let types = self.scalars(&gives);
-                    let results = out.emit(form::Op::Call { function, args }, types);
+                    let results = self.finish_call(out, prepared, args.concat(), &gives);
                     (gives, results)
                 }
             },
@@ -1309,6 +1327,15 @@ impl<'a> Lowering<'a> {
                     }
                 }
                 _ => {}
+            }
+        }
+        // What the functions of the handlers in force assign, which a call of
+        // an operation inside the `loop` runs.
+        for handler in &out.handlers {
+            for func in &handler.operations {
+                if let Func::Lambda(lambda, frame, _) = func {
+                    assigned.extend(names_of(&lambda.body).into_iter().map(|n| (*frame, n)));
+                }
             }
         }
         let mut carried = Vec::new();

@@ -141,6 +141,7 @@ impl<'a> Lowering<'a> {
             let values = out.params(&types);
             out.define(name, ty, values);
         }
+        let mut slots: Vec<Slot> = Vec::new();
         for (id, def) in context {
             let below = out.handlers.len();
             let mut map: Vec<(usize, usize)> = Vec::new();
@@ -154,6 +155,13 @@ impl<'a> Lowering<'a> {
                         Some(func) => (Vec::new(), Some(moved(func, &map))),
                         None => (out.params(&c.scalars), None),
                     };
+                    if c.assigned {
+                        slots.push(Slot {
+                            frame: *frame,
+                            name: c.name.clone(),
+                            types: c.scalars.clone(),
+                        });
+                    }
                     out.frames[*frame].push(Bound {
                         name: c.name.clone(),
                         ty: c.ty.clone(),
@@ -173,11 +181,27 @@ impl<'a> Lowering<'a> {
         }
         let gives = view.gives.subst(&instance.args);
         let code = Code::Stmts(&view.f.body);
+        if !slots.is_empty() && has_return(&view.f.body) {
+            self.errors.push(Error::unsupported(
+                view.f.pos,
+                "a `return` in a function that runs under a handler whose functions assign a name,",
+            ));
+        }
         let mut result = self.leaving(&mut out, code, &instance.args, (&gives, true), Vec::new());
         if view.gives == Ty::Nothing {
             result.clear();
         }
-        let results = self.scalars(&gives);
+        let mut results = self.scalars(&gives);
+        // What it gives back of the names the functions of its handlers assign,
+        // as they are at its end.
+        for slot in &slots {
+            let at = out.frames[slot.frame]
+                .iter()
+                .rposition(|b| b.name == slot.name)
+                .expect("a name the functions of the handler use");
+            result.extend(out.frames[slot.frame][at].values.iter().copied());
+            results.extend(slot.types.iter().copied());
+        }
         out.blocks[out.current].end = form::End::Return(result);
         form::Function {
             types: out.types,
@@ -418,11 +442,9 @@ impl<'a> Lowering<'a> {
         let args = args.into_iter();
         match func {
             Func::Named(instance) => {
-                let (function, extra) = self.copy_for(out, &instance);
-                let mut args: Vec<form::Value> = args.flat_map(|a| a.values).collect();
-                args.extend(extra);
-                let types = self.scalars(gives);
-                out.emit(form::Op::Call { function, args }, types)
+                let prepared = self.copy_for(out, &instance);
+                let args: Vec<form::Value> = args.flat_map(|a| a.values).collect();
+                self.finish_call(out, prepared, args, gives)
             }
             Func::Lambda(lambda, frame, lambda_env) => {
                 let caller = std::mem::replace(&mut out.at, frame);
@@ -620,10 +642,10 @@ impl<'a> Lowering<'a> {
             work.extend(reach(func, &mut frames));
         }
         while let Some((frame, body)) = work.pop() {
-            let assigned: Vec<(&str, Pos)> = (statements(body).into_iter())
+            let assigned: Vec<(&str, ())> = (statements(body).into_iter())
                 .filter_map(|s| match s {
-                    Stmt::Assign { name, pos, .. } | Stmt::Define { name, pos, .. } => {
-                        Some((name.as_str(), *pos))
+                    Stmt::Assign { name, .. } | Stmt::Define { name, .. } => {
+                        Some((name.as_str(), ()))
                     }
                     _ => None,
                 })
@@ -633,19 +655,12 @@ impl<'a> Lowering<'a> {
                     continue;
                 };
                 let entry = frames.iter_mut().find(|(f, _)| *f == frame).expect("made");
-                if entry.1.iter().any(|c| c.name == name) {
+                let writes = assigned.iter().any(|(n, _)| *n == name);
+                if let Some(c) = entry.1.iter_mut().find(|c| c.name == name) {
+                    c.assigned |= writes && c.func.is_none() && !c.scalars.is_empty();
                     continue;
                 }
                 let bound = &out.frames[frame][at];
-                if let Some((_, pos)) = assigned.iter().find(|(n, _)| *n == name)
-                    && bound.func.is_none()
-                    && !bound.values.is_empty()
-                {
-                    self.errors.push(Error::unsupported(
-                        *pos,
-                        "a function a handler gives that assigns a name, under which a function that carries the effect runs,",
-                    ));
-                }
                 let scalars = match bound.func {
                     Some(_) => Vec::new(),
                     None => self.scalars(&bound.ty),
@@ -653,6 +668,7 @@ impl<'a> Lowering<'a> {
                 entry.1.push(Captured {
                     name: name.to_string(),
                     ty: bound.ty.clone(),
+                    assigned: writes && bound.func.is_none() && !bound.values.is_empty(),
                     scalars,
                     func: bound.func.clone(),
                 });
@@ -673,11 +689,7 @@ impl<'a> Lowering<'a> {
     /// its own arguments. A function that carries an effect a handler answers
     /// is built for the handlers it runs under, and takes what the functions of
     /// those handlers use; any other is one copy.
-    pub(super) fn copy_for(
-        &mut self,
-        out: &mut Out<'a>,
-        instance: &Instance,
-    ) -> (usize, Vec<form::Value>) {
+    pub(super) fn copy_for(&mut self, out: &mut Out<'a>, instance: &Instance) -> Prepared {
         let defs = self.typed.defs;
         let handled: Vec<usize> = match instance.template {
             Template::Free(f) if !defs.is_operation(f) => (defs.signatures[f].effects.iter())
@@ -687,7 +699,11 @@ impl<'a> Lowering<'a> {
             _ => Vec::new(),
         };
         if handled.is_empty() {
-            return (self.place(Body::Copy(instance.clone())), Vec::new());
+            return Prepared {
+                function: self.place(Body::Copy(instance.clone())),
+                extra: Vec::new(),
+                slots: Vec::new(),
+            };
         }
         let upto = (handled.iter())
             .map(|e| {
@@ -711,7 +727,8 @@ impl<'a> Lowering<'a> {
                 .map(|h| (h.id, h.def.clone().expect("made")))
                 .collect()
         });
-        let mut values = Vec::new();
+        let mut extra = Vec::new();
+        let mut slots = Vec::new();
         for h in &out.handlers[..upto] {
             let def = h.def.as_ref().expect("made");
             for (i, (orig, names)) in def.frames.iter().enumerate() {
@@ -721,12 +738,57 @@ impl<'a> Lowering<'a> {
                         .iter()
                         .rposition(|b| b.name == c.name)
                         .expect("a name the functions of the handler use");
-                    values.extend(out.frames[frame][at].values.iter().copied());
+                    extra.extend(out.frames[frame][at].values.iter().copied());
+                    if c.assigned {
+                        slots.push(Slot {
+                            frame,
+                            name: c.name.clone(),
+                            types: c.scalars.clone(),
+                        });
+                    }
                 }
             }
         }
         let function = self.place(Body::Under(instance.clone(), ids));
-        (function, values)
+        Prepared {
+            function,
+            extra,
+            slots,
+        }
+    }
+
+    /// Calls a copy with its arguments and what it takes besides them, which
+    /// gives its results, and sets the names it gives back to the values it
+    /// gave.
+    pub(super) fn finish_call(
+        &mut self,
+        out: &mut Out<'a>,
+        prepared: Prepared,
+        mut args: Vec<form::Value>,
+        gives: &Ty,
+    ) -> Vec<form::Value> {
+        args.extend(prepared.extra);
+        let mut types = self.scalars(gives);
+        let own = types.len();
+        for slot in &prepared.slots {
+            types.extend(slot.types.iter().copied());
+        }
+        let mut results = out.emit(
+            form::Op::Call {
+                function: prepared.function,
+                args,
+            },
+            types,
+        );
+        let mut given = results.split_off(own).into_iter();
+        for slot in &prepared.slots {
+            let at = out.frames[slot.frame]
+                .iter()
+                .rposition(|b| b.name == slot.name)
+                .expect("a name the functions of the handler use");
+            out.frames[slot.frame][at].values = given.by_ref().take(slot.types.len()).collect();
+        }
+        results
     }
 
     /// Lowers a copy of a function for the handlers it runs under: its own
