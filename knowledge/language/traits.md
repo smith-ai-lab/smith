@@ -6,6 +6,7 @@ status: partial
 built:
   - "`impl`, calls of trait functions with defaults"
   - "a type parameter of a trait's function, with a bound"
+  - "`Function`, declared by the prelude and given to every function of the file that is built that has a name and no type parameters and takes no function: `Function.name(f)`, `Function.about(f)` (the comment above it, its lines kept as lines), and `Function.call(f, args)`, which calls it with the fields of its `Args`, a struct made for it that is read from JSON as any struct is, with a field that has a default left out; a type parameter that only a `requires` names, as `A` and `R` of `Function[F, A, R]`, is the type the implementation says; a lambda is refused as having no name; a function of another module, and `Args` of `Describe`, are not given yet"
   - "a function's name written where a type is expected, as in `impl Described[double]`, which is found for that function and for no other of the same parameters and result, and a function given for a type parameter that a trait other than `Copy` and `Discard` bounds, which settles it to that function's type; a function of such a trait names the type in a parameter or its result, as any function of a trait must, so `describe(f: F)` and not `describe()`"
 ---
 
@@ -144,8 +145,8 @@ A trait that is implemented for functions can speak of what a function takes and
 
 ```
 trait Function[F, out Args, out R] {
-  fn name() -> str
-  fn about() -> str
+  fn name(f: F) -> str
+  fn about(f: F) -> str
   fn call(f: F, args: take Args) -> R
 }
 ```
@@ -164,13 +165,13 @@ fn scale(
 
 `Args` is a struct with a field `x` and a field `by`, whose default is `2.0`, and `R` is `f32`. A function of no parameters has a struct of no fields. So one trait is declared for functions of every number of parameters, and nothing about how a function is called changes: `scale(3.0, 2.0)` is written as it always was.
 
-- `name()` is the name the function was given, `"scale"`, and `about()` is the comment on it, `"Makes a length longer or shorter."`, or the empty text where it has none.
-- `call(f, args)` calls the function with the fields of `args` as its arguments, so `call(scale, args)` with `x` of `3.0` and `by` of `2.0` is `6.0`.
+- `Function.name(f)` is the name the function was given, `"scale"`, and `Function.about(f)` is the comment on it, `"Makes a length longer or shorter."`, or the empty text where it has none.
+- `Function.call(f, args)` calls the function with the fields of `args` as its arguments, so `call(scale, args)` with `x` of `3.0` and `by` of `2.0` is `6.0`.
 
 `Args` is a struct like any other, so it is given what a struct is given: it is read from a format by [`Deserialize`](../library/deserialize.md), with a field that has a default left out, and it describes itself, each field with its comment, by [`Describe`](../library/describe.md). That is how a library calls a function it was given with arguments it read, and tells whoever asks what the function takes, with no part of the function written twice. A function that takes a function with a name bounds it by `Function`.
 
 ```
-fn told[F: Function](f: F) -> str ! alloc { "{name()}: {about()}" }
+fn told[F: Function](f: F) -> str ! alloc { "{Function.name(f)}: {Function.about(f)}" }
 ```
 
 `told(scale)` is `"scale: Makes a length longer or shorter."`. A lambda has no name and no comment, and no `Function`, so `told(fn(x) { x })` is refused. The compiler does not build `Function`, so no words are quoted.

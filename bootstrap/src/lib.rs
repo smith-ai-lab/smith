@@ -5,6 +5,7 @@ mod check;
 mod comments;
 pub mod diag;
 mod divide;
+mod function_args;
 mod hash;
 mod lexer;
 mod parser;
@@ -285,7 +286,8 @@ pub fn lower_in(
     library: &[(&str, &str)],
 ) -> Result<scalar::Program, Vec<diag::Error>> {
     let tokens = lexer::lex(source).map_err(in_order)?;
-    let file = parser::parse(&tokens).map_err(in_order)?;
+    let mut file = parser::parse(&tokens).map_err(in_order)?;
+    with_function_args(&mut file, source);
     check::check(file, &check::Library::new(library))
         .map(|checked| checked.program)
         .map_err(in_order)
@@ -303,12 +305,21 @@ fn checked_in(
     let tokens = timings
         .stage("lex", || lexer::lex(source))
         .map_err(in_order)?;
-    let file = timings
+    let mut file = timings
         .stage("parse", || parser::parse(&tokens))
         .map_err(in_order)?;
+    with_function_args(&mut file, source);
     timings
         .stage("check", || check::check(file, library))
         .map_err(in_order)
+}
+
+/// Makes the structs of the arguments of the file's functions, when it writes
+/// `Function`, which they are for.
+fn with_function_args(file: &mut parser::File, source: &[u8]) {
+    if function_args::asks(file) {
+        function_args::add(file, std::str::from_utf8(source).unwrap_or_default());
+    }
 }
 
 fn in_order(mut errors: Vec<diag::Error>) -> Vec<diag::Error> {

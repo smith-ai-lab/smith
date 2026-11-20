@@ -4,7 +4,7 @@
 use super::*;
 
 /// A part of a string literal that holds expressions.
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Part {
     /// Text, with its escapes applied, which is never empty.
     Text(Vec<u8>),

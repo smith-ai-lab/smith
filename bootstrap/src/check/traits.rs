@@ -36,6 +36,7 @@ pub(super) const PRELUDE_TRAITS: &[&str] = &[
     "Checked",
     "Bits",
     "Convert",
+    "Function",
 ];
 
 /// Moves the `requires` lines that name a trait from the contracts of each
@@ -733,10 +734,54 @@ impl<'a> Defs<'a> {
         if let Some((i, all, sol)) = fit {
             return Found::Yes(all, By::Impl(i, sol));
         }
+        if k == self.function {
+            return self.function_given(types);
+        }
         match self.given_parts(k, types) {
             Some(parts) => self.given(k, types, &parts, scope, stack),
             None => Found::No,
         }
+    }
+
+    /// The implementation of `Function` given to `types`, whose first is the
+    /// type of a function's name: it is given when the function has a struct
+    /// of its arguments, which is the second type, and the third is what the
+    /// function gives.
+    fn function_given(&self, types: &[Ty]) -> Found {
+        let Ty::Named(f) = &types[0] else {
+            return Found::No;
+        };
+        match self.args_of(*f) {
+            Some(s) => Found::Yes(
+                vec![
+                    types[0].clone(),
+                    Ty::Struct(s, Vec::new()),
+                    self.signatures[*f].gives.clone(),
+                ],
+                By::Given,
+            ),
+            None => Found::No,
+        }
+    }
+
+    /// The struct that holds the arguments of function `f`, if one was made
+    /// for it.
+    pub(super) fn args_of(&self, f: usize) -> Option<usize> {
+        let name = &self.file.functions[f].name;
+        let (_, made) = self
+            .file
+            .args
+            .iter()
+            .find(|(function, _)| function == name)?;
+        self.file.structs.iter().position(|s| s.name == *made)
+    }
+
+    /// The comment on function `f`, if it was noted.
+    pub(super) fn about_of(&self, f: usize) -> &str {
+        let name = &self.file.functions[f].name;
+        (self.file.abouts.iter())
+            .find(|(function, _)| function == name)
+            .map_or("", |(_, about)| about.as_str())
     }
 
     /// The parts of the type of trait `k` whose implementations a given one
@@ -862,7 +907,7 @@ impl<'a> Defs<'a> {
                 }
             }
             By::Given => Instance {
-                template: Template::Given(k),
+                template: Template::Given(k, fi),
                 args: types.into_iter().chain(own).collect(),
             },
             By::Bound => unreachable!("a copy has no type parameter"),
@@ -872,7 +917,17 @@ impl<'a> Defs<'a> {
 
     /// The copies a copy of a given implementation runs: for `Fmt`, the
     /// `Repr` of its type, and for `Repr`, `Eq`, and `Ord`, that of each part.
-    pub(super) fn given_calls(&self, k: usize, types: &[Ty]) -> Vec<Instance> {
+    pub(super) fn given_calls(&self, k: usize, fi: usize, types: &[Ty]) -> Vec<Instance> {
+        if k == self.function {
+            // `call` runs the function it is given.
+            return match (&types[0], fi) {
+                (Ty::Named(f), 2) => vec![Instance {
+                    template: Template::Free(*f),
+                    args: Vec::new(),
+                }],
+                _ => Vec::new(),
+            };
+        }
         if self.serialize == Some(k) {
             return self.serialize_calls(&types[0], &types[1]);
         }
@@ -1028,6 +1083,23 @@ impl<'a> Defs<'a> {
     /// The end of the error that says `t` has no implementation of trait
     /// `k`, which names the part of `t` that lacks a trait, if that is why.
     pub(super) fn because(&self, k: usize, t: &Ty, scope: &Scope) -> String {
+        if k == self.function
+            && let Ty::Named(f) = t
+        {
+            let def = &self.file.functions[*f];
+            let name = written_name(&def.name);
+            return if !def.generics.is_empty() {
+                format!(", as `{name}` has type parameters of its own")
+            } else if def.params.iter().any(|p| p.ty.function) {
+                format!(
+                    ", as `{name}` takes a function, which the struct of its arguments cannot hold yet"
+                )
+            } else {
+                format!(
+                    ", as `{name}` is not written in the file that is built, where `Function` is made"
+                )
+            };
+        }
         if let Some(own) = self.containing_itself(t) {
             return format!(
                 ", as `{}` contains itself, and a type that does is given no `{}` until a function may call itself, which is not supported yet",
@@ -1091,10 +1163,75 @@ impl<'a> Defs<'a> {
         stack: &mut Vec<(usize, Vec<Ty>)>,
     ) -> Found {
         match self.find(k, types, scope, stack) {
-            Found::Yes(all, by) if all == self.kept_at_size(k, types) => Found::Yes(all, by),
-            Found::Yes(..) => Found::No,
+            // The types that are `out` follow from the others, so they are not
+            // compared: a bound that names one type leaves them as that type.
+            Found::Yes(all, by) => {
+                let kept = self.kept_at_size(k, types);
+                let same = (all.iter().zip(&kept).zip(&self.outs[k]))
+                    .filter(|(_, out)| !**out)
+                    .all(|((a, b), _)| a == b);
+                if same { Found::Yes(all, by) } else { Found::No }
+            }
             other => other,
         }
+    }
+
+    /// Fills in `sol`, for each requirement whose types that are not `out` are
+    /// known, the `out` types the implementation it finds has, so that a type
+    /// parameter that only a requirement names, as `A` and `R` of
+    /// `Function[F, A, R]`, is the type the implementation says. A type that
+    /// is settled already is left as it is.
+    pub(super) fn complete_outs(
+        &self,
+        requires: &[Requirement],
+        sol: &mut [Option<Ty>],
+        scope: &Scope,
+    ) {
+        for r in requires {
+            let outs = &self.outs[r.of];
+            if !outs.contains(&true) {
+                continue;
+            }
+            let types: Vec<Ty> = (r.types.iter().zip(outs))
+                .map(|(t, out)| if *out { Ty::Unknown } else { t.solved(sol) })
+                .collect();
+            if (types.iter().zip(outs)).any(|(t, out)| !out && t.unknown()) {
+                continue;
+            }
+            let Found::Yes(all, _) = self.find(r.of, &types, scope, &mut Vec::new()) else {
+                continue;
+            };
+            for ((pattern, found), out) in r.types.iter().zip(&all).zip(outs) {
+                if let (true, Ty::Param(p)) = (*out, pattern)
+                    && *p < sol.len()
+                    && sol[*p].is_none()
+                {
+                    sol[*p] = Some(found.clone());
+                }
+            }
+        }
+    }
+
+    /// Whether a `requires` line of `def` writes `name` where a trait has an
+    /// `out` type, which the implementation the other types choose settles.
+    pub(super) fn named_by_out(&self, def: &Function, name: &str) -> bool {
+        def.needs.iter().any(|e| {
+            let Expr::Index { of, index, .. } = e else {
+                return false;
+            };
+            let Expr::Name { name: tr, pos } = &**of else {
+                return false;
+            };
+            let Some(k) = self.trait_at(*pos, tr) else {
+                return false;
+            };
+            let items: Vec<&Expr> = match &**index {
+                Expr::Tuple { items, .. } => items.iter().collect(),
+                one => vec![one],
+            };
+            (items.iter().zip(&self.outs[k]))
+                .any(|(item, out)| *out && matches!(item, Expr::Name { name: n, .. } if n == name))
+        })
     }
 
     /// The error for a use at `pos` that implementations `a` and `b` both

@@ -44,6 +44,12 @@ trait Convert[A, B] {
   fn convert(a: A) -> B
 }
 
+trait Function[F, out Args, out R] {
+  fn name(f: F) -> str
+  fn about(f: F) -> str
+  fn call(f: F, args: take Args) -> R
+}
+
 trait Fmt[T] {
   fn fmt(value: T) -> str ! alloc
 }
