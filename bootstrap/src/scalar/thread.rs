@@ -1,7 +1,11 @@
 //! The pass after folding: a jump into a block that only chooses goes to the
 //! block the choice would take.
 //!
-//! One walk over each function's blocks, with no walk to find what to change.
+//! One walk over each function's blocks, from the last to the first, with no
+//! walk to find what to change. A block that a jump goes into has been sent on
+//! by then when it comes later in the function, so the jump goes where it goes
+//! in one step, and a chain of blocks is not gone through again from each block
+//! of it.
 //! A block counts as one to go through when it writes no memory and calls
 //! nothing, and no value it defines is read by another block, so skipping it
 //! leaves nothing unmade. A jump into such a block gives its parameters
@@ -77,7 +81,7 @@ fn threaded(mut f: Function) -> Function {
     localize(&mut f, &reached);
     let mut facts = facts(&f, &reached);
 
-    for a in 0..n {
+    for a in (0..n).rev() {
         let mut extra: Vec<Instruction> = Vec::new();
         let end = f.blocks[a].end.clone();
         let new = match end {
@@ -636,6 +640,7 @@ fn resolved(
     env: &mut Env,
 ) -> Option<(usize, Vec<Arg>)> {
     let block = &f.blocks[b];
+    crate::work::gone_through(block.params.len() + block.instructions.len());
     for (&p, &bind) in block.params.iter().zip(binds) {
         env.insert(p, bind);
     }
