@@ -348,7 +348,7 @@ fn every_executable_of_a_fused_product_gives_what_the_evaluator_gives() {
         assert_eq!(scalar::check(&made), Ok(()));
         let said = scalar::run(&made);
         let passed = scalar::passes(&made);
-        for target in building() {
+        for target in runnable() {
             scalar_runs_as(&made, target, &said);
             scalar_runs_as(&passed, target, &said);
         }
