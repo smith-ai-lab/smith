@@ -5,21 +5,38 @@
 use super::*;
 
 impl<'a> Checker<'a> {
-    /// At a call of a function from itself that is the last thing it does,
-    /// `arith` must prove that the measure of its `decreases`, worked out from
-    /// the arguments, is not below zero and is smaller than the measure now.
-    /// A call that is not the last thing the function does is refused, with
-    /// every call of a function that has no `decreases`, where `recursion`
-    /// looks for them, and is not looked at here.
+    /// At a call of a function from itself, `arith` must prove that the
+    /// measure of its `decreases`, worked out from the arguments, is not below
+    /// zero and is smaller than the measure now. A call that is not the last
+    /// thing the function does keeps a frame, in the memory of `alloc`, so the
+    /// function must carry `alloc`. Every call of a function that has no
+    /// `decreases` is refused where `recursion` looks for them, and is not
+    /// looked at here.
     fn call_decreases(&mut self, body: &mut Body<'a>, call: &Call, callee: usize, sig: &Signature) {
         let defs = self.defs;
         let Some(own) = body.f else { return };
-        if !std::ptr::eq(own, &*defs.file.functions[callee])
-            || own.decreases.is_empty()
+        if !std::ptr::eq(own, &*defs.file.functions[callee]) {
+            return;
+        }
+        if body.lambdas > 0 && !body.contract {
+            self.errors.push(Error::unsupported(
+                call.pos,
+                "a call of a function from itself inside a lambda",
+            ));
+            return;
+        }
+        if !tail_positions(own).contains(&call.pos) && !body.contract {
+            self.needs(
+                body,
+                "alloc",
+                call.pos,
+                "a call of itself that is not the last thing the function does",
+            );
+        }
+        if own.decreases.is_empty()
             || body.lambdas > 0
             || body.contract
             || matches!(body.numbers, Numbers::Finding(_))
-            || !tail_positions(own).contains(&call.pos)
         {
             return;
         }
@@ -1165,12 +1182,11 @@ impl<'a> Checker<'a> {
             });
         let reached: Vec<(Pos, usize)> = called.chain(passed).collect();
         let own = &defs.file.functions[f];
-        let tail = tail_positions(own);
         for (pos, callee) in reached {
-            if callee == f && tail.contains(&pos) {
-                // A call of the function from itself that is the last thing it
-                // does is a loop, which the measure of its `decreases` must
-                // prove ends, as `call_decreases` does where the call is checked.
+            if callee == f {
+                // A call of the function from itself ends only by the measure
+                // of its `decreases`, which `call_decreases` proves smaller
+                // where the call is checked.
                 if own.decreases.is_empty() {
                     self.errors.push(
                         Error::new(
