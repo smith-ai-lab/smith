@@ -732,9 +732,8 @@ struct Defs<'a> {
     /// How each module wrote its names, and what each calls what.
     resolution: Resolution,
     function_names: Map<&'a str, usize>,
-    struct_names: Map<&'a str, usize>,
-    enum_names: Map<&'a str, usize>,
-    trait_names: Map<&'a str, usize>,
+    /// The structs, enums, and traits, by name.
+    types: Map<&'a str, Item>,
     /// The functions of traits with each name, as the trait and the
     /// function's place in it.
     trait_fns: Map<&'a str, Vec<(usize, usize)>>,
@@ -834,17 +833,68 @@ impl<'a> Defs<'a> {
 
     /// The struct the name written at `pos` is, as `function` finds a function.
     fn struct_at(&self, pos: Pos, name: &str) -> Option<usize> {
-        self.by_scope(&self.struct_names, pos, name).copied()
+        match self.type_at(pos, name) {
+            Some(Item::Struct(s)) => Some(s),
+            _ => None,
+        }
     }
 
     /// The enum the name written at `pos` is.
     fn enum_at(&self, pos: Pos, name: &str) -> Option<usize> {
-        self.by_scope(&self.enum_names, pos, name).copied()
+        match self.type_at(pos, name) {
+            Some(Item::Enum(e)) => Some(e),
+            _ => None,
+        }
     }
 
     /// The trait the name written at `pos` is.
     fn trait_at(&self, pos: Pos, name: &str) -> Option<usize> {
-        self.by_scope(&self.trait_names, pos, name).copied()
+        match self.type_at(pos, name) {
+            Some(Item::Trait(k)) => Some(k),
+            _ => None,
+        }
+    }
+
+    /// The struct that the file calls `name`.
+    fn struct_named(&self, name: &str) -> Option<usize> {
+        match self.types.get(name) {
+            Some(Item::Struct(s)) => Some(*s),
+            _ => None,
+        }
+    }
+
+    /// The enum that the file calls `name`.
+    fn enum_named(&self, name: &str) -> Option<usize> {
+        match self.types.get(name) {
+            Some(Item::Enum(e)) => Some(*e),
+            _ => None,
+        }
+    }
+
+    /// The trait that the file calls `name`.
+    fn trait_named(&self, name: &str) -> Option<usize> {
+        match self.types.get(name) {
+            Some(Item::Trait(k)) => Some(*k),
+            _ => None,
+        }
+    }
+
+    /// The struct, enum, or trait the name written at `pos` is, which in a
+    /// debug build is asked of the module that wrote it too.
+    fn type_at(&self, pos: Pos, name: &str) -> Option<Item> {
+        let found = self.types.get(name).copied();
+        if cfg!(debug_assertions) {
+            let key = self
+                .resolution
+                .key(pos, name, &|n| self.types.contains_key(n));
+            assert_eq!(
+                found,
+                self.types.get(key.as_str()).copied(),
+                "`{name}` at {pos:?}, key `{key}`, written `{}`",
+                self.resolution.written_at(pos, name)
+            );
+        }
+        found
     }
 
     /// The functions of traits that the name written at `pos` is.
@@ -961,7 +1011,8 @@ impl<'a> Defs<'a> {
                 Ty::Unknown
             };
         }
-        if let Some(s) = self.struct_at(t.pos, name) {
+        let named = self.type_at(t.pos, name);
+        if let Some(Item::Struct(s)) = named {
             let args: Vec<Ty> = t
                 .args
                 .iter()
@@ -978,7 +1029,7 @@ impl<'a> Defs<'a> {
                 Ty::structure(s, args)
             };
         }
-        if let Some(e) = self.enum_at(t.pos, name) {
+        if let Some(Item::Enum(e)) = named {
             let args: Vec<Ty> = t
                 .args
                 .iter()
@@ -1014,7 +1065,7 @@ impl<'a> Defs<'a> {
                 element => Ty::list(element),
             };
         }
-        if name == "Slice" && self.struct_at(t.pos, name).is_none() {
+        if name == "Slice" && !matches!(named, Some(Item::Struct(_))) {
             if t.args.len() != 1 {
                 errors.push(Error::new(
                     t.pos,
@@ -1156,8 +1207,7 @@ impl<'a> Defs<'a> {
 
     /// Whether the name is that of a type, other than a type parameter.
     fn is_type(&self, name: &str) -> bool {
-        self.struct_names.contains_key(name)
-            || self.enum_names.contains_key(name)
+        matches!(self.types.get(name), Some(Item::Struct(_) | Item::Enum(_)))
             || name == TEXT
             || name == "Slice"
             || Int::named(name).is_some()
@@ -1861,9 +1911,7 @@ fn check_file(
     }
     defined.sort_by_key(|(pos, _, _)| *pos);
     let mut function_names: Map<&str, usize> = Map::default();
-    let mut struct_names: Map<&str, usize> = Map::default();
-    let mut enum_names: Map<&str, usize> = Map::default();
-    let mut trait_names: Map<&str, usize> = Map::default();
+    let mut types: Map<&str, Item> = Map::default();
     let mut trait_fns: Map<&str, Vec<(usize, usize)>> = Map::default();
     for (pos, name, claim) in defined {
         let is_type = matches!(claim, Claim::Struct(_) | Claim::Enum(_) | Claim::Trait(_));
@@ -1882,20 +1930,15 @@ fn check_file(
         };
         if prelude_name && !of_prelude(pos) {
             errors.push(prelude(name));
-        } else if is_type && struct_names.contains_key(name) {
+        } else if let Some(first) = if is_type { types.get(name) } else { None } {
+            let what = match first {
+                Item::Struct(_) => "a struct",
+                Item::Enum(_) => "an enum",
+                _ => "a trait",
+            };
             errors.push(Error::new(
                 pos,
-                format!("there is already a struct named `{name}`"),
-            ));
-        } else if is_type && enum_names.contains_key(name) {
-            errors.push(Error::new(
-                pos,
-                format!("there is already an enum named `{name}`"),
-            ));
-        } else if is_type && trait_names.contains_key(name) {
-            errors.push(Error::new(
-                pos,
-                format!("there is already a trait named `{name}`"),
+                format!("there is already {what} named `{name}`"),
             ));
         } else if !is_type && function_names.contains_key(name) {
             errors.push(Error::new(
@@ -1922,13 +1965,13 @@ fn check_file(
                     }
                 }
                 Claim::Struct(i) => {
-                    struct_names.insert(name, i);
+                    types.insert(name, Item::Struct(i));
                 }
                 Claim::Enum(i) => {
-                    enum_names.insert(name, i);
+                    types.insert(name, Item::Enum(i));
                 }
                 Claim::Trait(k) => {
-                    trait_names.insert(name, k);
+                    types.insert(name, Item::Trait(k));
                 }
                 Claim::TraitFn(k, i) => {
                     let list = trait_fns.entry(name).or_default();
@@ -1955,9 +1998,7 @@ fn check_file(
     let start_at = function_names.get(START).copied().unwrap_or(main);
     let names = Names {
         functions: function_names,
-        structs: struct_names,
-        enums: enum_names,
-        traits: trait_names,
+        types,
         trait_fns,
     };
     let roots = roots_of(&file, start_at, whole);
@@ -1979,9 +2020,7 @@ fn check_file(
         file: &file,
         resolution,
         function_names: names.functions,
-        struct_names: names.structs,
-        enum_names: names.enums,
-        trait_names: names.traits,
+        types: names.types,
         trait_fns: names.trait_fns,
         cyclic: vec![false; file.structs.len()],
         cyclic_enums: vec![false; file.enums.len()],
@@ -2235,23 +2274,22 @@ fn roots_of(file: &File, start_at: usize, whole: bool) -> Vec<Item> {
 /// What a name stands for in a file: the item that first defines it.
 struct Names<'a> {
     functions: Map<&'a str, usize>,
-    structs: Map<&'a str, usize>,
-    enums: Map<&'a str, usize>,
-    traits: Map<&'a str, usize>,
+    /// The structs, enums, and traits, by name: a struct before an enum, and an
+    /// enum before a trait, when two have one name.
+    types: Map<&'a str, Item>,
     trait_fns: Map<&'a str, Vec<(usize, usize)>>,
 }
 
 impl<'a> Names<'a> {
     /// The key of the table a struct, an enum, or a trait is under, where the
     /// name is written at `pos`: the text of the name. In a debug build, the
-    /// module that wrote it is asked too, and must find the same items.
+    /// module that wrote it is asked too, and must find the same item.
     fn type_key<'n>(&self, resolution: &Resolution, pos: Pos, name: &'n str) -> &'n str {
         if cfg!(debug_assertions) {
-            let find = |n: &str| (self.structs.get(n), self.enums.get(n), self.traits.get(n));
-            let key = resolution.key(pos, name, &|n| find(n) != (None, None, None));
+            let key = resolution.key(pos, name, &|n| self.types.contains_key(n));
             assert_eq!(
-                find(name),
-                find(&key),
+                self.types.get(name),
+                self.types.get(key.as_str()),
                 "`{name}` at {pos:?}, key `{key}`, written `{}`",
                 resolution.written_at(pos, name)
             );
@@ -2259,26 +2297,34 @@ impl<'a> Names<'a> {
         name
     }
 
+    /// The struct, enum, or trait that the name written at `pos` is.
+    fn type_item(&self, resolution: &Resolution, pos: Pos, name: &str) -> Option<Item> {
+        self.types
+            .get(self.type_key(resolution, pos, name))
+            .copied()
+    }
+
     /// The names of the items of the file, with no mistake reported.
     fn of(file: &'a File) -> Names<'a> {
         let mut names = Names {
             functions: Map::default(),
-            structs: Map::default(),
-            enums: Map::default(),
-            traits: Map::default(),
+            types: Map::default(),
             trait_fns: Map::default(),
         };
         for (i, f) in file.functions.iter().enumerate() {
             names.functions.entry(f.name.as_str()).or_insert(i);
         }
         for (i, s) in file.structs.iter().enumerate() {
-            names.structs.entry(s.name.as_str()).or_insert(i);
+            names
+                .types
+                .entry(s.name.as_str())
+                .or_insert(Item::Struct(i));
         }
         for (i, e) in file.enums.iter().enumerate() {
-            names.enums.entry(e.name.as_str()).or_insert(i);
+            names.types.entry(e.name.as_str()).or_insert(Item::Enum(i));
         }
         for (k, t) in file.traits.iter().enumerate() {
-            names.traits.entry(t.name.as_str()).or_insert(k);
+            names.types.entry(t.name.as_str()).or_insert(Item::Trait(k));
             for (i, f) in t.functions.iter().enumerate() {
                 let list = names.trait_fns.entry(f.name.as_str()).or_default();
                 if !list.iter().any(|(t, _)| *t == k) {
@@ -2332,10 +2378,10 @@ fn reach(
         // The types the `impl` is chosen by, which are those of the arguments
         // the trait does not write `out` for: an `out` type is the answer of
         // a call that chooses the `impl`, so it is reached with it.
-        let outs = names
-            .traits
-            .get(names.type_key(resolution, im.pos, &im.name))
-            .map(|&k| &file.traits[k].generics);
+        let outs = match names.type_item(resolution, im.pos, &im.name) {
+            Some(Item::Trait(k)) => Some(&file.traits[k].generics),
+            _ => None,
+        };
         let by = im
             .args
             .iter()
@@ -2343,11 +2389,10 @@ fn reach(
             .filter(|(j, _)| !outs.is_some_and(|g| g.get(*j).is_some_and(|g| g.out.is_some())));
         let mut types = Vec::new();
         for (name, pos) in by.flat_map(|(_, t)| type_names(t)) {
-            let name = names.type_key(resolution, pos, name);
-            if let Some(&s) = names.structs.get(name) {
-                types.push(Item::Struct(s));
-            } else if let Some(&e) = names.enums.get(name) {
-                types.push(Item::Enum(e));
+            if let Some(item @ (Item::Struct(_) | Item::Enum(_))) =
+                names.type_item(resolution, pos, name)
+            {
+                types.push(item);
             }
         }
         for_types.push(types);
@@ -2356,16 +2401,10 @@ fn reach(
     while i < queue.len() {
         let mut found: Vec<Item> = Vec::new();
         let built = |name: &str, found: &mut Vec<Item>| {
-            if let Some(&s) = names.structs.get(name) {
-                found.push(Item::Struct(s));
-            } else if let Some(&e) = names.enums.get(name) {
-                found.push(Item::Enum(e));
-            } else if let Some(&k) = names.traits.get(name) {
-                found.push(Item::Trait(k));
-            }
+            found.extend(names.types.get(name));
         };
         let type_name = |name: &str, pos: Pos, found: &mut Vec<Item>| {
-            built(names.type_key(resolution, pos, name), found);
+            found.extend(names.type_item(resolution, pos, name));
         };
         // A case written in full names its enum, and a function may be
         // passed as a value by its name.
@@ -4409,7 +4448,8 @@ impl<'a> Lazy<'a> {
                 Item::Fn(_) | Item::Impl(_) => {}
             }
         }
-        let loaded_type = |n: &str| names.structs.contains_key(n) || names.enums.contains_key(n);
+        let loaded_type =
+            |n: &str| matches!(names.types.get(n), Some(Item::Struct(_) | Item::Enum(_)));
         let mut out: Vec<(usize, usize)> = Vec::new();
         for (m, module) in self.modules.iter().enumerate() {
             let own: Set<&str> = types
@@ -4420,15 +4460,12 @@ impl<'a> Lazy<'a> {
                 })
                 .collect();
             for &name in &traits {
-                let outs: Vec<bool> = (names.traits.get(name))
-                    .map(|&k| {
-                        file.traits[k]
-                            .generics
-                            .iter()
-                            .map(|g| g.out.is_some())
-                            .collect()
-                    })
-                    .unwrap_or_default();
+                let outs: Vec<bool> = match names.types.get(name) {
+                    Some(&Item::Trait(k)) => (file.traits[k].generics.iter())
+                        .map(|g| g.out.is_some())
+                        .collect(),
+                    _ => Vec::new(),
+                };
                 out.extend(
                     module
                         .impls_of(name, &outs, &types, &own, &loaded_type, &|n| {
@@ -4690,12 +4727,10 @@ fn cycles(
     };
     for ty in types {
         for (name, pos) in type_names(ty) {
-            let t = if let Some(s) = defs.struct_at(pos, name) {
-                Def::Struct(s)
-            } else if let Some(e) = defs.enum_at(pos, name) {
-                Def::Enum(e)
-            } else {
-                continue;
+            let t = match defs.type_at(pos, name) {
+                Some(Item::Struct(s)) => Def::Struct(s),
+                Some(Item::Enum(e)) => Def::Enum(e),
+                _ => continue,
             };
             if let Some(at) = path.iter().position(|p| *p == t) {
                 let what = match t {
@@ -5998,10 +6033,7 @@ impl<'a> Checker<'a> {
                 ));
             } else if !of_prelude(g.pos)
                 && !of_library(g.pos)
-                && (name == TEXT
-                    || defs.struct_names.contains_key(name)
-                    || defs.enum_names.contains_key(name)
-                    || defs.trait_names.contains_key(name))
+                && (name == TEXT || defs.types.contains_key(name))
             {
                 self.errors.push(Error::new(
                     g.pos,
