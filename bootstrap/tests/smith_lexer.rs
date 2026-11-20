@@ -27,16 +27,64 @@ pub const MACHINE: &[Test] = &[
         the_lexer_written_in_smith_lexes_every_generated_program_as_the_rust_lexer_does,
     ),
     (
-        "the_lexer_written_in_smith_lexes_every_generated_program_with_a_lexical_mistake_as_the_rust_lexer_does",
-        the_lexer_written_in_smith_lexes_every_generated_program_with_a_lexical_mistake_as_the_rust_lexer_does,
+        "the_lexer_written_in_smith_lexes_every_generated_program_with_a_lexical_mistake_as_the_rust_lexer_does_part_1_of_8",
+        || the_lexer_written_in_smith_lexes_every_generated_program_with_a_lexical_mistake_as_the_rust_lexer_does(0),
     ),
     (
-        "the_lexer_written_in_smith_lexes_every_generated_program_with_pipes_as_the_rust_lexer_does",
-        the_lexer_written_in_smith_lexes_every_generated_program_with_pipes_as_the_rust_lexer_does,
+        "the_lexer_written_in_smith_lexes_every_generated_program_with_a_lexical_mistake_as_the_rust_lexer_does_part_2_of_8",
+        || the_lexer_written_in_smith_lexes_every_generated_program_with_a_lexical_mistake_as_the_rust_lexer_does(1),
     ),
     (
-        "the_lexer_written_in_smith_lexes_every_case_file_as_the_rust_lexer_does",
-        the_lexer_written_in_smith_lexes_every_case_file_as_the_rust_lexer_does,
+        "the_lexer_written_in_smith_lexes_every_generated_program_with_a_lexical_mistake_as_the_rust_lexer_does_part_3_of_8",
+        || the_lexer_written_in_smith_lexes_every_generated_program_with_a_lexical_mistake_as_the_rust_lexer_does(2),
+    ),
+    (
+        "the_lexer_written_in_smith_lexes_every_generated_program_with_a_lexical_mistake_as_the_rust_lexer_does_part_4_of_8",
+        || the_lexer_written_in_smith_lexes_every_generated_program_with_a_lexical_mistake_as_the_rust_lexer_does(3),
+    ),
+    (
+        "the_lexer_written_in_smith_lexes_every_generated_program_with_a_lexical_mistake_as_the_rust_lexer_does_part_5_of_8",
+        || the_lexer_written_in_smith_lexes_every_generated_program_with_a_lexical_mistake_as_the_rust_lexer_does(4),
+    ),
+    (
+        "the_lexer_written_in_smith_lexes_every_generated_program_with_a_lexical_mistake_as_the_rust_lexer_does_part_6_of_8",
+        || the_lexer_written_in_smith_lexes_every_generated_program_with_a_lexical_mistake_as_the_rust_lexer_does(5),
+    ),
+    (
+        "the_lexer_written_in_smith_lexes_every_generated_program_with_a_lexical_mistake_as_the_rust_lexer_does_part_7_of_8",
+        || the_lexer_written_in_smith_lexes_every_generated_program_with_a_lexical_mistake_as_the_rust_lexer_does(6),
+    ),
+    (
+        "the_lexer_written_in_smith_lexes_every_generated_program_with_a_lexical_mistake_as_the_rust_lexer_does_part_8_of_8",
+        || the_lexer_written_in_smith_lexes_every_generated_program_with_a_lexical_mistake_as_the_rust_lexer_does(7),
+    ),
+    (
+        "the_lexer_written_in_smith_lexes_every_generated_program_with_pipes_as_the_rust_lexer_does_part_1_of_4",
+        || the_lexer_written_in_smith_lexes_every_generated_program_with_pipes_as_the_rust_lexer_does(0),
+    ),
+    (
+        "the_lexer_written_in_smith_lexes_every_generated_program_with_pipes_as_the_rust_lexer_does_part_2_of_4",
+        || the_lexer_written_in_smith_lexes_every_generated_program_with_pipes_as_the_rust_lexer_does(1),
+    ),
+    (
+        "the_lexer_written_in_smith_lexes_every_generated_program_with_pipes_as_the_rust_lexer_does_part_3_of_4",
+        || the_lexer_written_in_smith_lexes_every_generated_program_with_pipes_as_the_rust_lexer_does(2),
+    ),
+    (
+        "the_lexer_written_in_smith_lexes_every_generated_program_with_pipes_as_the_rust_lexer_does_part_4_of_4",
+        || the_lexer_written_in_smith_lexes_every_generated_program_with_pipes_as_the_rust_lexer_does(3),
+    ),
+    (
+        "the_lexer_written_in_smith_lexes_every_case_file_as_the_rust_lexer_does_part_1_of_3",
+        || the_lexer_written_in_smith_lexes_every_case_file_as_the_rust_lexer_does(0),
+    ),
+    (
+        "the_lexer_written_in_smith_lexes_every_case_file_as_the_rust_lexer_does_part_2_of_3",
+        || the_lexer_written_in_smith_lexes_every_case_file_as_the_rust_lexer_does(1),
+    ),
+    (
+        "the_lexer_written_in_smith_lexes_every_case_file_as_the_rust_lexer_does_part_3_of_3",
+        || the_lexer_written_in_smith_lexes_every_case_file_as_the_rust_lexer_does(2),
     ),
     (
         "strings_nested_four_and_five_deep_are_lexed_differently_until_recursion_is_built",
@@ -154,6 +202,15 @@ fn place_pipes(g: &mut Gen, mut text: Vec<u8>) -> Vec<u8> {
     text
 }
 
+/// The part `part` of `parts` of the texts, numbered from 0: each text that
+/// is `part` more than a multiple of `parts` in the list, so that the parts are
+/// the texts of one test, no text is in two of them, and the long texts, which
+/// the lexer written in Smith takes the square of the time for, are not all in
+/// one.
+fn part_of(texts: Vec<Vec<u8>>, part: usize, parts: usize) -> Vec<Vec<u8>> {
+    texts.into_iter().skip(part).step_by(parts).collect()
+}
+
 /// Builds the program that lexes `texts` for each target this machine runs, and
 /// checks that it prints what the Rust lexer says. For a fingerprint, notes
 /// what would be run.
@@ -214,7 +271,7 @@ fn the_lexer_written_in_smith_lexes_every_generated_program_as_the_rust_lexer_do
     lexes_as_the_rust_lexer_does(&generated_programs());
 }
 
-fn the_lexer_written_in_smith_lexes_every_generated_program_with_a_lexical_mistake_as_the_rust_lexer_does()
+fn the_lexer_written_in_smith_lexes_every_generated_program_with_a_lexical_mistake_as_the_rust_lexer_does(part: usize)
  {
     // Each program, with a mistake of each of several kinds, as a seed picks.
     let texts: Vec<Vec<u8>> = generated_programs()
@@ -223,25 +280,25 @@ fn the_lexer_written_in_smith_lexes_every_generated_program_with_a_lexical_mista
         .flat_map(|(n, text)| (0..MISTAKES).map(move |k| (n as u64 * MISTAKES + k, text.clone())))
         .map(|(case, text)| generate::sample(32, case, |g: &mut Gen| place_a_mistake(g, text.clone())))
         .collect();
-    lexes_as_the_rust_lexer_does(&texts);
+    lexes_as_the_rust_lexer_does(&part_of(texts, part, 8));
 }
 
-fn the_lexer_written_in_smith_lexes_every_generated_program_with_pipes_as_the_rust_lexer_does() {
+fn the_lexer_written_in_smith_lexes_every_generated_program_with_pipes_as_the_rust_lexer_does(part: usize) {
     let texts: Vec<Vec<u8>> = generated_programs()
         .into_iter()
         .enumerate()
         .flat_map(|(n, text)| (0..PIPED).map(move |k| (n as u64 * PIPED + k, text.clone())))
         .map(|(case, text)| generate::sample(33, case, |g: &mut Gen| place_pipes(g, text.clone())))
         .collect();
-    lexes_as_the_rust_lexer_does(&texts);
+    lexes_as_the_rust_lexer_does(&part_of(texts, part, 4));
 }
 
-fn the_lexer_written_in_smith_lexes_every_case_file_as_the_rust_lexer_does() {
+fn the_lexer_written_in_smith_lexes_every_case_file_as_the_rust_lexer_does(part: usize) {
     let texts: Vec<Vec<u8>> = targets::case_files()
         .iter()
         .map(|path| std::fs::read(path).unwrap())
         .collect();
-    lexes_as_the_rust_lexer_does(&texts);
+    lexes_as_the_rust_lexer_does(&part_of(texts, part, 3));
 }
 
 /// A string nested this many deep, each inside an expression of the one
