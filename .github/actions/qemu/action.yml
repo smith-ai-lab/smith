@@ -52,10 +52,12 @@ runs:
           echo "::error::no package of qemu-user is in $dir, so no chip can be made to lack a level; the test of that fails without it"
           exit 1
         fi
-        # What the package needs besides itself is what the image of the run that
-        # kept it lacked. Another image may lack more, and then the mirror is
-        # asked, and a warning says so, so that the test still runs.
-        if ! sudo apt-get install -y --no-install-recommends --no-download "$dir"/*.deb; then
+        # dpkg does not work out what to fetch, as apt does, and apt asked for
+        # archives it had not on an image that was not the one of the run that
+        # kept these. What the package needs besides itself is what that image
+        # lacked. Another image may lack more, and then the mirror is asked, and
+        # a warning says so, so that the test still runs.
+        if ! sudo dpkg -i "$dir"/*.deb; then
           echo "::warning::what was kept does not install on this image; fetching qemu-user from the mirror"
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends qemu-user
