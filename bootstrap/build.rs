@@ -170,7 +170,7 @@ fn standard_library(root: &Path) {
 }
 
 /// The names of the items a module writes with `pub`, and of the functions of
-/// its public traits, read from the lines that start them.
+/// its public traits and the operations of its public effects, read from the lines that start them.
 fn exports(source: &str) -> Vec<String> {
     let name = |rest: &str| -> String {
         (rest.chars())
@@ -180,7 +180,10 @@ fn exports(source: &str) -> Vec<String> {
     let mut found = Vec::new();
     let mut in_trait = false;
     for line in source.lines() {
-        if let Some(rest) = line.strip_prefix("pub trait ") {
+        if let Some(rest) = ["pub trait ", "pub effect "]
+            .iter()
+            .find_map(|k| line.strip_prefix(k))
+        {
             found.push(name(rest));
             in_trait = true;
         } else if let Some(rest) = ["pub fn ", "pub struct ", "pub enum "]

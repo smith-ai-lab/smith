@@ -51,7 +51,7 @@ use crate::parser::{
     Arg, ArithOp, Arm, Bound, Call, Enum, Expr, File, Form, Function, Generic, Impl, Lambda, Loop,
     Match, Over, Part, Pattern, Qualified, Range, Stmt, Struct, Trait, Type, Use,
 };
-use effects_with_and_try::{BUILT, BUILT_IN_EFFECTS, LIBRARY_EFFECTS};
+use effects_with_and_try::{BUILT, BUILT_IN_EFFECTS, LIBRARY_EFFECTS, declarations};
 use lists_and_text::{as_read, is_freeze, is_push, is_utf8};
 use names::{ModuleScope, own_final, renamed_tokens};
 use numbers_and_operators::{Int, Narrowing, Numbers, flexible, literal_blocks, narrowing};
@@ -61,11 +61,6 @@ use traits::{
 };
 
 include!(concat!(env!("OUT_DIR"), "/std_modules.rs"));
-
-/// The effects a module of the standard library exports that its source does
-/// not declare, because effect declarations are not built: the module, and
-/// the effect. The compiler holds this fact until they are.
-const LIBRARY_EFFECTS_EXPORTED: &[(&str, &str)] = &[("console", "console")];
 
 /// The names that are in scope in every file with no `use`, as the page of
 /// the prelude lists them, which a `use` is refused for.
@@ -1159,7 +1154,7 @@ impl<'a> Defs<'a> {
             effects: {
                 let mut built: Vec<String> = Vec::new();
                 for (e, _) in &f.effects {
-                    if BUILT.contains(&e.as_str()) && !built.contains(e) {
+                    if (BUILT.contains(&e.as_str()) || self.declares(e)) && !built.contains(e) {
                         built.push(e.clone());
                     }
                 }
@@ -1798,7 +1793,7 @@ fn check_file(
             )
         };
         let prelude_name = match claim {
-            Claim::Fn(_) | Claim::TraitFn(..) => name == "print",
+            Claim::Fn(_) | Claim::TraitFn(..) => false,
             Claim::Struct(_) | Claim::Enum(_) => PRELUDE_TYPES.contains(&name),
             Claim::Trait(_) => {
                 name == TEXT || TRAITS_NOT_BUILT.contains(&name) || PRELUDE_TRAITS.contains(&name)
@@ -1875,6 +1870,7 @@ fn check_file(
 
     // Where the program starts: at `main`, or at the function that ends the
     // program with the status `main`'s result gives.
+    declarations(&file, main, &mut errors);
     let start_at = function_names.get(START).copied().unwrap_or(main);
     let names = Names {
         functions: function_names,
@@ -2035,6 +2031,7 @@ fn check_file(
     checker.main(main);
     for &item in &reached {
         match item {
+            Item::Fn(f) if defs.provided(f).is_some() => {}
             Item::Fn(f) => checker.signature(f),
             Item::Struct(s) => checker.structure(s),
             Item::Enum(e) => checker.enumeration(e),
@@ -2044,6 +2041,7 @@ fn check_file(
     }
     for &item in &reached {
         match item {
+            Item::Fn(f) if defs.is_operation(f) => {}
             Item::Fn(f) => checker.body(Template::Free(f)),
             Item::Impl(i) if !unbuilt.contains(&i) => {
                 if let Some(info) = &defs.impls[i] {
@@ -2575,9 +2573,6 @@ fn std_home(name: &str) -> Option<&'static str> {
     if SIZES.contains(&name) {
         return Some("bits");
     }
-    if let Some((module, _)) = LIBRARY_EFFECTS_EXPORTED.iter().find(|(_, e)| *e == name) {
-        return Some(module);
-    }
     STD_EXPORTS
         .iter()
         .find(|(_, names)| names.contains(&name))
@@ -2760,11 +2755,9 @@ struct Module<'a> {
     tokens: Vec<crate::lexer::Token>,
     file: File,
     /// The names a `use` may list: those its source writes with `pub`, the
-    /// functions of the traits it writes with `pub`, and the effects the
-    /// compiler holds for it.
+    /// functions of the traits it writes with `pub`, and the operations of the
+    /// effects it writes with `pub`.
     exports: Vec<String>,
-    /// The effects among the exports, which the module does not define.
-    effects: Vec<String>,
     /// The names the module lists from others, each with the module it takes
     /// it from, by its place among those read.
     imports: Vec<Import>,
@@ -2842,6 +2835,7 @@ fn defined_names(file: &File) -> HashSet<&str> {
     (file.functions.iter().map(|f| f.name.as_str()))
         .chain(file.structs.iter().map(|s| s.name.as_str()))
         .chain(file.enums.iter().map(|e| e.name.as_str()))
+        .chain(file.effects.iter().map(|e| e.name.as_str()))
         .chain(file.traits.iter().flat_map(|t| {
             std::iter::once(t.name.as_str()).chain(t.functions.iter().map(|f| f.name.as_str()))
         }))
@@ -2907,8 +2901,9 @@ impl<'l, 'a> Resolver<'l, 'a> {
 
     /// The module of the standard library that exports each name. A module's
     /// source is not lexed or parsed for it: an item that a module exports is
-    /// written with `pub` at the start of a line, as `fn`, `struct`, `enum`, or
-    /// `trait`, so the names are read off those lines.
+    /// written with `pub` at the start of a line, as `fn`, `struct`, `enum`,
+    /// `trait`, or `effect`, and the operations of an effect are its indented
+    /// `fn` lines, so the names are read off those lines.
     fn homes(&self) -> &HashMap<String, &'a str> {
         self.homes.get_or_init(|| {
             let mut homes = HashMap::new();
@@ -2916,11 +2911,23 @@ impl<'l, 'a> Resolver<'l, 'a> {
                 let Some(source) = self.library.source(&format!("std.{module}")) else {
                     continue;
                 };
+                let mut in_effect = false;
                 for line in source.lines() {
-                    let Some(rest) = ["pub fn ", "pub struct ", "pub enum ", "pub trait "]
+                    let operation = in_effect.then(|| line.trim_start().strip_prefix("fn "));
+                    in_effect &= line != "}";
+                    let Some(rest) = operation.flatten().or_else(|| {
+                        let rest = [
+                            "pub fn ",
+                            "pub struct ",
+                            "pub enum ",
+                            "pub trait ",
+                            "pub effect ",
+                        ]
                         .into_iter()
-                        .find_map(|start| line.strip_prefix(start))
-                    else {
+                        .find_map(|start| line.strip_prefix(start))?;
+                        in_effect = line.starts_with("pub effect ");
+                        Some(rest)
+                    }) else {
                         continue;
                     };
                     let end = rest
@@ -2981,18 +2988,12 @@ impl<'l, 'a> Resolver<'l, 'a> {
             .into_iter()
             .map(String::from)
             .collect();
-        let effects: Vec<String> = LIBRARY_EFFECTS_EXPORTED
-            .iter()
-            .filter(|(m, _)| format!("std.{m}") == name)
-            .map(|(_, effect)| effect.to_string())
-            .collect();
         let mut exports = file.exports.clone();
         exports.extend(
             (file.traits.iter())
                 .filter(|t| file.exports.contains(&t.name))
                 .flat_map(|t| t.functions.iter().map(|f| f.name.clone())),
         );
-        exports.extend(effects.iter().cloned());
         let module = Module {
             source,
             pieces: None,
@@ -3003,7 +3004,6 @@ impl<'l, 'a> Resolver<'l, 'a> {
             tokens,
             file,
             exports,
-            effects,
             imports: Vec::new(),
             aliases: Vec::new(),
             entry_imported: Vec::new(),
@@ -3084,18 +3084,12 @@ impl<'l, 'a> Resolver<'l, 'a> {
         }
         held.extend(held_by_the_compiler(&file).into_iter().map(String::from));
         let defined: HashSet<String> = defined_names(&file).into_iter().map(String::from).collect();
-        let effects: Vec<String> = LIBRARY_EFFECTS_EXPORTED
-            .iter()
-            .filter(|(m, _)| format!("std.{m}") == name)
-            .map(|(_, effect)| effect.to_string())
-            .collect();
         let mut exports = file.exports.clone();
         exports.extend(
             (file.traits.iter())
                 .filter(|t| file.exports.contains(&t.name))
                 .flat_map(|t| t.functions.iter().map(|f| f.name.clone())),
         );
-        exports.extend(effects.iter().cloned());
         let pieces = Pieces::new(&source, list);
         let module = Module {
             source,
@@ -3107,7 +3101,6 @@ impl<'l, 'a> Resolver<'l, 'a> {
             tokens: Vec::new(),
             file,
             exports,
-            effects,
             imports: Vec::new(),
             aliases: Vec::new(),
             entry_imported: Vec::new(),
@@ -3423,7 +3416,6 @@ impl<'l, 'a> Resolver<'l, 'a> {
         let own: Vec<&str> = match reader {
             Reader::Entry => Vec::new(),
             Reader::Module(of) => (self.read[of].exports.iter())
-                .chain(&self.read[of].effects)
                 .map(String::as_str)
                 .chain(
                     if self.read[of].name == "std.bits" {
@@ -3513,8 +3505,7 @@ impl<'l, 'a> Resolver<'l, 'a> {
     fn fixed(&self, slot: usize, name: &str) -> bool {
         let module = &self.read[slot];
         module.name.starts_with("std.")
-            && (module.effects.iter().any(|e| e == name)
-                || (module.file.traits.iter()).any(|t| t.functions.iter().any(|f| f.name == name))
+            && ((module.file.traits.iter()).any(|t| t.functions.iter().any(|f| f.name == name))
                 || module.held.contains(name))
     }
 
@@ -3598,7 +3589,6 @@ fn splice<'a>(
         .map(|module| {
             let standard = module.name.starts_with("std.");
             let mut kept: HashSet<String> = module.entry_imported.iter().cloned().collect();
-            kept.extend(module.effects.iter().cloned());
             if standard {
                 kept.extend(
                     (module.file.traits.iter())
@@ -3820,6 +3810,7 @@ fn add_items(file: &mut File, found: File, held: &HashSet<String>) {
         .extend(found.enums.into_iter().filter(|e| keep(&e.name)));
     file.traits
         .extend(found.traits.into_iter().filter(|t| keep(&t.name)));
+    file.effects.extend(found.effects);
     file.impls.extend(found.impls);
     file.withouts.extend(found.withouts);
 }
@@ -4359,7 +4350,9 @@ fn warnings(file: &File, reached: &[Item]) -> Vec<Error> {
             );
         }
     };
-    for (i, f) in file.functions.iter().enumerate() {
+    for (i, f) in
+        (file.functions.iter().enumerate()).filter(|(_, f)| !crate::parser::is_operation(f))
+    {
         dead(Item::Fn(i), f.pos, &|| format!("the function `{}`", f.name));
     }
     for (i, s) in file.structs.iter().enumerate() {
@@ -4872,7 +4865,7 @@ impl<'a> Defs<'a> {
                         .map(|f| (f.name.as_str(), f.default.as_ref()))
                         .collect();
                     (fields, false)
-                } else if name == "print" || is_stream_call(call) {
+                } else if self.provided_by_name(name).is_some() || is_stream_call(call) {
                     return Vec::new();
                 } else if let Some(&f) = self.function_names.get(name) {
                     (params(&file.functions[f]), true)
@@ -5086,8 +5079,8 @@ impl<'a> Typed<'a> {
                     };
                     return Callee::Construct(s, args);
                 }
-                if name == "print" {
-                    return Callee::Print;
+                if let Some(provided) = defs.provided_by_name(name) {
+                    return (provided.answer)();
                 }
                 if name == "__eprint" {
                     return Callee::Eprint;
@@ -6080,6 +6073,7 @@ impl<'a> Checker<'a> {
             if !listed.contains(&effect) {
                 listed.push(effect);
                 unknown_effect |= !BUILT.contains(&effect)
+                    && !defs.declares(effect)
                     && !LIBRARY_EFFECTS.contains(&effect)
                     && !BUILT_IN_EFFECTS.contains(&effect);
             }

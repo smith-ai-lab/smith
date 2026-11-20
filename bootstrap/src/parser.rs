@@ -17,6 +17,7 @@ pub mod outline;
 mod traits;
 
 use effects_with_and_try::{Block, Line, split};
+pub use effects_with_and_try::{EffectDef, is_operation};
 pub use lists_and_text::Part;
 pub use numbers_and_operators::ArithOp;
 use numbers_and_operators::{compared, number};
@@ -36,6 +37,7 @@ pub struct File {
     pub structs: Vec<Arc<Struct>>,
     pub enums: Vec<Arc<Enum>>,
     pub traits: Vec<Arc<Trait>>,
+    pub effects: Vec<EffectDef>,
     pub impls: Vec<Arc<Impl>>,
     pub withouts: Vec<Without>,
     /// The `use` lines, which come before every other item.
@@ -710,6 +712,7 @@ fn parse_file(tokens: &[Token], library: bool) -> Result<File, Vec<Error>> {
     let mut structs = Vec::new();
     let mut enums = Vec::new();
     let mut traits = Vec::new();
+    let mut effects = Vec::new();
     let mut impls = Vec::new();
     let mut withouts = Vec::new();
     loop {
@@ -721,6 +724,7 @@ fn parse_file(tokens: &[Token], library: bool) -> Result<File, Vec<Error>> {
             p.bump();
         }
         let before = (functions.len(), structs.len(), enums.len(), traits.len());
+        let effects_before = effects.len();
         let is_use = p.tok() == &Tok::Keyword("use");
         let late = items && is_use;
         if !matches!(p.tok(), Tok::Eof | Tok::Keyword("use")) {
@@ -775,6 +779,16 @@ fn parse_file(tokens: &[Token], library: bool) -> Result<File, Vec<Error>> {
                     p.skip_item(start);
                 }
             },
+            Tok::Keyword("effect") => match p.declare_effect() {
+                Ok((e, operations)) => {
+                    effects.push(e);
+                    functions.extend(operations);
+                }
+                Err(e) => {
+                    p.errors.push(e);
+                    p.skip_item(start);
+                }
+            },
             Tok::Keyword("impl") => match p.implementation() {
                 Ok(i) => impls.extend(i),
                 Err(e) => {
@@ -800,6 +814,11 @@ fn parse_file(tokens: &[Token], library: bool) -> Result<File, Vec<Error>> {
             exports.extend(structs[before.1..].iter().map(|s| s.name.clone()));
             exports.extend(enums[before.2..].iter().map(|e| e.name.clone()));
             exports.extend(traits[before.3..].iter().map(|t| t.name.clone()));
+            exports.extend(
+                effects[effects_before..]
+                    .iter()
+                    .map(|e: &EffectDef| e.name.clone()),
+            );
         }
     }
     if !library {
@@ -815,6 +834,7 @@ fn parse_file(tokens: &[Token], library: bool) -> Result<File, Vec<Error>> {
             structs: share(structs),
             enums: share(enums),
             traits: share(traits),
+            effects,
             impls: share(impls),
             withouts,
             written: if uses.is_empty() {
@@ -873,7 +893,10 @@ fn ident_uses(tokens: &[Token], before: Option<&Tok>, into: &mut Vec<(String, Po
             Tok::Ident(name) => {
                 let named = matches!(
                     previous,
-                    Some(Tok::Punct(".") | Tok::Keyword("fn" | "struct" | "enum" | "trait"))
+                    Some(
+                        Tok::Punct(".")
+                            | Tok::Keyword("fn" | "struct" | "enum" | "trait" | "effect")
+                    )
                 );
                 let label = matches!(tokens.get(i + 1).map(|t| &t.tok), Some(Tok::Punct(":")));
                 if !named && !label {

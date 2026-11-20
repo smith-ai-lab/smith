@@ -98,8 +98,8 @@ struct Module {
     names: Vec<(String, bool)>,
 }
 
-/// Every module in `std/`, with what its source writes with `pub`, and for
-/// `std.console` the effect `console`, which the compiler holds.
+/// Every module in `std/`, with what its source writes with `pub`, and the
+/// operations of each effect it writes with `pub`.
 fn library() -> &'static [Module] {
     static LIBRARY: OnceLock<Vec<Module>> = OnceLock::new();
     LIBRARY.get_or_init(|| {
@@ -117,12 +117,24 @@ fn library() -> &'static [Module] {
             .map(|file| {
                 let name = file.file_stem().unwrap().to_str().unwrap().to_string();
                 let mut names = Vec::new();
+                let mut in_effect = false;
                 for line in std::fs::read_to_string(file).unwrap().lines() {
+                    // An operation of a public effect is imported by its own name.
+                    if in_effect && let Some(rest) = line.trim_start().strip_prefix("fn ") {
+                        let written: String = rest
+                            .chars()
+                            .take_while(|c| c.is_alphanumeric() || *c == '_')
+                            .collect();
+                        names.push((written, true));
+                    }
+                    in_effect = in_effect && line != "}";
+                    in_effect |= line.starts_with("pub effect ");
                     for (start, is_fn) in [
                         ("pub fn ", true),
                         ("pub struct ", false),
                         ("pub trait ", false),
                         ("pub enum ", false),
+                        ("pub effect ", false),
                     ] {
                         if let Some(rest) = line.strip_prefix(start) {
                             let written: String = rest
@@ -132,9 +144,6 @@ fn library() -> &'static [Module] {
                             names.push((written, is_fn));
                         }
                     }
-                }
-                if name == "console" {
-                    names.push(("console".to_string(), false));
                 }
                 Module { name, names }
             })
