@@ -192,6 +192,7 @@ pub(super) fn compared(left: Expr, op: &str, right: Expr, op_pos: Pos) -> Expr {
         let pos = left.pos();
         let ordered = !matches!(op, "==" | "!=");
         let same = Expr::Call(Call {
+            type_args: Vec::new(),
             qualifier: Some((if ordered { "Ord" } else { "Eq" }.to_string(), op_pos)),
             callee: if ordered { "compare" } else { "eq" }.to_string(),
             pos,

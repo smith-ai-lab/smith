@@ -7,6 +7,7 @@ built:
   - "`impl`, calls of trait functions with defaults"
   - "a type parameter of a trait's function, with a bound"
   - "a function's name written where a type is expected, as in `impl Described[double]`, which is found for that function and for no other of the same parameters and result, and a function given for a type parameter that a trait other than `Copy` and `Discard` bounds, which settles it to that function's type; a function of such a trait names the type in a parameter or its result, as any function of a trait must, so `describe(f: F)` and not `describe()`; and a parameter typed with a function's name, `fn pick(f: one)`, takes that function, `pick(one)`, and no other of the same parameters and result, and is called as the function is, `f(3)`, with every argument written"
+  - "a call of a function of a trait that writes the types it is for after the trait, `Tagged[Cat].tag(\"p\")`, which names the impl, and a function of a trait that names no type of the trait in its parameters or its result, which is called only so"
 ---
 
 # Traits
@@ -119,6 +120,22 @@ fn main() ! console {
 ```
 
 This prints `Tom` and then `Mr`. Written as `label(c)`, the call is refused: "`label` is a function of `Named` and `Titled`", and the fix is to write `Named.label` or `Titled.label`. A trait function whose name is not shared is written plain.
+
+## Writing the type after the trait
+
+A call of a function of a trait may write the types it is for in brackets after the trait, as `Tagged[Cat].tag("p")`. The types written name the impl as the types of the arguments do, so a function of a trait that none of its parameters and none of its result names is called only so.
+
+```
+trait Tagged[T] {
+  fn tag(prefix: str) -> str
+}
+
+impl Tagged[Cat] {
+  fn tag(prefix: str) -> str { "cat" }
+}
+```
+
+`Tagged[Cat].tag("p")` is `"cat"`. A type parameter may be written there, as `Tagged[T].tag("p")` in a function that takes a `T` that has `Tagged`. Written as `Tagged.tag("p")`, the call is refused: "`tag` is for a type that nothing it is given names, and the call writes it", with the fix "write the type after the trait, as in `Tagged[T].tag(...)`". A type with no impl is refused as it is for any call, and so are more types than the trait takes.
 
 ## An impl for a function
 

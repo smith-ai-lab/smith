@@ -343,6 +343,7 @@ impl Parser<'_> {
             return Ok(Expr::Call(Call {
                 pos: qualifier.as_ref().map_or(pos, |(_, at)| *at),
                 qualifier,
+                type_args: Vec::new(),
                 callee: name,
                 name_pos: pos,
                 args: vec![lambda],
@@ -462,6 +463,7 @@ impl Parser<'_> {
         args.extend(self.lambda_after()?);
         Ok(Call {
             qualifier,
+            type_args: Vec::new(),
             callee,
             pos,
             name_pos,

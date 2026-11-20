@@ -2192,6 +2192,7 @@ fn check_file(
         fn_values: Map::default(),
         named: Set::default(),
         named_calls: Map::default(),
+        type_args: Map::default(),
         no_impl: false,
         refusals: 0,
         deciding: None,
@@ -2247,6 +2248,7 @@ fn check_file(
         fn_values: checker.fn_values,
         named: checker.named,
         named_calls: checker.named_calls,
+        type_args: checker.type_args,
     };
     let mut errors = Vec::new();
     typed.copies(
@@ -2546,6 +2548,10 @@ fn reach(file: &File, names: &Names, roots: &[Item], contracts: bool) -> Reached
                 _ => None,
             });
             for call in calls {
+                // The types a call writes after its trait are named.
+                for t in call.type_args.iter().filter_map(traits::expr_type) {
+                    type_names_in(&t, &mut |name, pos| type_name(name, pos, found));
+                }
                 if let Some((q, pos)) = &call.qualifier {
                     type_name(q, *pos, found);
                     continue;
@@ -5538,6 +5544,9 @@ struct Typed<'a> {
     /// The calls of a name that holds a function by its type, by their
     /// addresses, with the function each calls.
     named_calls: Map<usize, usize>,
+    /// The types a call of a trait's function writes in brackets after the
+    /// trait, by the address of the call.
+    type_args: Map<usize, Vec<Ty>>,
 }
 
 impl<'a> Typed<'a> {
@@ -5641,7 +5650,15 @@ impl<'a> Typed<'a> {
             }
         };
         let sig = &defs.trait_sigs[k][fi];
-        let types = solve(&sig.params, sig.scope.names.len());
+        let mut types = solve(&sig.params, sig.scope.names.len());
+        // The types the call writes after its trait are those of the trait.
+        if let Some(written) = self.type_args.get(&addr(call)) {
+            for (t, w) in types.iter_mut().zip(written) {
+                if *t == Ty::Unknown {
+                    *t = w.subst(env);
+                }
+            }
+        }
         let mut types = self.result_types(call, sig, env, types);
         // The function's own type parameters follow the trait's.
         let own = types.split_off(defs.file.traits[k].generics.len());
@@ -5853,6 +5870,8 @@ struct Checker<'a> {
     named: Set<usize>,
     /// The calls of a name that holds a function by its type, with the function.
     named_calls: Map<usize, usize>,
+    /// The types a call writes in brackets after its trait.
+    type_args: Map<usize, Vec<Ty>>,
     /// Whether the call of a trait's function being checked has types no
     /// implementation is for, which is already reported.
     no_impl: bool,
