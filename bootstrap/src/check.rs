@@ -7409,16 +7409,12 @@ impl<'a> Checker<'a> {
         let element = l.over.as_ref().map(|o| (o, self.element_type(body, o)));
         let measure = l.decreases.as_ref();
         if let Some(e) = measure {
-            let gives = self.expr(body, e, &Want::Any);
-            if !matches!(gives, Ty::Int(t) if !t.signed())
-                && !matches!(gives, Ty::Unknown | Ty::Flex(_))
-            {
+            let gives = self.measure_type(body, e);
+            if !matches!(gives, Ty::Int(_) | Ty::Unknown | Ty::Flex(_)) {
                 let given = self.defs.describe(&gives, body.scope);
                 self.errors.push(Error::new(
                     e.pos(),
-                    format!(
-                        "`decreases` is a whole number of an unsigned type, and this is {given}"
-                    ),
+                    format!("`decreases` is a whole number, and this is {given}"),
                 ));
             }
         }
@@ -7442,7 +7438,7 @@ impl<'a> Checker<'a> {
             body.names.push((o.name.clone(), ty));
         }
         self.begin_round(body, &assigned);
-        let start = measure.and_then(|e| self.measure(body, e));
+        let start = measure.and_then(|e| self.measure_of(body, std::slice::from_ref(e), &[]));
         body.loops += 1;
         if let End::Value(gives, value) = self.block(body, &l.body, &Want::Unused)
             && self.defs.is_result(&gives)

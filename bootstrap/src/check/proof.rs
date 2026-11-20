@@ -1872,63 +1872,148 @@ impl<'a> Checker<'a> {
         body.facts = facts;
     }
 
-    /// The sum of the measure of a loop, now.
-    pub(super) fn measure(&mut self, body: &mut Body<'a>, e: &Expr) -> Option<Lin> {
+    /// The sums of the parts of the measure `parts`, now, as exact numbers:
+    /// no part is asked to fit a type. A name in `args`, a parameter, stands
+    /// for the argument written beside it, so the measure at a call is worked
+    /// out from the arguments. None where a part has no sum.
+    pub(super) fn measure_of(
+        &mut self,
+        body: &mut Body<'a>,
+        parts: &[Expr],
+        args: &[(&str, &Expr)],
+    ) -> Option<Vec<Lin>> {
         if !Self::decided(body) || body.contract {
             return None;
         }
-        self.value_of(body, e)
+        let mut facts = std::mem::take(&mut body.facts);
+        let mut sums = HashMap::new();
+        for (name, arg) in args {
+            let list = matches!(
+                self.types.get(&addr(*arg)),
+                Some(Ty::List(_) | Ty::Slice(_))
+            );
+            let mut builder = self.builder(body, &mut facts, true);
+            let sum = if list {
+                builder.list_size(arg)
+            } else {
+                builder.lin(arg)
+            };
+            if let Some(sum) = sum.filter(|_| !builder.overflow) {
+                sums.insert(
+                    if list {
+                        format!("{name}.size")
+                    } else {
+                        name.to_string()
+                    },
+                    sum,
+                );
+            }
+        }
+        if !args.is_empty() {
+            facts.subst = Some(sums);
+        }
+        let mut found = Vec::new();
+        for part in parts {
+            let mut builder = self.builder(body, &mut facts, true);
+            let sum = builder.lin(part).filter(|_| !builder.overflow);
+            found.push(sum);
+        }
+        facts.subst = None;
+        body.facts = facts;
+        found.into_iter().collect()
+    }
+
+    /// Proves that the measure `after` is not below zero in every part, and
+    /// smaller than `before` in the order of a dictionary: at the first part
+    /// where they differ it is smaller, and the parts before it are equal.
+    /// `Err` is the goal that could not be proven, and the measure written.
+    pub(super) fn decreased_by(
+        &mut self,
+        body: &mut Body<'a>,
+        parts: &[Expr],
+        before: &[Lin],
+        after: &[Lin],
+    ) -> Result<(), Unproven> {
+        if !Self::decided(body) || body.contract {
+            return Ok(());
+        }
+        let written = parts
+            .iter()
+            .map(written_expr)
+            .collect::<Vec<_>>()
+            .join(", ");
+        let mut facts = std::mem::take(&mut body.facts);
+        let mut builder = self.builder(body, &mut facts, true);
+        let mut firsts = Vec::new();
+        let mut equal = Vec::new();
+        for (b, a) in before.iter().zip(after) {
+            let mut less = builder.combine(b, -1, a);
+            less.constant = less.constant.saturating_sub(1);
+            let mut at_most = equal.clone();
+            at_most.push(Formula::Ge(less));
+            firsts.push(Formula::And(at_most));
+            equal.push(Formula::Ge(builder.combine(b, -1, a)));
+            equal.push(Formula::Ge(builder.combine(a, -1, b)));
+        }
+        let overflowed = builder.overflow;
+        let smaller = Formula::Or(firsts);
+        let mut goals = vec![(Unproven::Smaller(written.clone()), smaller)];
+        for a in after {
+            goals.push((
+                Unproven::NotBelowZero(written.clone()),
+                Formula::Ge(a.clone()),
+            ));
+        }
+        let used = background(&facts, goals.iter().map(|(_, g)| g));
+        body.facts = facts;
+        if overflowed {
+            return Err(Unproven::Smaller(written));
+        }
+        for (what, goal) in goals {
+            if !proves(&used, &goal) {
+                return Err(what);
+            }
+        }
+        Ok(())
     }
 
     /// At the end of a round of a loop that has the measure `e`, which was
     /// `start` when the round began: `arith` must prove that `e` is smaller,
-    /// and is still a number of an unsigned type.
-    pub(super) fn decreased(&mut self, body: &mut Body<'a>, l: &Loop, e: &Expr, start: &Lin) {
+    /// and is not below zero.
+    pub(super) fn decreased(&mut self, body: &mut Body<'a>, l: &Loop, e: &Expr, start: &[Lin]) {
         if !Self::decided(body) || body.contract || ends_in_exit(&l.body) {
             return;
         }
-        let end = self.value_of(body, e);
-        let mut facts = std::mem::take(&mut body.facts);
-        let mut goals = Vec::new();
-        if let Some(end) = &end {
-            let mut builder = self.builder(body, &mut facts, true);
-            let mut less = builder.combine(start, -1, end);
-            less.constant = less.constant.saturating_sub(1);
-            if !builder.overflow {
-                goals.push((
-                    format!("`{}` is smaller than when the round began", written_expr(e)),
-                    Formula::Ge(less),
-                ));
-                goals.push((
-                    format!(
-                        "`{}` is not below zero where the round ends",
-                        written_expr(e)
-                    ),
-                    Formula::Ge(end.clone()),
-                ));
+        let parts = std::slice::from_ref(e);
+        let outcome = match self.measure_of(body, parts, &[]) {
+            Some(end) => self.decreased_by(body, parts, start, &end),
+            None => Err(Unproven::Smaller(written_expr(e))),
+        };
+        let goal = match outcome {
+            Ok(()) => return,
+            Err(Unproven::Smaller(e)) => format!("`{e}` is smaller than when the round began"),
+            Err(Unproven::NotBelowZero(e)) => {
+                format!("`{e}` is not below zero where the round ends")
             }
-        }
-        let used = background(&facts, goals.iter().map(|(_, g)| g));
-        body.facts = facts;
-        let mut failed = goals
-            .is_empty()
-            .then(|| format!("`{}` is smaller than when the round began", written_expr(e)));
-        for (text, goal) in &goals {
-            if failed.is_none() && !proves(&used, goal) {
-                failed = Some(text.clone());
-            }
-        }
-        if let Some(goal) = failed {
-            self.errors.push(
-                Error::new(
-                    l.end,
-                    format!("cannot prove that {goal}, so this `loop` may not end"),
-                )
-                .with_fix(
-                    "make each round that goes on make the measure smaller, or check what it \
-                     needs first with an `if`",
-                ),
-            );
-        }
+        };
+        self.errors.push(
+            Error::new(
+                l.end,
+                format!("cannot prove that {goal}, so this `loop` may not end"),
+            )
+            .with_fix(
+                "make each round that goes on make the measure smaller, or check what it \
+                 needs first with an `if`",
+            ),
+        );
     }
+}
+
+/// The goal of a measure that `arith` could not prove, with the measure as
+/// written.
+pub(super) enum Unproven {
+    /// It is not smaller than before.
+    Smaller(String),
+    /// It may be below zero.
+    NotBelowZero(String),
 }
