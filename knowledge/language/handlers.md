@@ -9,6 +9,7 @@ built:
   - "a function that carries a handled effect and takes no function, as `report` does, runs under the handlers it is called under: the handler in force where it is called answers it, it is built once for each handler it runs under, found by where the handler is installed, and it is given what the functions of those handlers use, so `at_one()` is `1` and `at_two()` is `2` from one copy of `report`"
   - "a handler inside a handler, whose function asks the effect again, is answered by the handler outside it, for a function that carries the effect as well as for the code under `with`"
   - "a handler keeps its state in a `var` that its function assigns, as `fake_clock` does: the code under `with`, a function that carries the effect and runs under the handler, the functions that one calls, and a `loop` that asks, all count on the one state, and `two_readings` is `(1, 2)`"
+  - "`fake_clock`, `two_readings`, `doubled_clock`, and `doubled` of this page run today with `wrapping_add` and `wrapping_mul` written where the page writes `clamp`, which is not built, and `doubled()` is `84`; `loud_clock` runs as written, prints `asked`, and without `! console` is refused with the error the page gives, whose fix keeps the effects of the parameters"
   - "a `return` in a function that carries the effect and runs under a handler whose functions assign a name is refused as not built yet"
 ---
 
@@ -55,6 +56,7 @@ A handler is an ordinary function. This one is a clock for tests, which reads on
 
 ```
 use std.bits (u64)
+use std.int (clamp)
 
 fn fake_clock[T](body: fn() -> T ! time) -> T {
   var ticks: u64 = 0
@@ -84,9 +86,10 @@ The lambda of an operation runs under the handlers outside its own. A handler wh
 
 ```
 use std.bits (u64)
+use std.int (clamp)
 
 fn doubled_clock[T](body: fn() -> T ! time) -> T ! time {
-  time(now: { now() * 2 }, body: body)
+  time(now: { clamp(now() * 2) }, body: body)
 }
 
 fn doubled() -> u64 {
