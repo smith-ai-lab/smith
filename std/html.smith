@@ -2,7 +2,9 @@ use std.text (Text, append, finish, text as new_text)
 use std.utf8 (utf8)
 
 // The bytes of `s` from `from` up to `end`, which are whole characters, as
-// they are.
+// they are. The piece lies between two escaped bytes, which are ASCII, or at an
+// end of `s`, so `utf8` never refuses it. It is written with `utf8` until
+// `s[from..end]` is built (#778), which makes the piece with nothing read again.
 fn run(to: take Text, s: str, from: Nat, end: Nat) -> Text ! alloc {
   var t = to
   if from == 0 and end == s.size {
