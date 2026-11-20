@@ -20,7 +20,7 @@
 //! through stays for the jumps that could not be sent past it, and `remove`
 //! takes it away when none is left.
 
-use super::eval::{binary, bits_of, compare, divides_wrongly, mask, narrow, widen};
+use super::eval::{binary, bits_of, compare, mask, narrow, widen};
 use super::{Constant, End, Function, Instruction, Jump, Op, Place, Program, Type, Value};
 
 /// The program with each jump that goes into a block that only chooses sent
@@ -51,8 +51,8 @@ enum Arg {
 
 /// A choice between two jumps, or one jump.
 enum Step {
-    One(Jump),
-    Split { on: Value, jumps: Vec<Jump> },
+    One(Pending),
+    Split { on: Value, jumps: Vec<Pending> },
 }
 
 /// What a function says about its values, which the walk reads.
@@ -66,9 +66,9 @@ struct Facts {
     chosen: Vec<Option<(Value, Value, Value)>>,
     /// Whether a block can be gone through.
     through: Vec<bool>,
-    /// The buffer that each `resolve` uses for what it knows of the values of a
-    /// block, kept so that each does not ask for one.
-    scratch: std::cell::RefCell<Vec<(Value, Bind)>>,
+    /// What each `resolve` uses for what it knows of the values of a block,
+    /// kept so that each does not ask for one.
+    scratch: std::cell::RefCell<Env>,
 }
 
 fn threaded(mut f: Function) -> Function {
@@ -130,6 +130,9 @@ fn localize(f: &mut Function, reached: &[bool]) {
         let d = defined[v.0];
         constant[v.0].is_some() && d != b && d != usize::MAX && !effects[d] && d != 0
     };
+    // The value made again for each value that a block reads, while the block
+    // is made, which is empty between blocks.
+    let mut again = vec![usize::MAX; values];
     for b in 0..f.blocks.len() {
         let mut any = false;
         for i in &f.blocks[b].instructions {
@@ -139,7 +142,7 @@ fn localize(f: &mut Function, reached: &[bool]) {
         if !any {
             continue;
         }
-        let mut made: Vec<(Value, Value)> = Vec::new();
+        let mut made: Vec<Value> = Vec::new();
         let mut instructions: Vec<Instruction> = Vec::new();
         let mut by = |v: Value, types: &mut Vec<Type>| {
             let d = defined[v.0];
@@ -147,12 +150,13 @@ fn localize(f: &mut Function, reached: &[bool]) {
             if d == b || d == usize::MAX || effects[d] || d == 0 {
                 return v;
             }
-            if let Some(&(_, q)) = made.iter().find(|(from, _)| *from == v) {
-                return q;
+            if again[v.0] != usize::MAX {
+                return Value(again[v.0]);
             }
             let q = Value(types.len());
             types.push(types[v.0]);
-            made.push((v, q));
+            made.push(v);
+            again[v.0] = q.0;
             instructions.push(Instruction {
                 results: vec![q],
                 op: Op::Constant(c),
@@ -171,6 +175,9 @@ fn localize(f: &mut Function, reached: &[bool]) {
         each_end_read(&block.end, |v| ops.push((v, by(v, &mut f.types))));
         let lookup = |v: Value| ops.iter().find(|(from, _)| *from == v).map_or(v, |p| p.1);
         super::graph::rename_end(&mut block.end, &lookup);
+        for v in made {
+            again[v.0] = usize::MAX;
+        }
         instructions.append(&mut block.instructions);
         block.instructions = instructions;
         f.blocks[b] = block;
@@ -189,8 +196,10 @@ fn localize(f: &mut Function, reached: &[bool]) {
         }
     }
     for (b, block) in f.blocks.iter().enumerate().filter(|(b, _)| reached[*b]) {
+        // The blocks are taken one after the other, so a block that reads a
+        // value twice is the last one noted for it.
         let mut note = |v: Value| {
-            if defined[v.0] != b && defined[v.0] != usize::MAX && !readers[v.0].contains(&b) {
+            if defined[v.0] != b && defined[v.0] != usize::MAX && readers[v.0].last() != Some(&b) {
                 readers[v.0].push(b);
             }
         };
@@ -200,6 +209,10 @@ fn localize(f: &mut Function, reached: &[bool]) {
         each_end_read(&block.end, &mut note);
     }
     let mut given: Vec<Vec<(Value, Value)>> = vec![Vec::new(); f.blocks.len()];
+    // For the value being given on: the parameter each block on its path is
+    // given, by block, and which values these belong to, so that neither is
+    // searched for.
+    let mut param_of = vec![usize::MAX; f.blocks.len()];
     for v in 0..values {
         if readers[v].is_empty() {
             continue;
@@ -217,7 +230,8 @@ fn localize(f: &mut Function, reached: &[bool]) {
                     alone = false;
                     break;
                 }
-                if !path.contains(&at) {
+                if param_of[at] == usize::MAX {
+                    param_of[at] = 0;
                     path.push(at);
                 }
                 at = from[at];
@@ -225,43 +239,57 @@ fn localize(f: &mut Function, reached: &[bool]) {
             }
         }
         if !alone {
+            for &c in &path {
+                param_of[c] = usize::MAX;
+            }
             continue;
         }
-        let mut param: Vec<(usize, Value)> = Vec::new();
         for &c in &path {
             let q = Value(f.types.len());
             f.types.push(f.types[v]);
             f.blocks[c].params.push(q);
-            param.push((c, q));
+            param_of[c] = q.0;
         }
-        for &(c, q) in &param {
+        for &c in &path {
             let before = from[c];
-            let arg = param
-                .iter()
-                .find(|(d, _)| *d == before)
-                .map_or(Value(v), |p| p.1);
+            let arg = if param_of[before] != usize::MAX {
+                Value(param_of[before])
+            } else {
+                Value(v)
+            };
             for j in super::graph::jumps_mut(&mut f.blocks[before].end) {
                 if j.block == c {
                     j.args.push(arg);
                 }
             }
-            let _ = q;
         }
         for &t in &readers[v] {
-            let q = param.iter().find(|(d, _)| *d == t).map(|p| p.1);
-            given[t].push((Value(v), q.expect("a reader is on the path")));
+            given[t].push((Value(v), Value(param_of[t])));
+        }
+        for &c in &path {
+            param_of[c] = usize::MAX;
         }
     }
+    let mut renamed = vec![usize::MAX; f.types.len()];
     for (t, pairs) in given.iter().enumerate() {
         if pairs.is_empty() {
             continue;
         }
-        let by = |v: Value| pairs.iter().find(|(from, _)| *from == v).map_or(v, |p| p.1);
+        for &(from, to) in pairs {
+            renamed[from.0] = to.0;
+        }
+        let by = |v: Value| match renamed[v.0] {
+            usize::MAX => v,
+            q => Value(q),
+        };
         let block = &mut f.blocks[t];
         for i in &mut block.instructions {
             i.op.rename(&by);
         }
         super::graph::rename_end(&mut block.end, &by);
+        for &(from, _) in pairs {
+            renamed[from.0] = usize::MAX;
+        }
     }
 }
 
@@ -291,16 +319,33 @@ fn reached_by(f: &Function) -> Vec<bool> {
     reached
 }
 
-/// What is known of the values a block is given and makes, which are few.
-struct Env(Vec<(Value, Bind)>);
+/// What is known of the values a block is given and makes, by the number of the
+/// value, so that asking for one takes no search. The places that were set are
+/// kept, so that making it empty again takes as long as they are many and not
+/// as long as the function has values.
+#[derive(Default)]
+struct Env {
+    binds: Vec<Option<Bind>>,
+    set: Vec<usize>,
+}
 
 impl Env {
     fn get(&self, v: Value) -> Option<&Bind> {
-        self.0.iter().find(|(w, _)| *w == v).map(|(_, bind)| bind)
+        self.binds.get(v.0).and_then(Option::as_ref)
     }
 
     fn insert(&mut self, v: Value, bind: Bind) {
-        self.0.push((v, bind));
+        if self.binds.len() <= v.0 {
+            self.binds.resize(v.0 + 1, None);
+        }
+        self.binds[v.0] = Some(bind);
+        self.set.push(v.0);
+    }
+
+    fn clear(&mut self) {
+        for v in self.set.drain(..) {
+            self.binds[v] = None;
+        }
     }
 }
 
@@ -444,21 +489,41 @@ fn facts(f: &Function, reached: &[bool]) -> Facts {
     }
 }
 
+/// A jump that is not made yet: the block it goes to and what it gives.
+type Pending = (usize, Vec<Arg>);
+
 /// The end that a jump from block `a` is sent on to, going through as many
-/// blocks as it can.
+/// blocks as it can. The jump is made once, where the walk ends, so that a
+/// constant is made for the numbers that jump gives and for no jump the walk
+/// went past.
 fn follow(
     f: &mut Function,
     facts: &mut Facts,
     extra: &mut Vec<Instruction>,
     a: usize,
-    mut jump: Jump,
+    jump: Jump,
     may_split: bool,
 ) -> End {
+    let mut pending: Pending = (
+        jump.block,
+        jump.args.iter().map(|&v| Arg::Value(v)).collect(),
+    );
+    let mut moved = false;
     for _ in 0..f.blocks.len() {
-        match step(f, facts, extra, a, &jump, may_split) {
+        match step(f, facts, a, &pending, may_split) {
             None => break,
-            Some(Step::One(next)) => jump = next,
+            Some(Step::One(next)) => {
+                pending = next;
+                moved = true;
+            }
             Some(Step::Split { on, jumps }) => {
+                // Both jumps are made before either goes on, so that the
+                // values the constants are given do not depend on how far each
+                // goes.
+                let jumps: Vec<Jump> = jumps
+                    .into_iter()
+                    .map(|p| make(f, facts, extra, p))
+                    .collect();
                 let jumps = jumps
                     .into_iter()
                     .map(|j| match follow(f, facts, extra, a, j, false) {
@@ -470,34 +535,38 @@ fn follow(
             }
         }
     }
-    End::Jump(jump)
+    if moved {
+        End::Jump(make(f, facts, extra, pending))
+    } else {
+        End::Jump(jump)
+    }
+}
+
+/// What a block is given by a jump, as the block that is jumped to reads it.
+fn bind_of(facts: &Facts, arg: Arg) -> Bind {
+    match arg {
+        Arg::Value(v) => Bind {
+            known: facts.constant[v.0],
+            value: Some(v),
+        },
+        Arg::Const(c, _) => Bind {
+            known: Some(c),
+            value: None,
+        },
+    }
 }
 
 /// Where the jump goes once the block it jumps to is gone through, if it can
 /// be.
-fn step(
-    f: &mut Function,
-    facts: &mut Facts,
-    extra: &mut Vec<Instruction>,
-    a: usize,
-    jump: &Jump,
-    may_split: bool,
-) -> Option<Step> {
-    let b = jump.block;
+fn step(f: &Function, facts: &Facts, a: usize, jump: &Pending, may_split: bool) -> Option<Step> {
+    let (b, args) = (jump.0, &jump.1);
     if b == a || !facts.through[b] {
         return None;
     }
     let block = &f.blocks[b];
-    let binds: Vec<Bind> = jump
-        .args
-        .iter()
-        .map(|&v| Bind {
-            known: facts.constant[v.0],
-            value: Some(v),
-        })
-        .collect();
+    let binds: Vec<Bind> = args.iter().map(|&arg| bind_of(facts, arg)).collect();
     if let Some(chosen) = resolve(f, facts, b, &binds) {
-        return Some(Step::One(make(f, facts, extra, chosen)));
+        return Some(Step::One(chosen));
     }
     // A comparison, or a choice between constants on one, that the block
     // chooses on: the two answers are worked out, one for each of its two
@@ -507,7 +576,11 @@ fn step(
     }
     let mut on: Option<Value> = None;
     let mut picks: Vec<Option<(u64, u64)>> = Vec::new();
-    for &v in &jump.args {
+    for &arg in args {
+        let Arg::Value(v) = arg else {
+            picks.push(None);
+            continue;
+        };
         let (x, pick) = if facts.compared[v.0] {
             (v, None)
         } else if let Some((x, t, o)) = facts.chosen[v.0]
@@ -528,28 +601,19 @@ fn step(
     let on = on?;
     let mut jumps = Vec::new();
     for case in [0u64, 1] {
-        let binds: Vec<Bind> = jump
-            .args
+        let binds: Vec<Bind> = args
             .iter()
             .zip(&picks)
-            .map(|(&v, pick)| match pick {
+            .map(|(&arg, pick)| match pick {
                 Some((t, o)) => Bind {
                     known: Some(if case != 0 { *t } else { *o }),
                     value: None,
                 },
-                None => Bind {
-                    known: facts.constant[v.0],
-                    value: Some(v),
-                },
+                None => bind_of(facts, arg),
             })
             .collect();
-        let chosen = resolve(f, facts, b, &binds)?;
-        jumps.push(chosen);
+        jumps.push(resolve(f, facts, b, &binds)?);
     }
-    let jumps = jumps
-        .into_iter()
-        .map(|c| make(f, facts, extra, c))
-        .collect();
     Some(Step::Split { on, jumps })
 }
 
@@ -557,10 +621,10 @@ fn step(
 /// to and what it gives, if the block ends with a jump or a choice on a known
 /// value, and every value it gives is known or is in the block that jumps.
 fn resolve(f: &Function, facts: &Facts, b: usize, binds: &[Bind]) -> Option<(usize, Vec<Arg>)> {
-    let mut env = Env(facts.scratch.take());
-    env.0.clear();
+    let mut env = facts.scratch.take();
     let chosen = resolved(f, facts, b, binds, &mut env);
-    facts.scratch.replace(env.0);
+    env.clear();
+    facts.scratch.replace(env);
     chosen
 }
 
@@ -587,9 +651,7 @@ fn resolved(
         let answer = match &i.op {
             Op::Constant(Constant::Int(c)) => Some(c & mask(bits_of(ty))),
             Op::Binary { op, a, b } => match (known(env, *a), known(env, *b)) {
-                (Some(x), Some(y))
-                    if matches!(ty, Type::Int(_)) && !divides_wrongly(*op, bits_of(ty), x, y) =>
-                {
+                (Some(x), Some(y)) if matches!(ty, Type::Int(_)) => {
                     Some(binary(*op, bits_of(ty), x, y))
                 }
                 _ => None,
