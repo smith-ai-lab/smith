@@ -61,12 +61,12 @@ pub struct File {
     /// by putting an `Expr::Unbuilt` or an unbuilt `Type` in its place, so
     /// that the rest of the file is checked.
     pub unbuilt: Vec<Error>,
-    /// For each function of the file that has a `Function` made for it, the
-    /// name of the struct that holds its arguments, which is made with it.
-    pub args: Vec<(String, String)>,
-    /// For each of those, the comment on the function, and for a file that
-    /// writes `Describe`, the comment on each struct, field, enum, and case
-    /// that has one, by its name, as `Note` or `Note.title`.
+    /// For each function that has a `Function` made for it, by the place of
+    /// its name, the name of the struct that holds its arguments, which is made
+    /// with it, and the comment on the function.
+    pub args: Vec<(Pos, String, String)>,
+    /// For a file that writes `Describe`, the comment on each struct, field,
+    /// enum, and case that has one, by its name, as `Note` or `Note.title`.
     pub abouts: Vec<(String, String)>,
 }
 
