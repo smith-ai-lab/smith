@@ -111,7 +111,7 @@ pub fn rematerialized(f: &Function) -> Function {
         }
         let by = |v: Value| local.get(&v).copied().unwrap_or(v);
         for i in &mut block.instructions {
-            i.op = super::inline::renamed(&i.op, &by);
+            i.op.rename(&by);
         }
         graph::rename_end(&mut block.end, &by);
         first.append(&mut block.instructions);

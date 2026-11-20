@@ -355,7 +355,7 @@ fn folded(f: &Function) -> Function {
     for (b, block) in f.blocks.iter_mut().enumerate() {
         if !walked[b] {
             for i in &mut block.instructions {
-                i.op = graph_renamed(&i.op, &sub);
+                i.op.rename(&|v| sub[v.0]);
             }
             graph::rename_end(&mut block.end, &|v| sub[v.0]);
         }

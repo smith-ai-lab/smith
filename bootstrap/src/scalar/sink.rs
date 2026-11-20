@@ -17,7 +17,6 @@ use std::collections::HashMap;
 
 use super::common::dominated;
 use super::graph::{jumps, jumps_mut, rename_end};
-use super::inline::renamed;
 use super::{End, Function, Op, Value};
 
 /// Makes each choice that only the blocks after a choice on the same value
@@ -119,7 +118,7 @@ pub(super) fn choices(f: &mut Function) -> bool {
             for &r in place {
                 let block = &mut f.blocks[r];
                 for i in &mut block.instructions {
-                    i.op = renamed(&i.op, &by(values[k]));
+                    i.op.rename(&by(values[k]));
                 }
                 rename_end(&mut block.end, &by(values[k]));
             }

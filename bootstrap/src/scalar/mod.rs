@@ -53,7 +53,7 @@ pub use wellformed::{Malformed, Why, check};
 /// instruction or takes one apart: `fuse` does that, once, to a form as it is
 /// made.
 pub fn passes(program: &Program) -> Program {
-    remove(common(&fold(&thread(trim(inline(program))))))
+    remove(common(&fold(&thread(trim(inline(program.clone()))))))
 }
 
 /// How many bits an integer has.
@@ -636,6 +636,66 @@ impl Op {
     pub fn operands_into(&self, values: &mut Vec<Value>) {
         values.clear();
         values.extend(self.operands());
+    }
+
+    /// Gives each value the instruction reads the value `by` gives for it, in
+    /// the instruction, with no copy of it.
+    pub fn rename(&mut self, by: &impl Fn(Value) -> Value) {
+        let one = |v: &mut Value| *v = by(*v);
+        match self {
+            Op::Constant(_) => {}
+            Op::Binary { a, b, .. }
+            | Op::Compare { a, b, .. }
+            | Op::Overflows { a, b, .. }
+            | Op::FloatBinary { a, b, .. }
+            | Op::FloatCompare { a, b, .. }
+            | Op::VectorBinary { a, b, .. }
+            | Op::VectorFloatBinary { a, b, .. }
+            | Op::VectorCompare { a, b, .. }
+            | Op::VectorFloatCompare { a, b, .. } => {
+                one(a);
+                one(b);
+            }
+            Op::FloatFused { a, b, c, .. } | Op::VectorFloatFused { a, b, c, .. } => {
+                one(a);
+                one(b);
+                one(c);
+            }
+            Op::Widen { value, .. }
+            | Op::Narrow(value)
+            | Op::VectorSplat(value)
+            | Op::VectorSum(value)
+            | Op::VectorFirstSet(value)
+            | Op::VectorExtract { vector: value, .. }
+            | Op::FloatNegate(value)
+            | Op::FloatFromInt { value, .. }
+            | Op::IntFromFloat { value, .. }
+            | Op::FloatResize(value) => one(value),
+            Op::Choose {
+                on,
+                then,
+                otherwise,
+            }
+            | Op::VectorChoose {
+                mask: on,
+                then,
+                otherwise,
+            } => {
+                one(on);
+                one(then);
+                one(otherwise);
+            }
+            Op::VectorInsert { vector, value, .. } => {
+                one(vector);
+                one(value);
+            }
+            Op::Load { address, .. } => one(address),
+            Op::Store { address, value, .. } => {
+                one(address);
+                one(value);
+            }
+            Op::Call { args, .. } | Op::System { args, .. } => args.iter_mut().for_each(one),
+        }
     }
 
     /// Whether the instruction runs a function or asks the system for
