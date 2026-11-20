@@ -31,6 +31,26 @@ use crate::tuples;
 
 pub const ONCE: &[Test] = &[
     (
+        "every_target_builds_identical_bytes_twice_for_programs_part_1_of_2",
+        || every_target_builds_identical_bytes_twice_for_programs(0),
+    ),
+    (
+        "every_target_builds_identical_bytes_twice_for_programs_part_2_of_2",
+        || every_target_builds_identical_bytes_twice_for_programs(1),
+    ),
+    (
+        "every_target_builds_identical_bytes_twice_for_traits",
+        every_target_builds_identical_bytes_twice_for_traits,
+    ),
+    (
+        "every_target_builds_identical_bytes_twice_for_enums",
+        every_target_builds_identical_bytes_twice_for_enums,
+    ),
+    (
+        "every_target_builds_identical_bytes_twice_for_text",
+        every_target_builds_identical_bytes_twice_for_text,
+    ),
+    (
         "every_target_builds_identical_bytes_twice_for_reprs",
         every_target_builds_identical_bytes_twice_for_reprs,
     ),
@@ -42,14 +62,6 @@ pub const ONCE: &[Test] = &[
         "every_target_builds_identical_bytes_twice_for_numbers",
         every_target_builds_identical_bytes_twice_for_numbers,
     ),
-    (
-        "every_target_builds_identical_bytes_twice_for_enums_and_text",
-        every_target_builds_identical_bytes_twice_for_enums_and_text,
-    ),
-    (
-        "every_target_builds_identical_bytes_twice",
-        every_target_builds_identical_bytes_twice,
-    ),
     ("no_test_names_a_target", no_test_names_a_target),
     ("the_hash_of_an_executable_is_sha256", the_hash_of_an_executable_is_sha256),
     (
@@ -60,44 +72,96 @@ pub const ONCE: &[Test] = &[
 
 pub const MACHINE: &[Test] = &[
     (
-        "every_executable_does_what_the_evaluator_says",
-        every_executable_does_what_the_evaluator_says,
+        "every_executable_does_what_the_evaluator_says_part_1_of_2",
+        || every_executable_does_what_the_evaluator_says(0),
     ),
     (
-        "every_executable_of_a_program_with_traits_does_what_the_evaluator_says",
-        every_executable_of_a_program_with_traits_does_what_the_evaluator_says,
+        "every_executable_does_what_the_evaluator_says_part_2_of_2",
+        || every_executable_does_what_the_evaluator_says(1),
     ),
     (
-        "every_executable_of_a_program_with_enums_does_what_the_evaluator_says",
-        every_executable_of_a_program_with_enums_does_what_the_evaluator_says,
+        "every_executable_of_a_program_with_traits_does_what_the_evaluator_says_part_1_of_2",
+        || every_executable_of_a_program_with_traits_does_what_the_evaluator_says(0),
     ),
     (
-        "every_executable_of_a_program_with_tuples_does_what_the_evaluator_says",
-        every_executable_of_a_program_with_tuples_does_what_the_evaluator_says,
+        "every_executable_of_a_program_with_traits_does_what_the_evaluator_says_part_2_of_2",
+        || every_executable_of_a_program_with_traits_does_what_the_evaluator_says(1),
+    ),
+    (
+        "every_executable_of_a_program_with_enums_does_what_the_evaluator_says_part_1_of_2",
+        || every_executable_of_a_program_with_enums_does_what_the_evaluator_says(0),
+    ),
+    (
+        "every_executable_of_a_program_with_enums_does_what_the_evaluator_says_part_2_of_2",
+        || every_executable_of_a_program_with_enums_does_what_the_evaluator_says(1),
+    ),
+    (
+        "every_executable_of_a_program_with_tuples_does_what_the_evaluator_says_part_1_of_2",
+        || every_executable_of_a_program_with_tuples_does_what_the_evaluator_says(0),
+    ),
+    (
+        "every_executable_of_a_program_with_tuples_does_what_the_evaluator_says_part_2_of_2",
+        || every_executable_of_a_program_with_tuples_does_what_the_evaluator_says(1),
     ),
     (
         "every_executable_keeps_a_var_a_lambda_assigns_however_the_function_calls_it",
         every_executable_keeps_a_var_a_lambda_assigns_however_the_function_calls_it,
     ),
     (
-        "every_executable_of_a_program_with_lambdas_does_what_the_evaluator_says",
-        every_executable_of_a_program_with_lambdas_does_what_the_evaluator_says,
+        "every_executable_of_a_program_with_lambdas_does_what_the_evaluator_says_part_1_of_3",
+        || every_executable_of_a_program_with_lambdas_does_what_the_evaluator_says(0),
     ),
     (
-        "every_executable_of_a_program_with_with_and_try_does_what_the_evaluator_says",
-        every_executable_of_a_program_with_with_and_try_does_what_the_evaluator_says,
+        "every_executable_of_a_program_with_lambdas_does_what_the_evaluator_says_part_2_of_3",
+        || every_executable_of_a_program_with_lambdas_does_what_the_evaluator_says(1),
     ),
     (
-        "every_executable_of_a_program_with_numbers_does_what_the_evaluator_says",
-        every_executable_of_a_program_with_numbers_does_what_the_evaluator_says,
+        "every_executable_of_a_program_with_lambdas_does_what_the_evaluator_says_part_3_of_3",
+        || every_executable_of_a_program_with_lambdas_does_what_the_evaluator_says(2),
+    ),
+    (
+        "every_executable_of_a_program_with_with_and_try_does_what_the_evaluator_says_part_1_of_2",
+        || every_executable_of_a_program_with_with_and_try_does_what_the_evaluator_says(0),
+    ),
+    (
+        "every_executable_of_a_program_with_with_and_try_does_what_the_evaluator_says_part_2_of_2",
+        || every_executable_of_a_program_with_with_and_try_does_what_the_evaluator_says(1),
+    ),
+    (
+        "every_executable_of_a_program_with_numbers_does_what_the_evaluator_says_part_1_of_5",
+        || every_executable_of_a_program_with_numbers_does_what_the_evaluator_says(0),
+    ),
+    (
+        "every_executable_of_a_program_with_numbers_does_what_the_evaluator_says_part_2_of_5",
+        || every_executable_of_a_program_with_numbers_does_what_the_evaluator_says(1),
+    ),
+    (
+        "every_executable_of_a_program_with_numbers_does_what_the_evaluator_says_part_3_of_5",
+        || every_executable_of_a_program_with_numbers_does_what_the_evaluator_says(2),
+    ),
+    (
+        "every_executable_of_a_program_with_numbers_does_what_the_evaluator_says_part_4_of_5",
+        || every_executable_of_a_program_with_numbers_does_what_the_evaluator_says(3),
+    ),
+    (
+        "every_executable_of_a_program_with_numbers_does_what_the_evaluator_says_part_5_of_5",
+        || every_executable_of_a_program_with_numbers_does_what_the_evaluator_says(4),
     ),
     (
         "a_jump_gives_a_block_its_parameters_as_if_all_were_copied_at_once",
         a_jump_gives_a_block_its_parameters_as_if_all_were_copied_at_once,
     ),
     (
-        "a_function_with_a_frame_of_any_size_up_to_4_pages_does_what_the_evaluator_says",
-        a_function_with_a_frame_of_any_size_up_to_4_pages_does_what_the_evaluator_says,
+        "a_function_with_a_frame_of_6_pages_does_what_the_evaluator_says",
+        a_function_with_a_frame_of_6_pages_does_what_the_evaluator_says,
+    ),
+    (
+        "a_function_with_a_frame_of_any_size_up_to_6_pages_does_what_the_evaluator_says_part_1_of_2",
+        || a_function_with_a_frame_of_any_size_up_to_6_pages_does_what_the_evaluator_says(0),
+    ),
+    (
+        "a_function_with_a_frame_of_any_size_up_to_6_pages_does_what_the_evaluator_says_part_2_of_2",
+        || a_function_with_a_frame_of_any_size_up_to_6_pages_does_what_the_evaluator_says(1),
     ),
     (
         "a_call_gives_its_arguments_and_takes_its_results_as_if_all_were_copied_at_once",
@@ -108,24 +172,60 @@ pub const MACHINE: &[Test] = &[
         a_jump_that_swaps_two_values_swaps_them,
     ),
     (
-        "a_struct_bound_to_two_names_is_two_equal_structs",
-        a_struct_bound_to_two_names_is_two_equal_structs,
+        "a_struct_bound_to_two_names_is_two_equal_structs_part_1_of_2",
+        || a_struct_bound_to_two_names_is_two_equal_structs(0),
+    ),
+    (
+        "a_struct_bound_to_two_names_is_two_equal_structs_part_2_of_2",
+        || a_struct_bound_to_two_names_is_two_equal_structs(1),
     ),
     (
         "a_long_literal_is_printed_whole",
         a_long_literal_is_printed_whole,
     ),
     (
-        "every_executable_of_a_program_with_text_does_what_the_evaluator_says",
-        every_executable_of_a_program_with_text_does_what_the_evaluator_says,
+        "every_executable_of_a_program_with_text_does_what_the_evaluator_says_part_1_of_3",
+        || every_executable_of_a_program_with_text_does_what_the_evaluator_says(0),
     ),
     (
-        "every_executable_of_a_program_with_reprs_does_what_the_evaluator_says",
-        every_executable_of_a_program_with_reprs_does_what_the_evaluator_says,
+        "every_executable_of_a_program_with_text_does_what_the_evaluator_says_part_2_of_3",
+        || every_executable_of_a_program_with_text_does_what_the_evaluator_says(1),
     ),
     (
-        "every_executable_of_a_program_with_choices_does_what_the_evaluator_says",
-        every_executable_of_a_program_with_choices_does_what_the_evaluator_says,
+        "every_executable_of_a_program_with_text_does_what_the_evaluator_says_part_3_of_3",
+        || every_executable_of_a_program_with_text_does_what_the_evaluator_says(2),
+    ),
+    (
+        "every_executable_of_a_program_with_reprs_does_what_the_evaluator_says_part_1_of_4",
+        || every_executable_of_a_program_with_reprs_does_what_the_evaluator_says(0),
+    ),
+    (
+        "every_executable_of_a_program_with_reprs_does_what_the_evaluator_says_part_2_of_4",
+        || every_executable_of_a_program_with_reprs_does_what_the_evaluator_says(1),
+    ),
+    (
+        "every_executable_of_a_program_with_reprs_does_what_the_evaluator_says_part_3_of_4",
+        || every_executable_of_a_program_with_reprs_does_what_the_evaluator_says(2),
+    ),
+    (
+        "every_executable_of_a_program_with_reprs_does_what_the_evaluator_says_part_4_of_4",
+        || every_executable_of_a_program_with_reprs_does_what_the_evaluator_says(3),
+    ),
+    (
+        "every_executable_of_a_program_with_choices_does_what_the_evaluator_says_part_1_of_4",
+        || every_executable_of_a_program_with_choices_does_what_the_evaluator_says(0),
+    ),
+    (
+        "every_executable_of_a_program_with_choices_does_what_the_evaluator_says_part_2_of_4",
+        || every_executable_of_a_program_with_choices_does_what_the_evaluator_says(1),
+    ),
+    (
+        "every_executable_of_a_program_with_choices_does_what_the_evaluator_says_part_3_of_4",
+        || every_executable_of_a_program_with_choices_does_what_the_evaluator_says(2),
+    ),
+    (
+        "every_executable_of_a_program_with_choices_does_what_the_evaluator_says_part_4_of_4",
+        || every_executable_of_a_program_with_choices_does_what_the_evaluator_says(3),
     ),
     (
         "a_program_the_system_refuses_memory_ends_with_a_failing_status_and_does_nothing_more",
@@ -319,17 +419,18 @@ fn run_with(bytes: &[u8], command: impl Fn(&Path) -> std::process::Command) -> O
     }
 }
 
-/// Checks that every target builds identical bytes twice, for `cases`
-/// generated programs.
+/// Checks that every target builds identical bytes twice, for the `cases`
+/// generated programs of the seed that start at the case `from`.
 fn builds_identical_bytes_twice<T: Debug>(
     seed: u64,
+    from: u64,
     cases: u64,
     generate: impl Fn(&mut Gen) -> T,
     source: impl Fn(&T) -> &[u8],
 ) {
     let targets = buildable();
     assert!(!targets.is_empty(), "the compiler builds for some target");
-    generate::check(seed, cases, generate, |case| {
+    generate::check_cases(seed, from, cases, generate, |case| {
         for &target in &targets {
             let first = compile(source(case), target).unwrap();
             let second = compile(source(case), target).unwrap();
@@ -338,26 +439,34 @@ fn builds_identical_bytes_twice<T: Debug>(
     });
 }
 
-fn every_target_builds_identical_bytes_twice() {
-    builds_identical_bytes_twice(6, 3, programs::program, |c| &c.source);
-    builds_identical_bytes_twice(19, 2, traits::program, |c| c.source.as_bytes());
+fn every_target_builds_identical_bytes_twice_for_programs(part: u64) {
+    builds_identical_bytes_twice(6, 4 * part, 4, programs::program, |c| &c.source);
 }
 
-fn every_target_builds_identical_bytes_twice_for_enums_and_text() {
-    builds_identical_bytes_twice(24, 2, enums::program, |c| c.source.as_bytes());
-    builds_identical_bytes_twice(36, 2, text::program, |c| c.source.as_bytes());
+fn every_target_builds_identical_bytes_twice_for_traits() {
+    builds_identical_bytes_twice(19, 0, 5, traits::program, |c| c.source.as_bytes());
 }
 
+fn every_target_builds_identical_bytes_twice_for_enums() {
+    builds_identical_bytes_twice(24, 0, 5, enums::program, |c| c.source.as_bytes());
+}
+
+fn every_target_builds_identical_bytes_twice_for_text() {
+    builds_identical_bytes_twice(36, 0, 5, text::program, |c| c.source.as_bytes());
+}
+
+// A program of these generators is built for each target twice, which takes
+// 40 to 260 ms for one, so a test takes one.
 fn every_target_builds_identical_bytes_twice_for_reprs() {
-    builds_identical_bytes_twice(65, 1, reprs::program, |c| c.source.as_bytes());
+    builds_identical_bytes_twice(65, 0, 1, reprs::program, |c| c.source.as_bytes());
 }
 
 fn every_target_builds_identical_bytes_twice_for_choices() {
-    builds_identical_bytes_twice(69, 1, choices::program, |c| c.source.as_bytes());
+    builds_identical_bytes_twice(69, 0, 1, choices::program, |c| c.source.as_bytes());
 }
 
 fn every_target_builds_identical_bytes_twice_for_numbers() {
-    builds_identical_bytes_twice(73, 1, numbers::program, |c| c.source.as_bytes());
+    builds_identical_bytes_twice(73, 0, 1, numbers::program, |c| c.source.as_bytes());
 }
 
 /// The program in the scalar form that the targets are given: what the
@@ -366,16 +475,18 @@ fn after_the_pass(source: &[u8]) -> scalar::Program {
     scalar::passes(&lower(source).unwrap_or_else(|e| panic!("{e:?}")))
 }
 
-/// Checks, for `cases` generated programs, that each executable does what
-/// the evaluator says its program does, after the pass.
+/// Checks, for the `cases` generated programs of the seed that start at the
+/// case `from`, that each executable does what the evaluator says its program
+/// does, after the pass.
 fn every_executable_agrees<T: Debug>(
     seed: u64,
+    from: u64,
     cases: u64,
     generate: impl Fn(&mut Gen) -> T,
     source: impl Fn(&T) -> &[u8],
 ) {
     let targets = runnable();
-    generate::check(seed, cases, generate, |case| {
+    generate::check_cases(seed, from, cases, generate, |case| {
         let source = source(case);
         let said = scalar::run(&after_the_pass(source));
         for &target in &targets {
@@ -384,24 +495,24 @@ fn every_executable_agrees<T: Debug>(
     });
 }
 
-fn every_executable_does_what_the_evaluator_says() {
-    every_executable_agrees(3, 40, programs::program, |case| &case.source);
+fn every_executable_does_what_the_evaluator_says(part: u64) {
+    every_executable_agrees(3, 50 * part, 50, programs::program, |case| &case.source);
 }
 
-fn every_executable_of_a_program_with_traits_does_what_the_evaluator_says() {
-    every_executable_agrees(18, 30, traits::program, |case| case.source.as_bytes());
+fn every_executable_of_a_program_with_traits_does_what_the_evaluator_says(part: u64) {
+    every_executable_agrees(18, 30 * part, 30, traits::program, |case| case.source.as_bytes());
 }
 
-fn every_executable_of_a_program_with_enums_does_what_the_evaluator_says() {
-    every_executable_agrees(25, 30, enums::program, |case| case.source.as_bytes());
+fn every_executable_of_a_program_with_enums_does_what_the_evaluator_says(part: u64) {
+    every_executable_agrees(25, 30 * part, 30, enums::program, |case| case.source.as_bytes());
 }
 
-fn every_executable_of_a_program_with_tuples_does_what_the_evaluator_says() {
-    every_executable_agrees(28, 30, tuples::program, |case| case.source.as_bytes());
+fn every_executable_of_a_program_with_tuples_does_what_the_evaluator_says(part: u64) {
+    every_executable_agrees(28, 30 * part, 30, tuples::program, |case| case.source.as_bytes());
 }
 
-fn every_executable_of_a_program_with_lambdas_does_what_the_evaluator_says() {
-    every_executable_agrees(32, 20, lambdas::program, |case| case.source.as_bytes());
+fn every_executable_of_a_program_with_lambdas_does_what_the_evaluator_says(part: u64) {
+    every_executable_agrees(32, 20 * part, 20, lambdas::program, |case| case.source.as_bytes());
 }
 
 fn every_executable_keeps_a_var_a_lambda_assigns_however_the_function_calls_it() {
@@ -417,13 +528,13 @@ fn every_executable_keeps_a_var_a_lambda_assigns_however_the_function_calls_it()
     });
 }
 
-fn every_executable_of_a_program_with_with_and_try_does_what_the_evaluator_says() {
-    every_executable_agrees(43, 12, tries::program, |case| case.source.as_bytes());
+fn every_executable_of_a_program_with_with_and_try_does_what_the_evaluator_says(part: u64) {
+    every_executable_agrees(43, 12 * part, 12, tries::program, |case| case.source.as_bytes());
 }
 
-fn a_struct_bound_to_two_names_is_two_equal_structs() {
+fn a_struct_bound_to_two_names_is_two_equal_structs(part: u64) {
     let targets = runnable();
-    generate::check(13, 40, programs::shared_and_copied, |(shared, copied)| {
+    generate::check_cases(13, 50 * part, 50, programs::shared_and_copied, |(shared, copied)| {
         let said = scalar::run(&after_the_pass(shared.as_bytes()));
         let copy = scalar::run(&after_the_pass(copied.as_bytes()));
         assert_eq!(said, copy);
@@ -433,20 +544,20 @@ fn a_struct_bound_to_two_names_is_two_equal_structs() {
     });
 }
 
-fn every_executable_of_a_program_with_text_does_what_the_evaluator_says() {
-    every_executable_agrees(37, 20, text::program, |case| case.source.as_bytes());
+fn every_executable_of_a_program_with_text_does_what_the_evaluator_says(part: u64) {
+    every_executable_agrees(37, 20 * part, 20, text::program, |case| case.source.as_bytes());
 }
 
-fn every_executable_of_a_program_with_reprs_does_what_the_evaluator_says() {
-    every_executable_agrees(64, 16, reprs::program, |case| case.source.as_bytes());
+fn every_executable_of_a_program_with_reprs_does_what_the_evaluator_says(part: u64) {
+    every_executable_agrees(64, 15 * part, 15, reprs::program, |case| case.source.as_bytes());
 }
 
-fn every_executable_of_a_program_with_numbers_does_what_the_evaluator_says() {
-    every_executable_agrees(74, 16, numbers::program, |case| case.source.as_bytes());
+fn every_executable_of_a_program_with_numbers_does_what_the_evaluator_says(part: u64) {
+    every_executable_agrees(74, 20 * part, 20, numbers::program, |case| case.source.as_bytes());
 }
 
-fn every_executable_of_a_program_with_choices_does_what_the_evaluator_says() {
-    every_executable_agrees(68, 16, choices::program, |case| case.source.as_bytes());
+fn every_executable_of_a_program_with_choices_does_what_the_evaluator_says(part: u64) {
+    every_executable_agrees(68, 15 * part, 15, choices::program, |case| case.source.as_bytes());
 }
 
 pub const TYPES: [Type; 5] = [
@@ -572,35 +683,41 @@ fn a_jump_gives_a_block_its_parameters_as_if_all_were_copied_at_once() {
 /// A function holds as many values at once as it takes to need a frame of
 /// some pages, and writes them. A system that gives a program its stack one
 /// page at a time must have the frame reserved a page at a time, so that no
-/// page is passed over. The frame is 4 pages in the case that is always
-/// run, and any size up to that in the others. A probe that skipped a page
-/// is caught by any frame of two pages or more, and 4 keeps the test well
+/// page is passed over. The frame is 6 pages in the first test, and any size
+/// up to that in the other two. A probe that skipped a page
+/// is caught by any frame of two pages or more, and 6 keeps the test well
 /// under the limit, because the allocator takes time that grows faster than
 /// the number of values the function holds: 12 pages took about 230 ms to
-/// build, 6 about 260 ms with the cases beside it, and 4 take about 100 ms.
-fn a_function_with_a_frame_of_any_size_up_to_4_pages_does_what_the_evaluator_says() {
-    const MOST: usize = 4;
+/// build, and 6 take a small part of that.
+fn a_frame_of_pages_does_what_the_evaluator_says(pages: &usize) {
     let targets = runnable();
-    let holding = |pages: usize| {
-        // The registers hold some values, and each other value takes 8 bytes
-        // of the frame, 512 to a page.
-        let count = 512 * pages + 32;
-        let types = vec![Type::Int(Bits::B64); count];
-        let starts: Vec<u64> = (0..count)
-            .map(|i| (i as u64 + 1).wrapping_mul(0x9e37_79b9_7f4a_7c15))
-            .collect();
-        let sources: Vec<usize> = (0..count).map(|i| (i + 1) % count).collect();
-        rotating(&types, &starts, &sources, 1)
-    };
-    let check = |pages: &usize| {
-        let program = holding(*pages);
-        let said = scalar::run(&program);
-        for &target in &targets {
-            scalar_runs_as(&program, target, &said);
-        }
-    };
-    check(&MOST);
-    generate::check(82, 2, |g: &mut Gen| 1 + g.below(MOST), check);
+    // The registers hold some values, and each other value takes 8 bytes
+    // of the frame, 512 to a page.
+    let count = 512 * pages + 32;
+    let types = vec![Type::Int(Bits::B64); count];
+    let starts: Vec<u64> = (0..count)
+        .map(|i| (i as u64 + 1).wrapping_mul(0x9e37_79b9_7f4a_7c15))
+        .collect();
+    let sources: Vec<usize> = (0..count).map(|i| (i + 1) % count).collect();
+    let program = rotating(&types, &starts, &sources, 1);
+    let said = scalar::run(&program);
+    for &target in &targets {
+        scalar_runs_as(&program, target, &said);
+    }
+}
+
+/// The frame is 6 pages in the test that always runs.
+const MOST: usize = 6;
+
+fn a_function_with_a_frame_of_6_pages_does_what_the_evaluator_says() {
+    a_frame_of_pages_does_what_the_evaluator_says(&MOST);
+}
+
+/// A frame of any size up to 6 pages, one of the sizes that the seed draws in
+/// each of two tests, so that the sizes of the frames are the ones the two
+/// cases of the seed draw.
+fn a_function_with_a_frame_of_any_size_up_to_6_pages_does_what_the_evaluator_says(part: u64) {
+    generate::check_cases(82, part, 1, |g: &mut Gen| 1 + g.below(MOST), a_frame_of_pages_does_what_the_evaluator_says);
 }
 
 fn a_jump_that_swaps_two_values_swaps_them() {
