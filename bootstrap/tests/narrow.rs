@@ -8,10 +8,16 @@ use crate::Test;
 use crate::generate::{self, Gen};
 use crate::targets::{runnable, scalar_runs_as};
 
-pub const MACHINE: &[Test] = &[(
-    "every_executable_of_a_function_that_holds_many_integers_does_what_the_evaluator_says",
-    every_executable_of_a_function_that_holds_many_integers_does_what_the_evaluator_says,
-)];
+pub const MACHINE: &[Test] = &[
+    (
+        "every_executable_of_a_function_that_holds_many_integers_does_what_the_evaluator_says_part_1_of_2",
+        || every_executable_of_a_function_that_holds_many_integers_does_what_the_evaluator_says(0),
+    ),
+    (
+        "every_executable_of_a_function_that_holds_many_integers_does_what_the_evaluator_says_part_2_of_2",
+        || every_executable_of_a_function_that_holds_many_integers_does_what_the_evaluator_says(1),
+    ),
+];
 
 const BINARY: [Binary; 11] = [
     Binary::Add,
@@ -130,9 +136,9 @@ fn function(plan: &Plan) -> scalar::Program {
     program
 }
 
-fn every_executable_of_a_function_that_holds_many_integers_does_what_the_evaluator_says() {
+fn every_executable_of_a_function_that_holds_many_integers_does_what_the_evaluator_says(part: u64) {
     let targets = runnable();
-    generate::check(660, 200, plan, |plan| {
+    generate::check_part(660, 200, part, 2, plan, |plan| {
         let program = function(plan);
         let said = scalar::run(&program);
         for &target in &targets {

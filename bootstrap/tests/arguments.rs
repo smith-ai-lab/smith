@@ -56,8 +56,12 @@ pub const ONCE: &[Test] = &[
 
 pub const MACHINE: &[Test] = &[
     (
-        "every_executable_is_started_with_the_words_it_is_given",
-        every_executable_is_started_with_the_words_it_is_given,
+        "every_executable_is_started_with_the_words_it_is_given_part_1_of_2",
+        || every_executable_is_started_with_the_words_it_is_given(0),
+    ),
+    (
+        "every_executable_is_started_with_the_words_it_is_given_part_2_of_2",
+        || every_executable_is_started_with_the_words_it_is_given(1),
     ),
     (
         "every_executable_counts_the_words_it_is_started_with",
@@ -415,9 +419,9 @@ fn executables_agree(source: &str, words: &[Vec<u8>], said: &Outcome) {
     }
 }
 
-fn every_executable_is_started_with_the_words_it_is_given() {
+fn every_executable_is_started_with_the_words_it_is_given(part: u64) {
     let each = program(EACH);
-    generate::check(3, 40, word_list, |words| {
+    generate::check_part(3, 40, part, 2, word_list, |words| {
         let said = scalar::run_with_words(&each, words);
         assert_eq!(said, ended(lines(words)));
         executables_agree(EACH, words, &said);
