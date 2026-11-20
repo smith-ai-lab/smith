@@ -843,11 +843,14 @@ impl<'a> Defs<'a> {
         self.lists(here, at, name).then_some(f)
     }
 
-    /// Whether the module `here` lists the name from the module `at`.
+    /// Whether the module `here` lists the name from the module `at`, or imports
+    /// that module whole.
     #[cold]
     fn lists(&self, here: usize, at: usize, name: &str) -> bool {
         (self.resolution.modules.get(&here)).is_some_and(|naming| {
-            (naming.imports.iter()).any(|(w, to, home)| (w == name || to == name) && *home == at)
+            naming.whole.contains(&at)
+                || (naming.imports.iter())
+                    .any(|(w, to, home)| (w == name || to == name) && *home == at)
         })
     }
 
@@ -4051,6 +4054,9 @@ fn splice<'a>(
                 kept,
                 aliased: modules[i].entry_aliased.clone(),
                 imports: std::mem::take(&mut plan.imports),
+                whole: (modules[i].aliases.iter())
+                    .map(|(_, from)| modules[*from].number)
+                    .collect(),
                 types,
             });
             resolution.modules.insert(modules[i].number, naming.clone());

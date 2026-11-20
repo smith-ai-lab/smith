@@ -237,6 +237,9 @@ pub(super) struct Naming {
     /// What the module lists from other modules, as it writes each, as the
     /// file writes it, and the number of the module it is from.
     pub(super) imports: Vec<(String, String, usize)>,
+    /// The numbers of the modules it imports whole, which it writes a name of
+    /// with the module before it, and lists nothing from.
+    pub(super) whole: Vec<usize>,
     /// The names the module lists that are the names of structs, enums, or
     /// traits, and, when the module is read whole, those it defines. A type is
     /// written as the module wrote it, and found by what the module calls it.

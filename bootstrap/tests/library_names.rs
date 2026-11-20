@@ -22,6 +22,10 @@ pub const ONCE: &[Test] = &[
         "a_parameter_named_like_a_function_of_its_module_is_the_parameter_where_it_is_written",
         a_parameter_named_like_a_function_of_its_module_is_the_parameter_where_it_is_written,
     ),
+    (
+        "a_module_that_imports_another_whole_calls_it_by_its_name_or_by_the_name_it_gives_it",
+        a_module_that_imports_another_whole_calls_it_by_its_name_or_by_the_name_it_gives_it,
+    ),
 ];
 
 /// What `main` prints when it is built with the modules.
@@ -86,4 +90,32 @@ fn main() ! console, alloc {
 }
 ";
     assert_eq!(printed(main, &[("shapes", shapes)]), "5\n");
+}
+
+/// A module that is imported whole lists nothing, and a function of it called
+/// through the module, written as it is or as the module is renamed, is found
+/// in the module that imports it, also when the program lists a function of the
+/// same name from the one module and the other.
+fn a_module_that_imports_another_whole_calls_it_by_its_name_or_by_the_name_it_gives_it() {
+    let base = "pub fn twice(n: 0..100) -> 0..1000 { n * 2 }\n";
+    let other = "pub fn twice(n: 0..100) -> 0..1000 { n * 3 }\n";
+    let mid = "\
+use base
+use other as o
+
+pub fn both(n: 0..100) -> Nat { base.twice(n) + o.twice(n) }
+";
+    let main = "\
+use std.console (console, print)
+use mid (both)
+use other (twice)
+
+fn main() ! console, alloc {
+  print(\"{both(1)} {twice(1)}\")
+}
+";
+    assert_eq!(
+        printed(main, &[("base", base), ("other", other), ("mid", mid)]),
+        "5 3\n"
+    );
 }
