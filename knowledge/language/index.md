@@ -136,7 +136,7 @@ The files are a tour. Read them in the order below: each one uses only what the 
 ## Modules and projects
 
 - [modules.md](modules.md): a file as a module, and how its path gives the module its name.
-- [pub.md](pub.md): everything in a module private unless marked `pub`, on an item or on a single field, and what that lets another module do with a struct.
+- [pub.md](pub.md): everything in a module private unless marked `pub`, on an item, on a single field, or on a single operation of an effect, and what that lets another module do with a struct.
 - [use.md](use.md): `use`, which brings the names of another module into a file from an explicit list, and what is said when a name is missing or unused.
 - [prelude.md](prelude.md): the names that are in scope in every file without a `use`, `Int`, `Nat`, and `Byte` among them, and what a file imports for everything else.
 - [qualified-names.md](qualified-names.md): a `use` with no list, which brings in the module itself under its last path segment, `as`, and a name two modules share.
