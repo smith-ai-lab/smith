@@ -1735,7 +1735,8 @@ impl<S: System> Writer<'_, S> {
         }
         let bits = self.width(result) * 8;
         let wide = bits == 64;
-        let signed = matches!(op, Binary::MulHighS) && !wide;
+        let signed =
+            matches!(op, Binary::DivS | Binary::RemS) || (matches!(op, Binary::MulHighS) && !wide);
         // A shift right that keeps the sign reads the value as signed, and
         // the count as it is.
         let a = if signed || matches!(op, Binary::ShiftRightS) {
@@ -1788,6 +1789,24 @@ impl<S: System> Writer<'_, S> {
             Binary::MulHighS => {
                 asm.three(0x9b00_7c00, t, a, b);
                 asm.shift_right_signed(t, bits);
+            }
+            // `udiv` and `sdiv` of numbers that are extended to 64 bits as their
+            // signs say, and a remainder is `a - q * b`, which is `msub`. The
+            // quotient is in x15 until the remainder is worked out.
+            Binary::DivU => {
+                asm.three(0x9ac0_0800, t, a, b);
+                extended = true;
+            }
+            Binary::DivS => asm.three(0x9ac0_0c00, t, a, b),
+            Binary::RemU | Binary::RemS => {
+                let divide = if op == Binary::RemU {
+                    0x9ac0_0800
+                } else {
+                    0x9ac0_0c00
+                };
+                asm.three(divide, X15, a, b);
+                asm.word(0x9b00_8000 | b << 16 | a << 10 | X15 << 5 | t);
+                extended = op == Binary::RemU;
             }
         }
         self.finish(asm, result, t, extended);

@@ -355,7 +355,10 @@ fn every_integer_operation_gives_what_the_evaluator_gives() {
     let mut b = Builder::new();
     let mut results: Vec<(scalar::Value, Bits)> = Vec::new();
     for bits in Bits::ALL {
-        let values: Vec<_> = edges(bits).into_iter().map(|n| b.int(bits, n)).collect();
+        let numbers = edges(bits);
+        let values: Vec<_> = numbers.iter().map(|&n| b.int(bits, n)).collect();
+        let values_of: std::collections::HashMap<usize, u64> =
+            values.iter().map(|v| v.0).zip(numbers.iter().copied()).collect();
         for &x in &values {
             for &y in &values {
                 for op in [
@@ -369,6 +372,17 @@ fn every_integer_operation_gives_what_the_evaluator_gives() {
                     Binary::Or,
                 ] {
                     results.push((b.binary(op, x, y), bits));
+                }
+                // A division is given a divisor that is not zero, and, for the
+                // signed ones, not the least number divided by -1.
+                let (xn, yn) = (values_of[&x.0], values_of[&y.0]);
+                let all = if bits == Bits::B64 { u64::MAX } else { (1u64 << bits.count()) - 1 };
+                for op in [Binary::DivU, Binary::RemU, Binary::DivS, Binary::RemS] {
+                    let signed = matches!(op, Binary::DivS | Binary::RemS);
+                    let least = (all >> 1) + 1;
+                    if yn != 0 && !(signed && yn == all && xn == least) {
+                        results.push((b.binary(op, x, y), bits));
+                    }
                 }
                 for op in [Compare::Equal, Compare::LessU, Compare::LessS] {
                     results.push((b.compare(op, x, y), Bits::B8));
