@@ -24,6 +24,7 @@ mod remat;
 mod remove;
 pub mod runtime;
 mod sink;
+mod tail;
 mod thread;
 mod trim;
 mod vector;
@@ -41,11 +42,13 @@ pub use fuse::fuse;
 pub use inline::{BOUND, LEAF_BOUND, inline, size};
 pub use remat::rematerialized;
 pub use remove::{WALKS, remove, remove_counting};
+pub use tail::tail;
 pub use thread::thread;
 pub use trim::trim;
 pub use wellformed::{Malformed, Why, check};
 
 /// The passes over a program in the scalar form, in the order they run:
+/// the making of a loop of a function whose last act is a call of itself,
 /// inlining, the taking away of what a function is passed and gives back and
 /// does not need, the sending of a jump past a block
 /// that only chooses, folding of constants, the replacing of what is worked out
@@ -53,7 +56,7 @@ pub use wellformed::{Malformed, Why, check};
 /// instruction or takes one apart: `fuse` does that, once, to a form as it is
 /// made.
 pub fn passes(program: &Program) -> Program {
-    remove(common(fold(thread(trim(inline(program.clone()))))))
+    remove(common(fold(thread(trim(inline(tail(program.clone())))))))
 }
 
 /// How many bits an integer has.
