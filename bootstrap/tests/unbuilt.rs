@@ -92,7 +92,7 @@ const UNBUILT: &[Unbuilt] = &[
         parsed: true,
     },
     Unbuilt {
-        declares: "fn u{i}(n: Int) -> Int {\n  if n == 0 { 0 } else { @u{i}(wrapping_sub(n, 1)) }\n}\n",
+        declares: "fn u{i}(n: Int) -> Int {\n  if n == 0 { 0 } else { wrapping_add(@u{i}(wrapping_sub(n, 1)), 1) }\n}\n",
         call: "u{i}(1)",
         parsed: false,
     },

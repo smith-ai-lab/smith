@@ -1591,7 +1591,9 @@ fn main_statement(
             }
         }
         Kind::Recursion => {
-            b.mark(NOT_BUILT, None);
+            // A call of itself that is the last thing the function does, in a
+            // function with no `decreases`.
+            b.mark("needs a `decreases`", Some("`decreases`".to_string()));
             b.push("main()");
         }
         Kind::NoArgument => {

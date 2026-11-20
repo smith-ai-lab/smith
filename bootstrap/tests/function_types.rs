@@ -231,7 +231,11 @@ fn types_in_parentheses_are_a_tuple_and_fn_with_them_is_a_function_wherever_a_ty
 /// The places a type is written that are not a parameter, with a `main` that
 /// reaches each.
 const REACHED: [(&str, &str, &str); 4] = [
-    ("fn f() -> ", " { f() }\n", "\nfn main() { f() }\n"),
+    (
+        "fn f() -> ",
+        " { h }\n",
+        "\nfn h(a: @A, b: @B) {}\n\nfn main() { f() }\n",
+    ),
     (
         "struct S {\n  g: ",
         "\n}\n",

@@ -5,6 +5,69 @@
 use super::*;
 
 impl<'a> Checker<'a> {
+    /// At a call of a function from itself that is the last thing it does,
+    /// `arith` must prove that the measure of its `decreases`, worked out from
+    /// the arguments, is not below zero and is smaller than the measure now.
+    /// A call that is not the last thing the function does is refused, with
+    /// every call of a function that has no `decreases`, where `recursion`
+    /// looks for them, and is not looked at here.
+    fn call_decreases(&mut self, body: &mut Body<'a>, call: &Call, callee: usize, sig: &Signature) {
+        let defs = self.defs;
+        let Some(own) = body.f else { return };
+        if !std::ptr::eq(own, &*defs.file.functions[callee])
+            || own.decreases.is_empty()
+            || body.lambdas > 0
+            || body.contract
+            || matches!(body.numbers, Numbers::Finding(_))
+            || !tail_positions(own).contains(&call.pos)
+        {
+            return;
+        }
+        // A call with an argument for no parameter is reported, and proves nothing.
+        let Some(places) = params_of(&sig.params, &call.args) else {
+            return;
+        };
+        let mut given: Vec<Option<&Expr>> = vec![None; own.params.len()];
+        for (arg, place) in call.args.iter().zip(places) {
+            given[place] = Some(&arg.value);
+        }
+        // What a parameter is at the call is its argument, or its default when
+        // the call leaves it out.
+        let args: Vec<(&str, &Expr)> = (own.params.iter().zip(&given))
+            .filter_map(|(p, g)| g.or(p.default.as_ref()).map(|e| (p.name.as_str(), e)))
+            .collect();
+        let outcome = match (
+            self.measure_of(body, &own.decreases, &[]),
+            self.measure_of(body, &own.decreases, &args),
+        ) {
+            (Some(before), Some(after)) => self.decreased_by(body, &own.decreases, &before, &after),
+            _ => Err(proof::Unproven::Smaller(
+                own.decreases
+                    .iter()
+                    .map(written_expr)
+                    .collect::<Vec<_>>()
+                    .join(", "),
+            )),
+        };
+        let goal = match outcome {
+            Ok(()) => return,
+            Err(proof::Unproven::Smaller(m)) => format!("`{m}` is smaller at this call"),
+            Err(proof::Unproven::NotBelowZero(m)) => {
+                format!("`{m}` is not below zero at this call")
+            }
+        };
+        self.errors.push(
+            Error::new(
+                call.pos,
+                format!("cannot prove that {goal}, so `{}` may not end", own.name),
+            )
+            .with_fix(
+                "check what the call needs first with an `if`, or make each call make the \
+                 measure smaller",
+            ),
+        );
+    }
+
     /// Checks the parts of the `decreases` of a function: each is a whole number
     /// of an unsigned type over the parameters, which is never computed when
     /// the program runs.
@@ -618,6 +681,7 @@ impl<'a> Checker<'a> {
                 }
             }
             self.contract_call(body, call, &defs.file.functions[f], sig);
+            self.call_decreases(body, call, f, sig);
             return sig.gives.solved(&sol);
         }
         let mut of = (defs.trait_fns_at(call.name_pos, name))
@@ -1074,30 +1138,26 @@ impl<'a> Checker<'a> {
             });
         let reached: Vec<(Pos, usize)> = called.chain(passed).collect();
         let own = &defs.file.functions[f];
-        let mut tail = Vec::new();
-        tail_calls(&own.body, &mut tail);
-        for e in exprs(values(&own.body)) {
-            if let Expr::Return { value: Some(v), .. } = e
-                && let Expr::Call(c) = &**v
-            {
-                tail.push(c.pos);
-            }
-        }
+        let tail = tail_positions(own);
         for (pos, callee) in reached {
             if callee == f && tail.contains(&pos) {
                 // A call of the function from itself that is the last thing it
                 // does is a loop, which the measure of its `decreases` must
-                // prove ends.
-                // Until `arith` proves the measure smaller at a call, none of
-                // them is built, and the error says what the function lacks.
-                self.errors.push(Error::unsupported(
-                    pos,
-                    if own.decreases.is_empty() {
-                        "a function that calls itself, which needs a `decreases` that is smaller at each call,"
-                    } else {
-                        "proving that the `decreases` of a function that calls itself is smaller at the call,"
-                    },
-                ));
+                // prove ends, as `call_decreases` does where the call is checked.
+                if own.decreases.is_empty() {
+                    self.errors.push(
+                        Error::new(
+                            pos,
+                            format!(
+                                "`{}` calls itself, and a function that calls itself needs a `decreases`",
+                                own.name
+                            ),
+                        )
+                        .with_fix(
+                            "write `decreases` after the signature, with a whole number that is smaller at each call",
+                        ),
+                    );
+                }
             } else if path.contains(&Item::Fn(callee)) {
                 self.errors.push(Error::unsupported(
                     pos,
@@ -1110,6 +1170,22 @@ impl<'a> Checker<'a> {
         path.remove(&Item::Fn(f));
         done.insert(Item::Fn(f));
     }
+}
+
+/// Where the calls are in the body of `f` that are the last thing it does: the
+/// call it ends with, the calls the blocks of its last `if` or `match` end
+/// with, and the call a `return` gives.
+fn tail_positions(f: &Function) -> Vec<Pos> {
+    let mut out = Vec::new();
+    tail_calls(&f.body, &mut out);
+    for e in exprs(values(&f.body)) {
+        if let Expr::Return { value: Some(v), .. } = e
+            && let Expr::Call(c) = &**v
+        {
+            out.push(c.pos);
+        }
+    }
+    out
 }
 
 /// Where the calls are that a block ends with, which are the last thing a

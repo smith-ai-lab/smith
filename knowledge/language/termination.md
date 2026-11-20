@@ -6,8 +6,8 @@ status: partial
 built:
   - "`loop decreases e` on an open-ended loop, where `e` is an expression of whole numbers that `arith` proves not below zero and smaller at every place the loop goes round again, and which is never computed"
   - "`diverge` on an open-ended `loop`, which its callers inherit, and a function whose every `loop` is over a range"
-  - "`decreases` on a function, of one part or more separated by commas, each a whole number of an unsigned type over the parameters, which is never computed; a function that calls itself as the last thing it does and has no `decreases` is refused, as a function whose call of itself is not the last thing it does is"
-  - "not a call of a function from itself that `arith` proves makes the measure smaller, so a function that calls itself does not compile yet, and not functions that call each other"
+  - "`decreases` on a function, of one part or more separated by commas, each a whole number of an unsigned type over the parameters, which is never computed; a function that calls itself and has none is refused, and where every call of itself is the last thing the function does, `arith` proves at each call that no part is below zero and that the measure is smaller, as words are in a dictionary, and the function is a loop"
+  - "not a call of a function from itself that is not the last thing it does, which is refused as not supported yet, and not functions that call each other"
 ---
 
 # Termination

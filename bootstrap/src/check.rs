@@ -5729,19 +5729,24 @@ impl<'a> Typed<'a> {
             .push(instance.clone());
         let (calls, cycles) = self.calls_of(instance, at);
         errors.extend(cycles.into_iter().map(default_cycle));
+        let mine = path[&instance.template].len() - 1;
         for (pos, callee) in calls {
             let size = |i: &Instance| i.args.iter().map(Ty::size).sum::<usize>();
             let grows = |p: &Instance| {
                 !matches!(callee.template, Template::Given(_)) && size(&callee) > size(p)
             };
+            // A call of the copy from itself is a loop and needs no other copy,
+            // and `recursion` has already said whether it may be one.
+            let itself = callee == *instance;
             let endless = (path.get(&callee.template).into_iter().flatten())
-                .any(|p| *p == callee || grows(p));
+                .enumerate()
+                .any(|(k, p)| (*p == callee && !(itself && k == mine)) || grows(p));
             if endless {
                 errors.push(Error::unsupported(
                     pos,
                     "a function that calls itself, directly or through others,",
                 ));
-            } else if !done.contains(&callee) {
+            } else if !itself && !done.contains(&callee) {
                 self.copies(&callee, pos, path, done, errors);
             }
         }
