@@ -102,6 +102,12 @@ pub fn prelude_read(source: &[u8]) -> Result<usize, Vec<diag::Error>> {
     checked(source, &mut Timings::new()).map(|checked| checked.prelude_loaded)
 }
 
+/// The traits of numbers of the prelude that are read for a source file, which
+/// are those that it, or a module it imports, calls for by name.
+pub fn prelude_numeric_read(source: &[u8]) -> Result<Vec<String>, Vec<diag::Error>> {
+    checked(source, &mut Timings::new()).map(|checked| checked.prelude_numeric)
+}
+
 /// `prelude_read`, with `prelude` as the prelude's source, which is divided
 /// here as `build.rs` divides `std/prelude.smith`, so that a test can add to a
 /// copy of it.

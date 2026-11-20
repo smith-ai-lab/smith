@@ -21,17 +21,35 @@ pub struct Impl<'a> {
     pub types: Vec<&'a str>,
 }
 
-/// The prelude's source divided: the text of every item that is not an `impl`,
-/// which is read with every program, and each `impl`, in the order written.
+/// The traits whose declarations are read only for a program that names one of
+/// them or one of their functions, or imports a module that does: the traits of
+/// operations on whole numbers that a program calls by name.
+pub const NUMERIC: &[&str] = &["Wrapping", "Saturating", "Checked", "Bits"];
+
+/// A trait of `NUMERIC`.
+#[derive(Debug, PartialEq, Eq)]
+pub struct Numeric<'a> {
+    pub source: &'a str,
+    /// The trait's name, and then the names of its functions.
+    pub names: Vec<&'a str>,
+}
+
+/// The prelude's source divided: the text of every item that is not an `impl`
+/// and is read with every program, the traits of `NUMERIC` and the names that
+/// call for them, and each `impl`, in the order written.
 #[derive(Debug, PartialEq, Eq)]
 pub struct Divided<'a> {
     pub declarations: String,
+    /// Each trait of `NUMERIC`: its text, and its name and the names of its
+    /// functions.
+    pub numeric: Vec<Numeric<'a>>,
     pub impls: Vec<Impl<'a>>,
 }
 
 /// Divides the source. A line that is not part of an item is ignored.
 pub fn divide(source: &str) -> Divided<'_> {
     let mut declarations = String::new();
+    let mut numeric: Vec<Numeric> = Vec::new();
     let mut impls = Vec::new();
     let mut start = None;
     let mut at = 0;
@@ -53,6 +71,21 @@ pub fn divide(source: &str) -> Divided<'_> {
             let text = &source[from..end];
             if text.starts_with("impl") {
                 impls.push(header(text));
+            } else if let Some(name) = text
+                .strip_prefix("trait ")
+                .map(|rest| rest.split(['[', ' ']).next().unwrap())
+                .filter(|name| NUMERIC.contains(name))
+            {
+                let mut names = vec![name];
+                for line in text.lines() {
+                    if let Some(rest) = line.trim_start().strip_prefix("fn ") {
+                        names.push(rest.split('(').next().unwrap());
+                    }
+                }
+                numeric.push(Numeric {
+                    source: text,
+                    names,
+                });
             } else {
                 declarations.push_str(text);
                 declarations.push('\n');
@@ -64,6 +97,7 @@ pub fn divide(source: &str) -> Divided<'_> {
     assert!(start.is_none(), "an item of the prelude is not closed");
     Divided {
         declarations,
+        numeric,
         impls,
     }
 }

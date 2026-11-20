@@ -22,8 +22,8 @@ const GROUPS: &[(&str, &str)] = &[("ONCE", "once"), ("MACHINE", "machine"), ("RU
 
 fn main() {
     let root = PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").unwrap());
-    standard_library(&root);
-    prelude(&root);
+    let numeric = prelude(&root);
+    standard_library(&root, &numeric);
     let tests = root.join("tests");
     println!("cargo:rerun-if-changed=tests");
     println!("cargo:rerun-if-changed=build.rs");
@@ -116,7 +116,7 @@ fn rust_files(dir: &Path) -> Vec<PathBuf> {
 /// `std_modules.rs` in the build folder, a function that gives a module's
 /// source by its name, so that looking one up does not depend on how many
 /// there are, and one that is not looked up is never read.
-fn standard_library(root: &Path) {
+fn standard_library(root: &Path, numeric: &[Vec<String>]) {
     let std = root.join("..").join("std");
     println!("cargo:rerun-if-changed=../std");
     let mut files: Vec<PathBuf> = std::fs::read_dir(&std)
@@ -163,6 +163,31 @@ fn standard_library(root: &Path) {
         let name = file.file_stem().unwrap().to_str().unwrap();
         let exported = exports(&std::fs::read_to_string(file).unwrap());
         writeln!(out, "    ({name:?}, &{exported:?}),").unwrap();
+    }
+    out.push_str("];\n");
+    // For each trait of numbers of the prelude, the modules that write its
+    // name or the name of one of its functions, so that a program that imports
+    // none of them reads no such trait.
+    out.push_str(
+        "\n/// For each trait of numbers of the prelude, the modules of the standard\n\
+         /// library that write its name or one of its functions' names.\n\
+         const NUMERIC_USERS: &[&[&str]] = &[\n",
+    );
+    let texts: Vec<String> = files
+        .iter()
+        .map(|f| std::fs::read_to_string(f).unwrap())
+        .collect();
+    for names in numeric {
+        let users: Vec<&str> = files
+            .iter()
+            .zip(&texts)
+            .filter(|(_, text)| {
+                text.split(|c: char| !(c.is_alphanumeric() || c == '_'))
+                    .any(|word| names.iter().any(|n| n == word))
+            })
+            .map(|(f, _)| f.file_stem().unwrap().to_str().unwrap())
+            .collect();
+        writeln!(out, "    &{users:?},").unwrap();
     }
     out.push_str("];\n");
     let dest = PathBuf::from(std::env::var_os("OUT_DIR").unwrap()).join("std_modules.rs");
@@ -215,7 +240,7 @@ fn exports(source: &str) -> Vec<String> {
 /// when a program reaches it. The result is `prelude.rs` in the build folder:
 /// the text of the items that are not `impl`s, which every program reads, and
 /// each `impl` with its names.
-fn prelude(root: &Path) {
+fn prelude(root: &Path) -> Vec<Vec<String>> {
     let file = root.join("..").join("std").join("prelude.smith");
     println!("cargo:rerun-if-changed=../std/prelude.smith");
     let source = std::fs::read_to_string(&file).unwrap();
@@ -223,9 +248,19 @@ fn prelude(root: &Path) {
     let mut out = format!(
         "/// The prelude's items that are not `impl`s.\n\
          const PRELUDE_DECLARATIONS: &str = {:?};\n\n\
+         /// The prelude's traits of numbers, each read for a program that calls for it.\n\
+         const PRELUDE_NUMERIC: &[PreludeNumeric<'static>] = &[\n{}];\n\n\
          /// The prelude's `impl`s, in the order written.\n\
          const PRELUDE_IMPLS: &[PreludeImpl<'static>] = &[\n",
-        divided.declarations
+        divided.declarations,
+        divided
+            .numeric
+            .iter()
+            .map(|n| format!(
+                "    PreludeNumeric {{ source: {:?}, names: &{:?} }},\n",
+                n.source, n.names
+            ))
+            .collect::<String>()
     );
     for im in &divided.impls {
         writeln!(
@@ -238,4 +273,7 @@ fn prelude(root: &Path) {
     out.push_str("];\n");
     let dest = PathBuf::from(std::env::var_os("OUT_DIR").unwrap()).join("prelude.rs");
     std::fs::write(dest, out).unwrap();
+    (divided.numeric.iter())
+        .map(|n| n.names.iter().map(|n| n.to_string()).collect())
+        .collect()
 }
