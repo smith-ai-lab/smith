@@ -146,7 +146,34 @@ fn about() -> Html {
 
 Each element writes through the effect `markup`, and `render` is the [handler](../language/handlers.md) that answers it: it runs its block, gathers what the block writes into one text, and gives it as an `Html`. So a function that calls `render` carries no `markup`, and a component, which does not, carries it.
 
-Nothing is sent or printed while a page is written. A function that fails halfway has made no part of a page that anyone has seen, so it gives its error as any function does.
+Nothing is sent or printed while a page is written.
+
+## What can fail
+
+A block gives no value, so nothing fails through one: a [`try`](../language/try.md) in a block has no function to leave. What can fail a page is done before the page is written.
+
+```
+fn note_page(id: str) -> Result[Html, str] ! alloc, store {
+  note = try load(id)
+  .ok(render() {
+    h1(note.title)
+    p(note.body)
+  })
+}
+```
+
+A component that meets a failure handles it where it is, and writes what stands in its place.
+
+```
+fn note_card(id: str) ! markup, store {
+  match load(id) {
+    .ok(note) => h2(note.title)
+    .err(_) => p("This note is gone.", class: "missing")
+  }
+}
+```
+
+So a page is whole or is not made: no call inside `render` leaves it half written.
 
 An `Html` is given to whatever wants a page. A route of an [HTTP server](http.md#what-a-function-gives) that gives one answers with it as a page.
 
