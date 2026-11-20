@@ -152,11 +152,26 @@ The protocol asks a server to hold the headers of a request to the message insid
 
 `mcp` asks for each message and gives each answer through the effect `messages`, and does not know where they come from. What answers `messages` is the deployment and not the program:
 
-- A server a client starts on the same machine reads each message from the standard input and writes each answer to the standard output.
+- A server a client starts on the same machine reads each message from the standard input and writes each answer to the standard output. `stdio`, of `std.mcp`, is the handler that does it, installed in a [deployment](../language/deployments.md) as `listen` is.
 - A server on the network takes each message from an HTTP request and gives the answer as its response, as the protocol's transport over HTTP says. In a [WebAssembly module](../compiler.md#the-host-of-a-webassembly-module) the operations of `messages` are imports, which the host supplies from the request it was called with.
 - Beside other routes of one server, [`at`](http.md#a-server-of-messages-at-a-path) supplies the messages from a path.
 
 The source is the same for all three.
+
+```
+use main (main)
+use std.mcp (stdio)
+use std.project (Package)
+
+package = Package(name: "calc")
+
+pub fn local() ! console, alloc {
+  with stdio()
+  main()
+}
+```
+
+`smith build local` gives the executable a client starts. Nothing but messages may be written to the standard output of such a server, or the client loses its place, so `stdio` answers `console` too while it runs: what a tool writes with `print` goes to the standard error, where a client keeps a server's log. A tool that prints is safe, and what it prints is seen.
 
 ## The forms
 
