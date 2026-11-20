@@ -597,6 +597,7 @@ impl<'a> Checker<'a> {
                 return self.unknown_call(body, call);
             }
             let refused = self.refusals;
+            let refused_errors = self.errors.len();
             let placed = match want {
                 Want::Ty(t) => Some(t),
                 _ => None,
@@ -637,6 +638,13 @@ impl<'a> Checker<'a> {
                 }
             }
             self.contract_call(body, call, &defs.file.functions[f], sig);
+            // A division that wraps is of a divisor that is not zero.
+            if matches!(name, "wrapping_div" | "wrapping_rem")
+                && of_std(defs.file.functions[f].pos)
+                && self.errors.len() == refused_errors
+            {
+                self.wrapping_division(body, call, sig);
+            }
             return sig.gives.solved(&sol);
         }
         let mut of = (defs.trait_fns_at(call.name_pos, name))

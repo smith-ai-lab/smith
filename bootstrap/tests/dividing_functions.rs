@@ -65,7 +65,7 @@ fn wrapped(ty: Int, a: i128, b: i128, rem: bool) -> i128 {
 /// divisor of `wrapping_` is a constant that is not zero.
 fn program(ty: Int, pairs: &[(i128, i128)]) -> String {
     let t = ty.name;
-    let mut text = "use std.console (console, print)\nuse std.int (checked_div, checked_rem)\n\nfn main() ! console, alloc {\n".to_string();
+    let mut text = "use std.console (console, print)\nuse std.int (checked_div, checked_rem, wrapping_div, wrapping_rem)\n\nfn main() ! console, alloc {\n".to_string();
     for (i, (a, b)) in pairs.iter().enumerate() {
         text.push_str(&format!("  a{i}: {t} = {a}\n  b{i}: {t} = {b}\n"));
         text.push_str(&format!(
@@ -73,7 +73,7 @@ fn program(ty: Int, pairs: &[(i128, i128)]) -> String {
         ));
         if *b != 0 {
             text.push_str(&format!(
-                "  print(\"{{Wrapping.wrapping_div(a{i}, {b})}} {{Wrapping.wrapping_rem(a{i}, {b})}}\")\n"
+                "  print(\"{{wrapping_div(a{i}, {b})}} {{wrapping_rem(a{i}, {b})}}\")\n"
             ));
         }
     }
@@ -151,31 +151,33 @@ fn wrapping_div_and_wrapping_rem_keep_the_low_bits_of_the_quotient() {
 /// What the checker says of a function `f` of two numbers that is called.
 fn refused(function: &str) -> Result<(), String> {
     let source = with_header(format!(
-        "use std.bits (i8)\nuse std.console (console, print)\n\n{function}\n\nfn main() ! console, alloc {{\n  print(\"{{f(1, 2)}}\")\n}}\n"
+        "use std.bits (i8)\nuse std.console (console, print)\nuse std.int (wrapping_div, wrapping_rem)\n\n{function}\n\nfn main() ! console, alloc {{\n  print(\"{{f(1, 2)}}\")\n}}\n"
     ));
     lower(source.as_bytes()).map(|_| ()).map_err(|e| format!("{e:?}"))
 }
 
 fn wrapping_div_and_wrapping_rem_are_refused_where_the_divisor_may_be_zero() {
-    for f in ["wrapping_div", "wrapping_rem"] {
-        let error = refused(&format!("fn f(a: i8, b: i8) -> i8 {{ Wrapping.{f}(a, b) }}")).unwrap_err();
-        assert!(error.contains("cannot prove that `b != 0`"), "{error}");
-        assert!(error.contains(&format!("`{f}(a, b)` may divide by zero")), "{error}");
-        assert!(error.contains("or use `checked_"), "{error}");
-        let error = refused(&format!("fn f(a: i8, b: i8) -> i8 {{ Wrapping.{f}(a, 0) }}")).unwrap_err();
-        assert!(error.contains("divides by zero"), "{error}");
-        assert_eq!(
-            refused(&format!(
-                "fn f(a: i8, b: i8) -> i8 requires b != 0 {{ Wrapping.{f}(a, b) }}"
-            )),
-            Ok(())
-        );
-        assert_eq!(
-            refused(&format!(
-                "fn f(a: i8, b: i8) -> i8 {{ if b > 0 {{ Wrapping.{f}(a, b) }} else {{ 0 }} }}"
-            )),
-            Ok(())
-        );
+    // The trait's function and the library's, called as `std.int` has it.
+    for call in ["Wrapping.", ""] {
+        for f in ["wrapping_div", "wrapping_rem"] {
+            let write = |args: &str, requires: &str, guard: bool| {
+                let call = format!("{call}{f}({args})");
+                let body = if guard {
+                    format!("if b > 0 {{ {call} }} else {{ 0 }}")
+                } else {
+                    call
+                };
+                refused(&format!("fn f(a: i8, b: i8) -> i8 {requires}{{ {body} }}"))
+            };
+            let error = write("a, b", "", false).unwrap_err();
+            assert!(error.contains("cannot prove that `b != 0`"), "{error}");
+            assert!(error.contains(&format!("`{f}(a, b)` may divide by zero")), "{error}");
+            assert!(error.contains("or use `checked_"), "{error}");
+            let error = write("a, 0", "", false).unwrap_err();
+            assert!(error.contains("divides by zero"), "{error}");
+            assert_eq!(write("a, b", "requires b != 0 ", false), Ok(()));
+            assert_eq!(write("a, b", "", true), Ok(()));
+        }
     }
 }
 
