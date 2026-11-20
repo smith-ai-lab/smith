@@ -1,0 +1,24 @@
+# RFC 7541, sections 2 to 6: each sentence that holds MUST, MUST NOT, or SHALL, and what holds it in
+# `std.http2`. A line is
+#   <section> | <first words of the sentence> | test <name>
+# or
+#   <section> | <first words of the sentence> | reason <why std.http2 has nothing to do with it>
+# `tests/http2_standard.rs` fails for a sentence that is in no line.
+2.1 | An encoder MUST order header field representations in the | test decoding_what_was_encoded_gives_the_headers_over_blocks_with_one_encoder_and_one_decoder
+2.1 | A decoder MUST order header fields in the decoded | test the_examples_of_rfc_7541_appendix_c_decode_to_the_headers_and_the_table_it_gives
+2.3.2 | Therefore, duplicate entries MUST NOT be treated as an | test a_block_is_an_error_where_the_page_says_and_a_block_without_that_fault_is_read
+2.3.3 | Indices strictly greater than the sum of the lengths | test a_block_is_an_error_where_the_page_says_and_a_block_without_that_fault_is_read
+3.2 | To ensure that the decoding will successfully produce a | test the_examples_of_rfc_7541_appendix_c_decode_to_the_headers_and_the_table_it_gives
+4.2 | An encoder can choose to use less capacity than | test decoding_what_was_encoded_gives_the_headers_over_blocks_with_one_encoder_and_one_decoder
+4.2 | This dynamic table size update MUST occur at the | test decoding_what_was_encoded_gives_the_headers_over_blocks_with_one_encoder_and_one_decoder
+4.2 | In the case that this size is changed more | reason binds a connection that changes the size more than once between two blocks; an encoder here writes one change, when it is made
+5.1 | Integer encodings that exceed implementation limits -- in value | test a_block_is_an_error_where_the_page_says_and_a_block_without_that_fault_is_read
+5.2 | A padding strictly longer than 7 bits MUST be | test a_text_in_the_short_code_is_read_and_one_with_wrong_padding_or_its_end_is_an_error
+5.2 | A padding not corresponding to the most significant bits | test a_text_in_the_short_code_is_read_and_one_with_wrong_padding_or_its_end_is_an_error
+5.2 | A Huffman-encoded string literal containing the EOS symbol MUST | test a_text_in_the_short_code_is_read_and_one_with_wrong_padding_or_its_end_is_an_error
+6.1 | It MUST be treated as a decoding error if | test a_block_is_an_error_where_the_page_says_and_a_block_without_that_fault_is_read
+6.2.3 | Intermediaries MUST use the same representation for encoding this | reason binds an intermediary that forwards fields; decode gives the headers and does not say which were never indexed
+6.2.3 | When a header field is represented as a literal | test a_header_named_authorization_cookie_or_set_cookie_is_written_never_indexed_and_learned_by_no_one
+6.2.3 | In particular, when a peer sends a header field | reason binds an intermediary that forwards fields; decode gives the headers and does not say which were never indexed
+6.3 | The new maximum size MUST be lower than or | test a_block_is_an_error_where_the_page_says_and_a_block_without_that_fault_is_read
+6.3 | A value that exceeds this limit MUST be treated | test a_block_is_an_error_where_the_page_says_and_a_block_without_that_fault_is_read
