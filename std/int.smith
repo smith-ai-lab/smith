@@ -53,3 +53,7 @@ pub fn clamp[A, B](x: A) -> B {
 pub fn checked_narrow[A, B](x: A) -> Option[B] {
   __checked_narrow(x)
 }
+
+pub fn wrapping_shift_left[T](a: T, by: Byte) -> T {
+  __shift_left(a, by)
+}

@@ -104,6 +104,7 @@ const STD: &[(&str, &[&str])] = &[
             "wrapping_add",
             "wrapping_mul",
             "wrapping_narrow",
+            "wrapping_shift_left",
             "wrapping_sub",
         ],
     ),
@@ -420,7 +421,7 @@ pub fn bits(function: &str, ty: Int, a: i128, b: i128) -> i128 {
         "bit_or" => a | b,
         "bit_xor" => a ^ b,
         "bit_not" => !a,
-        "shift_left" => a << b,
+        "wrapping_shift_left" => a << b,
         _ => a >> b,
     })
 }
@@ -506,7 +507,7 @@ fn line(g: &mut Gen, vars: &[Var], at: usize) -> Line {
             line.braced(&expr, &given.to_string());
         }
         7 => {
-            let function = *g.pick(&["shift_left", "shift_right"]);
+            let function = *g.pick(&["wrapping_shift_left", "shift_right"]);
             // The amount is a literal, or a `Byte` the program binds that is
             // below the number of bits.
             let named: Vec<&Var> = (vars.iter())
@@ -808,7 +809,7 @@ pub fn program_with_mistake(g: &mut Gen) -> NumberCase {
         8 => {
             // A shift by an amount that is not below the number of bits.
             let n = ty.bits as usize + g.below(256 - ty.bits as usize);
-            let function = *g.pick(&["shift_left", "shift_right"]);
+            let function = "wrapping_shift_left";
             fix = Some("`requires`".to_string());
             (
                 format!("amount: Byte = {n}\n  x: {} = 1\n  print(\"{{", ty.name),

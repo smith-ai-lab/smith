@@ -1,5 +1,5 @@
-use std.bits (bit_and, shift_left, shift_right)
-use std.int (wrapping_add, wrapping_mul, wrapping_sub)
+use std.bits (bit_and, shift_right)
+use std.int (wrapping_add, wrapping_mul, wrapping_shift_left, wrapping_sub)
 use std.list (push)
 use std.utf8 (utf8)
 
@@ -190,7 +190,8 @@ pub fn object(of: Value) -> Result[List[Nat], str] ! alloc {
         b: Nat = c[i]
         if fresh and b == 128 { return .err("a number with a byte at the front that it does not need") }
         if n >= 72057594037927936 { return .err("a number too great") }
-        n = wrapping_add(wrapping_mul(n, 128), bit_and(b, 127))
+        low: Nat = bit_and(b, 127)
+        n = wrapping_add(wrapping_mul(n, 128), low)
         if b < 128 {
           if arcs.size == 0 {
             if n < 40 { arcs = push(push(arcs, 0), n) } else if n < 80 { arcs = push(push(arcs, 1), n - 40) } else { arcs = push(push(arcs, 2), n - 80) }
@@ -224,7 +225,7 @@ pub fn bits(of: Value) -> Result[(Slice[Byte], Nat), str] {
         return .ok((c[1..], 0))
       }
       one: Byte = 1
-      mask = wrapping_sub(shift_left(one, by), 1)
+      mask = wrapping_sub(wrapping_shift_left(one, by), 1)
       if bit_and(c[c.size - 1], mask) != 0 { return .err("a bit string whose bits left over are not zero") }
       left: Nat = by
       .ok((c[1..], left))

@@ -181,6 +181,7 @@ fn supplied() -> Vec<(&'static str, Vec<String>)> {
     let mut int = family(&["wrapping", "saturating", "checked"], &["add", "sub", "mul"]);
     int.extend(family(&["wrapping", "saturating", "checked"], &["narrow"]));
     int.push("narrow".to_string());
+    int.push("wrapping_shift_left".to_string());
     let words = |names: &[&str]| names.iter().map(|n| n.to_string()).collect();
     vec![
         ("console", words(&["console", "print"])),
@@ -451,7 +452,7 @@ fn uses(g: &mut Gen) -> Uses {
         let definable: Vec<&str> = names
             .iter()
             .copied()
-            .filter(|n| ["push", "utf8", "narrow"].contains(n) || n.ends_with("_narrow"))
+            .filter(|n| ["push", "utf8", "narrow", "wrapping_shift_left"].contains(n) || n.ends_with("_narrow"))
             .collect();
         match g.below(7) {
             0 => file.push(&format!("use {m} ({first})\n")),

@@ -1,11 +1,11 @@
-use std.bits (bit_or, shift_left, u64)
+use std.bits (bit_or, u64)
 use std.console (console, print)
-use std.int (narrow)
+use std.int (narrow, wrapping_shift_left)
 
 fn sh(x: u64, by: Byte) -> u64
   requires by < 64
 {
-  shift_left(x, by)
+  wrapping_shift_left(x, by)
 }
 
 fn main() ! console, alloc {
