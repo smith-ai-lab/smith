@@ -5,7 +5,7 @@ description: std.mcp, with which a program is a Model Context Protocol server wh
 status: partial
 built:
   - "`Incoming`, `Reply`, the effect `messages`, `Server` with `name`, `version`, `instructions`, `ttl`, and `origins`, and `reply_to(server, incoming)`, which answers one message of the protocol with one `Reply`: `server/discover`, the checks of the version, of `_meta`, of the headers, and of the origin, and the failures with the statuses the protocol gives them, and -32601 with 404 for every other method"
-  - "not `mcp`, `tool`, `resource`, `prompt`, `stdio`, or `at`, which wait on `Function`, `Describe`, `std.http`, and handlers whose body is a function that is passed by name; `reply_to` is what `mcp` will call for each message"
+  - "not `mcp`, `tool`, `resource`, `prompt`, `stdio`, or `at`, which wait on `Function`, `Describe`, `std.http`, and handlers whose body is a function that is passed by name; `reply_to` is what `mcp` will call for the message it answers"
 ---
 
 # MCP
@@ -43,7 +43,7 @@ A tool is a function with a name. Each parameter is a member of the object a cli
 
 ## The tools of a server
 
-`mcp` is written with [`with`](../language/with.md), so the lines after it are what the server offers, and they are run for each message a client sends. `tool(f)` answers a message that calls `f`, adds `f` to the answer of one that lists the tools, and does nothing for any other.
+`mcp` is written with [`with`](../language/with.md), so the lines after it are what the server offers, and they are run for one message, the one `messages` gives, which they answer, and then `main` ends. A server does not loop: whatever carries the messages runs `main` again for the next. `tool(f)` answers a message that calls `f`, adds `f` to the answer of one that lists the tools, and does nothing for any other.
 
 ```
 fn main() ! messages, net, alloc {
@@ -157,10 +157,10 @@ The protocol asks a server to hold the headers of a request to the message insid
 
 One message is answered by `reply_to(server, incoming)`, which takes a `Server` holding the arguments of `mcp` and gives the `Reply`, with no effect but `alloc`, so that what carries the messages, and a test, need no handler to try it.
 
-`mcp` asks for each message and gives each answer through the effect `messages`, and does not know where they come from. What answers `messages` is the deployment and not the program:
+`mcp` asks for one message and gives its answer through the effect `messages`, and does not know where it comes from. It does not read until input ends, so `main` needs no `diverge`. What answers `messages` is the deployment and not the program, and whatever carries the messages does any looping:
 
-- A server a client starts on the same machine reads each message from the standard input and writes each answer to the standard output. `stdio`, of `std.mcp`, is the handler that does it, installed in a [deployment](../language/deployments.md) as `listen` is.
-- A server on the network takes each message from an HTTP request and gives the answer as its response, as the protocol's transport over HTTP says. In a [WebAssembly module](../compiler.md#the-host-of-a-webassembly-module) the operations of `messages` are imports, which the host supplies from the request it was called with.
+- A server a client starts on the same machine reads each line of the standard input as a message and writes each answer to the standard output. `stdio`, of `std.mcp`, is the handler that does it: it runs the rest of `main` once for each line, and ends when input does, installed in a [deployment](../language/deployments.md) as `listen` is.
+- A server on the network takes the message from an HTTP request, one request being one message, and gives the answer as its response, with nothing that loops, as the protocol's transport over HTTP says. In a [WebAssembly module](../compiler.md#the-host-of-a-webassembly-module) the operations of `messages` are imports, which the host supplies from the request it was called with.
 - Beside other routes of one server, [`at`](http.md#a-server-of-messages-at-a-path) supplies the messages from a path.
 
 The source is the same for all three.
