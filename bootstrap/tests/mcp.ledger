@@ -10,8 +10,9 @@
 # cell of a table that is a sentence is written as `<first cell of its row>: <the cell>`.
 # `tests/mcp_standard.rs` fails for a sentence that is in no line, and for one that two lines name.
 #
-# Every line says `reason to be decided`: the work that builds `std.mcp` replaces it with a test,
-# or with the reason the sentence binds nothing the module does, line by line.
+# A line that says `reason to be decided` is held by no test yet: the work that builds `std.mcp`
+# replaces it with a test, or with the reason the sentence binds nothing the module does, line by
+# line, as each part is built.
 #
 # The pages taken are the 22 that `mcp_standard.rs` lists as TAKEN. The pages left out are the 8
 # that it lists as LEFT_OUT, each with why.
@@ -23,22 +24,22 @@
 basic/index#Overview | All implementations MUST support the base | reason to be decided
 basic/index#Messages | All messages between MCP clients and | reason to be decided
 basic/index#Requests | Requests MUST include a string or | reason to be decided
-basic/index#Requests | Unlike base JSON-RPC, the ID MUST | reason to be decided
+basic/index#Requests | Unlike base JSON-RPC, the ID MUST | test a_text_that_is_no_request_is_refused_and_the_reply_has_no_id_where_none_was_read
 basic/index#Requests | The request ID MUST NOT match | reason to be decided
-basic/index#Result Responses | Result responses MUST include the same | reason to be decided
-basic/index#Result Responses | Result responses MUST include a result | reason to be decided
-basic/index#Result Responses | The result MUST include a resultType | reason to be decided
+basic/index#Result Responses | Result responses MUST include the same | test a_discover_request_is_answered_with_the_result_the_schema_names
+basic/index#Result Responses | Result responses MUST include a result | test a_discover_request_is_answered_with_the_result_the_schema_names
+basic/index#Result Responses | The result MUST include a resultType | test a_discover_request_is_answered_with_the_result_the_schema_names
 basic/index#ResultType | The set of supported ResultType values | reason to be decided
 basic/index#ResultType | A resultType of any value unrecognized | reason to be decided
 basic/index#ResultType | For backward compatibility with servers implementing | reason to be decided
-basic/index#Error Responses | Error responses MUST include the same | reason to be decided
-basic/index#Error Responses | Error responses MUST include an error | reason to be decided
-basic/index#Error Responses | Error codes MUST be integers. | reason to be decided
+basic/index#Error Responses | Error responses MUST include the same | test a_text_that_is_no_request_is_refused_and_the_reply_has_no_id_where_none_was_read
+basic/index#Error Responses | Error responses MUST include an error | test a_request_with_a_version_or_a_meta_that_is_wrong_is_refused_with_the_failure_the_text_names
+basic/index#Error Responses | Error codes MUST be integers. | test a_request_with_a_version_or_a_meta_that_is_wrong_is_refused_with_the_failure_the_text_names
 basic/index#Error Codes | New codes MUST NOT be allocated | reason to be decided
 basic/index#Error Codes | Apart from -32002 (see below), receivers | reason to be decided
 basic/index#Error Codes | Implementations MUST NOT emit any code | reason to be decided
 basic/index#Error Codes | Implementations of this protocol version MUST | reason to be decided
-basic/index#Notifications | The receiver MUST NOT send a | reason to be decided
+basic/index#Notifications | The receiver MUST NOT send a | test a_method_the_server_has_not_is_answered_not_found_and_a_notification_by_none
 basic/index#Notifications | Notifications MUST NOT include an ID. | reason to be decided
 basic/index#Statelessness | Servers MUST NOT rely on prior | reason to be decided
 basic/index#Statelessness | State that needs to span multiple | reason to be decided
@@ -54,8 +55,8 @@ basic/index#_meta | If specified, MUST be a series | reason to be decided
 basic/index#_meta | Labels MUST start with a letter | reason to be decided
 basic/index#_meta | Unless empty, MUST begin and end | reason to be decided
 basic/index#_meta | Client requests carry the following io.modelcontextprotocol/* | reason to be decided
-basic/index#_meta | A request missing any required field | reason to be decided
-basic/index#_meta | On HTTP, the response status MUST | reason to be decided
+basic/index#_meta | A request missing any required field | test a_request_with_a_version_or_a_meta_that_is_wrong_is_refused_with_the_failure_the_text_names
+basic/index#_meta | On HTTP, the response status MUST | test a_request_with_a_version_or_a_meta_that_is_wrong_is_refused_with_the_failure_the_text_names
 basic/index#_meta | A server MUST NOT rely on | reason to be decided
 basic/index#_meta | If processing a request requires a | reason to be decided
 basic/index#_meta (2) | On HTTP, the response status MUST | reason to be decided
@@ -64,23 +65,23 @@ basic/index#_meta | When present, their values MUST follow | reason to be decide
 basic/index#icons | Clients that support rendering icons MUST | reason to be decided
 basic/index#icons | Consumers of icon metadata MUST take | reason to be decided
 basic/index#icons | Clients MUST reject icon URIs that | reason to be decided
-basic/versioning#Protocol Version Negotiation | If the server does not implement | reason to be decided
-basic/versioning#Protocol Version Negotiation | Servers MUST implement server/discover. | reason to be decided
+basic/versioning#Protocol Version Negotiation | If the server does not implement | test a_request_with_a_version_or_a_meta_that_is_wrong_is_refused_with_the_failure_the_text_names
+basic/versioning#Protocol Version Negotiation | Servers MUST implement server/discover. | test a_discover_request_is_answered_with_the_result_the_schema_names
 basic/versioning#Extension Negotiation | Extension identifiers MUST follow the _meta | reason to be decided
 basic/versioning#Extension Negotiation | If one party supports an extension | reason to be decided
 basic/transports/index#Messages | JSON-RPC messages MUST be UTF-8 encoded. | reason to be decided
 basic/transports/index#Messages | A binding MUST deliver client-sent requests | reason to be decided
 basic/transports/index#Custom Transports | Implementers who choose to support custom | reason to be decided
 basic/transports/streamable-http#Streamable HTTP | The server MUST provide a single | reason to be decided
-basic/transports/streamable-http#Security & Endpoint | Servers MUST validate the Origin header | reason to be decided
-basic/transports/streamable-http#Security & Endpoint | If the Origin header is present | reason to be decided
+basic/transports/streamable-http#Security & Endpoint | Servers MUST validate the Origin header | test a_message_of_a_page_that_the_server_does_not_list_is_refused_before_it_is_read
+basic/transports/streamable-http#Security & Endpoint | If the Origin header is present | test a_message_of_a_page_that_the_server_does_not_list_is_refused_before_it_is_read
 basic/transports/streamable-http#Sending Messages | Every JSON-RPC message sent from the | reason to be decided
 basic/transports/streamable-http#Sending Messages | The client MUST use HTTP POST | reason to be decided
 basic/transports/streamable-http#Sending Messages | The client MUST include an Accept | reason to be decided
 basic/transports/streamable-http#Sending Messages | The client MUST include the request | reason to be decided
 basic/transports/streamable-http#Sending Messages | The body of the HTTP POST | reason to be decided
 basic/transports/streamable-http#Sending Messages | The client MUST NOT send JSON-RPC | reason to be decided
-basic/transports/streamable-http#Sending Messages | If the server accepts it, the | reason to be decided
+basic/transports/streamable-http#Sending Messages | If the server accepts it, the | test a_method_the_server_has_not_is_answered_not_found_and_a_notification_by_none
 basic/transports/streamable-http#Sending Messages | If the server cannot accept it, | reason to be decided
 basic/transports/streamable-http#Sending Messages | If the body is a JSON-RPC | reason to be decided
 basic/transports/streamable-http#Sending Messages | The client MUST support both. | reason to be decided
@@ -89,11 +90,11 @@ basic/transports/streamable-http#Receiving Messages | The server MUST NOT send i
 basic/transports/streamable-http#Cancellation | Closing the SSE response stream MUST | reason to be decided
 basic/transports/streamable-http#Cancellation | The server SHOULD stop work on | reason to be decided
 basic/transports/streamable-http#Protocol Version Header | Every POST request to the MCP | reason to be decided
-basic/transports/streamable-http#Protocol Version Header | The header value MUST match the | reason to be decided
-basic/transports/streamable-http#Protocol Version Header | If the values do not match, | reason to be decided
-basic/transports/streamable-http#Protocol Version Header | If the server does not implement the requested protocol | reason to be decided
-basic/transports/streamable-http#Protocol Version Header | If the server does not implement the requested RPC | reason to be decided
-basic/transports/streamable-http#Protocol Version Header | A server that does not support | reason to be decided
+basic/transports/streamable-http#Protocol Version Header | The header value MUST match the | test a_header_that_does_not_hold_to_the_message_is_refused_and_one_that_does_is_not
+basic/transports/streamable-http#Protocol Version Header | If the values do not match, | test a_header_that_does_not_hold_to_the_message_is_refused_and_one_that_does_is_not
+basic/transports/streamable-http#Protocol Version Header | If the server does not implement the requested protocol | test a_request_with_a_version_or_a_meta_that_is_wrong_is_refused_with_the_failure_the_text_names
+basic/transports/streamable-http#Protocol Version Header | If the server does not implement the requested RPC | test a_method_the_server_has_not_is_answered_not_found_and_a_notification_by_none
+basic/transports/streamable-http#Protocol Version Header | A server that does not support | test a_header_that_does_not_hold_to_the_message_is_refused_and_one_that_does_is_not
 basic/transports/streamable-http#Standard Request Headers | If the Mcp-Name source value cannot | reason to be decided
 basic/transports/streamable-http#Custom Headers from Tool Parameters | While the use of x-mcp-header is | reason to be decided
 basic/transports/streamable-http#Custom Headers from Tool Parameters | When a server's tool definition includes | reason to be decided
@@ -110,14 +111,14 @@ basic/transports/streamable-http#Schema Extension | Rejection means the client M
 basic/transports/streamable-http#Value Encoding | Clients MUST encode parameter values before | reason to be decided
 basic/transports/streamable-http#Value Encoding | When a value cannot be safely | reason to be decided
 basic/transports/streamable-http#Value Encoding | These markers are case-sensitive and MUST | reason to be decided
-basic/transports/streamable-http#Value Encoding | Servers and intermediaries that need to | reason to be decided
-basic/transports/streamable-http#Value Encoding | In particular, servers MUST decode an | reason to be decided
+basic/transports/streamable-http#Value Encoding | Servers and intermediaries that need to | test a_name_in_a_header_is_held_to_the_name_in_the_message_as_written_or_in_base64
+basic/transports/streamable-http#Value Encoding | In particular, servers MUST decode an | test a_name_in_a_header_is_held_to_the_name_in_the_message_as_written_or_in_base64
 basic/transports/streamable-http#Value Encoding | To avoid ambiguity, clients MUST also | reason to be decided
 basic/transports/streamable-http#Client Behavior | When constructing a tools/call request via | reason to be decided
 basic/transports/streamable-http#Server Behavior for Custom Headers | Intermediate servers that do not recognize | reason to be decided
 basic/transports/streamable-http#Server Behavior for Custom Headers | Servers MUST reject requests with a recognized | reason to be decided
 basic/transports/streamable-http#Server Behavior for Custom Headers | Any server that processes the message | reason to be decided
-basic/transports/streamable-http#Server Behavior for Custom Headers | Servers MUST reject requests with a 400 | reason to be decided
+basic/transports/streamable-http#Server Behavior for Custom Headers | Servers MUST reject requests with a 400 | test a_header_that_does_not_hold_to_the_message_is_refused_and_one_that_does_is_not
 basic/transports/streamable-http#Server Behavior for Custom Headers | Parameter value provided: Client MUST include | reason to be decided
 basic/transports/streamable-http#Server Behavior for Custom Headers | Parameter value provided: Server MUST validate | reason to be decided
 basic/transports/streamable-http#Server Behavior for Custom Headers | Parameter value is null: Client MUST | reason to be decided
@@ -126,9 +127,9 @@ basic/transports/streamable-http#Server Behavior for Custom Headers | Parameter 
 basic/transports/streamable-http#Server Behavior for Custom Headers | Parameter not in arguments: Server MUST | reason to be decided
 basic/transports/streamable-http#Server Behavior for Custom Headers | Client omits header but value is | reason to be decided
 basic/transports/streamable-http#Case Sensitivity | Clients and servers MUST use case-insensitive | reason to be decided
-basic/transports/streamable-http#Server Validation | Servers that process the request body | reason to be decided
-basic/transports/streamable-http#Server Validation | When rejecting a request due to | reason to be decided
-basic/transports/streamable-http#Server Validation | For headers that permit the Base64 | reason to be decided
+basic/transports/streamable-http#Server Validation | Servers that process the request body | test a_header_that_does_not_hold_to_the_message_is_refused_and_one_that_does_is_not
+basic/transports/streamable-http#Server Validation | When rejecting a request due to | test a_header_that_does_not_hold_to_the_message_is_refused_and_one_that_does_is_not
+basic/transports/streamable-http#Server Validation | For headers that permit the Base64 | test a_name_in_a_header_is_held_to_the_name_in_the_message_as_written_or_in_base64
 basic/transports/streamable-http#Server Validation | Intermediaries MUST return an appropriate HTTP | reason to be decided
 basic/transports/stdio#stdio | Messages are delimited by newlines, and | reason to be decided
 basic/transports/stdio#stdio | The server MUST NOT write anything | reason to be decided
@@ -252,7 +253,7 @@ basic/authorization/security-considerations#Access Token Privilege Restriction |
 basic/authorization/security-considerations#Access Token Privilege Restriction | MCP servers MUST only accept tokens | reason to be decided
 basic/authorization/security-considerations#Access Token Privilege Restriction | The MCP server MUST NOT pass | reason to be decided
 basic/authorization/security-considerations#Access Token Privilege Restriction | MCP clients MUST implement and use | reason to be decided
-server/discover#Discovery | Servers MUST implement it. | reason to be decided
+server/discover#Discovery | Servers MUST implement it. | test a_discover_request_is_answered_with_the_result_the_schema_names
 server/tools#Tools | Every request MUST include the required | reason to be decided
 server/tools#Capabilities | Servers that support tools MUST declare | reason to be decided
 server/tools#Capabilities | Servers that declare the tools capability | reason to be decided

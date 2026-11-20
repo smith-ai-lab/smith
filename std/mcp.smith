@@ -1,0 +1,476 @@
+use std.base64
+use std.deserialize (Deserialize, ReadError, Reader, fail)
+use std.json (RawJson, describe, from_json, raw_text, to_json)
+use std.jsonrpc
+use std.list (freeze, push)
+use std.serialize (Serialize, Writer)
+use std.text as texts
+use std.utf8 (utf8)
+
+// A message of a client, and what carried it knows of it: the headers of the
+// request it came in, each name in small letters, and none for a message that
+// came by the standard input.
+pub struct Incoming {
+  pub text: str
+  pub headers: List[(str, str)]
+}
+
+// What `mcp` says of a message: the text of one message, or none for a message
+// that needs no answer, and the status that whoever carries messages over HTTP
+// sends.
+pub struct Reply {
+  pub text: Option[str]
+  pub status: 100..600
+}
+
+pub effect messages {
+  fn message() -> Incoming
+  fn answer(reply: Reply)
+}
+
+// What a server says of itself, and what it holds a message to.
+pub struct Server {
+  pub name: str
+  pub version: str
+  pub instructions: Option[str] = .none
+  pub ttl: Nat = 0
+  pub origins: List[str] = []
+}
+
+// The one version of the protocol that the server speaks.
+fn spoken() -> str { "2026-07-28" }
+
+// The members of an object, each with the text of its value, in the order they
+// came. A member given twice is an error of the reader.
+struct Members {
+  named: List[(str, RawJson)]
+}
+
+fn has(named: List[(str, RawJson)], name: str) -> bool {
+  loop pair in named {
+    match pair {
+      (n, v) { if n == name { return true } }
+    }
+  }
+  false
+}
+
+impl Deserialize[Members] {
+  fn read[R: Reader](from: take R) -> (R, Result[Members, ReadError]) ! alloc {
+    (opened, began) = Reader.structure(from, "Members")
+    match began {
+      .err(e) { return (opened, Result.err(e)) }
+      .ok(u) { }
+    }
+    var r = opened
+    var named: List[(str, RawJson)] = []
+    loop round in 0..4294967296 {
+      (after, got) = Reader.field(r)
+      r = after
+      match got {
+        .err(e) { return (r, Result.err(e)) }
+        .ok(next) {
+          match next {
+            .none { break }
+            .some(name) {
+              if has(named, name) {
+                (w, e) = fail(r, .twice(name))
+                return (w, Result.err(e))
+              }
+              (w, value): (R, Result[RawJson, ReadError]) = Deserialize.read(r)
+              r = w
+              match value {
+                .err(e) { return (r, Result.err(e)) }
+                .ok(v) { named = push(named, (name, v)) }
+              }
+            }
+          }
+        }
+      }
+    }
+    (r, Result.ok(Members(named: named)))
+  }
+}
+
+fn find(named: List[(str, RawJson)], name: str) -> Option[RawJson] {
+  loop pair in named {
+    match pair {
+      (n, v) { if n == name { return .some(v) } }
+    }
+  }
+  .none
+}
+
+// The first byte of the text of a value, which says what kind of value it is.
+fn kind(raw: RawJson) -> Byte {
+  s = raw_text(raw)
+  if s.size == 0 { 0 } else { s[0] }
+}
+
+// The text a member is, when it is one.
+fn member_text(named: List[(str, RawJson)], name: str) -> Option[str] ! alloc {
+  match find(named, name) {
+    .none { .none }
+    .some(raw) {
+      got: Result[str, ReadError] = from_json(raw_text(raw))
+      match got {
+        .ok(t) { .some(t) }
+        .err(e) { .none }
+      }
+    }
+  }
+}
+
+fn header(headers: List[(str, str)], name: str) -> Option[str] {
+  loop pair in headers {
+    match pair {
+      (n, v) { if n == name { return .some(v) } }
+    }
+  }
+  .none
+}
+
+fn begins(s: str, prefix: str) -> bool {
+  if s.size < prefix.size { return false }
+  loop i in 0..prefix.size {
+    if s.bytes[i] != prefix.bytes[i] { return false }
+  }
+  true
+}
+
+fn ends(s: str, suffix: str) -> bool {
+  if s.size < suffix.size { return false }
+  start = s.size - suffix.size
+  loop i in 0..suffix.size {
+    if s.bytes[start + i] != suffix.bytes[i] { return false }
+  }
+  true
+}
+
+// The text a header holds, which a client writes as `=?base64?` and the base64 of
+// the UTF-8 of the text and `?=` when the text is not safe to write as it is.
+// None for one that begins as that and is not base64 of a text.
+fn header_text(value: str) -> Option[str] ! alloc {
+  if begins(value, "=?base64?") and ends(value, "?=") {
+    if value.size < 11 { return .none }
+    match utf8(value.bytes[9..value.size - 2]) {
+      .err(e) { .none }
+      .ok(encoded) {
+        match base64.decode(encoded) {
+          .none { .none }
+          .some(bytes) {
+            match utf8(freeze(bytes)) {
+              .ok(t) { .some(t) }
+              .err(e) { .none }
+            }
+          }
+        }
+      }
+    }
+  } else {
+    .some(value)
+  }
+}
+
+// The text of an error response. An id that could not be read is left out, as
+// the protocol writes it, where JSON-RPC writes `null`.
+fn failure_text(id: Option[str], code: Int, message: str, data: Option[str]) -> str ! alloc {
+  a = texts.append(texts.text(), "\{\"jsonrpc\":\"2.0\"")
+  b = match id {
+    .some(i) { texts.append(texts.append(a, ",\"id\":"), i) }
+    .none { a }
+  }
+  c = texts.append(texts.append(b, ",\"error\":\{\"code\":"), to_json(code))
+  d = texts.append(texts.append(c, ",\"message\":"), to_json(message))
+  e = match data {
+    .some(x) { texts.append(texts.append(d, ",\"data\":"), x) }
+    .none { d }
+  }
+  texts.finish(texts.append(e, "\}\}"))
+}
+
+fn success_text(id: str, result: str) -> str ! alloc {
+  a = texts.append(texts.text(), "\{\"jsonrpc\":\"2.0\",\"id\":")
+  b = texts.append(texts.append(a, id), ",\"result\":")
+  texts.finish(texts.append(texts.append(b, result), "\}"))
+}
+
+fn refusal(id: Option[str], code: Int, message: str, data: Option[str], status: 100..600) -> Reply ! alloc {
+  Reply(text: .some(failure_text(id, code, message, data)), status: status)
+}
+
+struct Unsupported {
+  supported: List[str]
+  requested: str
+}
+
+// -32022, with the versions the server speaks, for a version it does not.
+fn unsupported(id: str, requested: str) -> Reply ! alloc {
+  data = to_json(Unsupported(supported: [spoken()], requested: requested))
+  refusal(.some(id), -32022, "Unsupported protocol version", .some(data), 400)
+}
+
+struct ServerInfo {
+  name: str
+  version: str
+}
+
+// The `_meta` of a result: the name and version of the server, under the key
+// that the protocol gives them, which is no name of a field.
+struct ResultMeta {
+  server_info: ServerInfo
+}
+
+impl Serialize[ResultMeta] {
+  fn write[W: Writer](value: ResultMeta, to: take W) -> W ! alloc {
+    var w = Writer.structure(to, "ResultMeta", 1)
+    w = Writer.field(w, "io.modelcontextprotocol/serverInfo")
+    w = Serialize.write(value.server_info, w)
+    Writer.end_structure(w)
+  }
+}
+
+struct Capabilities { }
+
+struct Discovered {
+  supported_versions: List[str]
+  capabilities: Capabilities
+  instructions: Option[str]
+  ttl: Nat
+  meta: ResultMeta
+}
+
+// The result of `server/discover`, with the members written as the protocol
+// names them, and `instructions` left out when there are none.
+impl Serialize[Discovered] {
+  fn write[W: Writer](value: Discovered, to: take W) -> W ! alloc {
+    var count: Nat = 5
+    match value.instructions {
+      .some(s) { count = 6 }
+      .none { }
+    }
+    var w = Writer.structure(to, "DiscoverResult", count)
+    w = Writer.field(w, "resultType")
+    w = Writer.text(w, "complete")
+    w = Writer.field(w, "supportedVersions")
+    w = Serialize.write(value.supported_versions, w)
+    w = Writer.field(w, "capabilities")
+    w = Serialize.write(value.capabilities, w)
+    match value.instructions {
+      .some(s) {
+        w = Writer.field(w, "instructions")
+        w = Writer.text(w, s)
+      }
+      .none { }
+    }
+    w = Writer.field(w, "ttlMs")
+    w = Serialize.write(value.ttl, w)
+    w = Writer.field(w, "cacheScope")
+    w = Writer.text(w, "private")
+    w = Writer.field(w, "_meta")
+    w = Serialize.write(value.meta, w)
+    Writer.end_structure(w)
+  }
+}
+
+fn discovered(server: Server) -> str ! alloc {
+  to_json(Discovered(
+    supported_versions: [spoken()],
+    capabilities: Capabilities(),
+    instructions: server.instructions,
+    ttl: server.ttl,
+    meta: ResultMeta(server_info: ServerInfo(name: server.name, version: server.version)),
+  ))
+}
+
+// Whether the message came from a page of a browser that the server does not
+// answer: it has an `Origin` and the server does not list it.
+fn from_another_origin(origins: List[str], headers: List[(str, str)]) -> bool {
+  match header(headers, "origin") {
+    .none { false }
+    .some(origin) {
+      loop listed in origins {
+        if listed == origin { return false }
+      }
+      true
+    }
+  }
+}
+
+// What a request says of the version and the capabilities of its client, which
+// it says in every request, and the members of its params.
+struct Seen {
+  version: str
+  members: List[(str, RawJson)]
+}
+
+fn seen_of(params: Option[RawJson]) -> Result[Seen, str] ! alloc {
+  match params {
+    .none { Result.err("params has no `_meta`") }
+    .some(p) {
+      got: Result[Members, ReadError] = from_json(raw_text(p))
+      match got {
+        .err(e) { Result.err(describe(e)) }
+        .ok(members) {
+          match find(members.named, "_meta") {
+            .none { Result.err("params has no `_meta`") }
+            .some(meta_raw) {
+              inner: Result[Members, ReadError] = from_json(raw_text(meta_raw))
+              match inner {
+                .err(e) { Result.err("`_meta` is no object: {describe(e)}") }
+                .ok(meta) {
+                  match member_text(meta.named, "io.modelcontextprotocol/protocolVersion") {
+                    .none { Result.err("`_meta` has no text `io.modelcontextprotocol/protocolVersion`") }
+                    .some(v) {
+                      match find(meta.named, "io.modelcontextprotocol/clientCapabilities") {
+                        .none { Result.err("`_meta` has no `io.modelcontextprotocol/clientCapabilities`") }
+                        .some(c) {
+                          if kind(c) == 123 {
+                            Result.ok(Seen(version: v, members: members.named))
+                          } else {
+                            Result.err("`io.modelcontextprotocol/clientCapabilities` is no object")
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+// What is wrong with the headers of a request that came over HTTP, as a code
+// and a sentence, or none when they hold to the message. A message with no
+// headers came by the standard input and has nothing to hold to.
+fn header_fault(headers: List[(str, str)], method: str, seen: Seen) -> Option[(Int, str)] ! alloc {
+  if headers.size == 0 { return .none }
+  match header(headers, "mcp-protocol-version") {
+    .none { return .some((-32020, "Header mismatch: the request has no `MCP-Protocol-Version` header")) }
+    .some(v) {
+      if v != seen.version {
+        return .some((-32020, "Header mismatch: `MCP-Protocol-Version` is {v} and the version in `_meta` is {seen.version}"))
+      }
+    }
+  }
+  match header(headers, "mcp-method") {
+    .none { return .some((-32020, "Header mismatch: the request has no `Mcp-Method` header")) }
+    .some(v) {
+      if v != method {
+        return .some((-32020, "Header mismatch: `Mcp-Method` is {v} and the method is {method}"))
+      }
+    }
+  }
+  if method == "tools/call" or method == "prompts/get" {
+    return name_fault(headers, seen, "name")
+  }
+  if method == "resources/read" {
+    return name_fault(headers, seen, "uri")
+  }
+  .none
+}
+
+fn name_fault(headers: List[(str, str)], seen: Seen, key: str) -> Option[(Int, str)] ! alloc {
+  match member_text(seen.members, key) {
+    .none { .some((-32602, "params has no text `{key}`")) }
+    .some(want) {
+      match header(headers, "mcp-name") {
+        .none { .some((-32020, "Header mismatch: the request has no `Mcp-Name` header")) }
+        .some(raw) {
+          match header_text(raw) {
+            .none { .some((-32020, "Header mismatch: `Mcp-Name` is not a text")) }
+            .some(got) {
+              if got == want { .none } else { .some((-32020, "Header mismatch: `Mcp-Name` is {got} and `{key}` is {want}")) }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+// The version a client of the earlier protocol says it speaks in `initialize`.
+fn said_version(params: Option[RawJson]) -> str ! alloc {
+  match params {
+    .none { "" }
+    .some(p) {
+      got: Result[Members, ReadError] = from_json(raw_text(p))
+      match got {
+        .err(e) { "" }
+        .ok(members) {
+          match member_text(members.named, "protocolVersion") {
+            .some(v) { v }
+            .none { "" }
+          }
+        }
+      }
+    }
+  }
+}
+
+fn request_reply(server: Server, incoming: Incoming, id: str, method: str, params: Option[RawJson]) -> Reply ! alloc {
+  if method == "initialize" {
+    return unsupported(id, said_version(params))
+  }
+  match params {
+    .none { }
+    .some(p) {
+      if kind(p) != 123 {
+        return refusal(.some(id), -32600, "Invalid Request", .none, 200)
+      }
+    }
+  }
+  match seen_of(params) {
+    .err(why) { refusal(.some(id), -32602, why, .none, 400) }
+    .ok(seen) {
+      match header_fault(incoming.headers, method, seen) {
+        .some(fault) {
+          (code, why) = fault
+          return refusal(.some(id), code, why, .none, 400)
+        }
+        .none { }
+      }
+      if seen.version != spoken() {
+        unsupported(id, seen.version)
+      } else if method == "server/discover" {
+        Reply(text: .some(success_text(id, discovered(server))), status: 200)
+      } else {
+        refusal(.some(id), -32601, "Method not found: {method}", .none, 404)
+      }
+    }
+  }
+}
+
+// What the server answers to one message. A message of a page that the server
+// does not list is refused before it is read, and one that needs no answer, a
+// notification, is answered by none.
+pub fn reply_to(server: Server, incoming: Incoming) -> Reply ! alloc {
+  if from_another_origin(server.origins, incoming.headers) {
+    return Reply(text: .none, status: 403)
+  }
+  match jsonrpc.read(incoming.text) {
+    .err(f) { refusal(.none, f.code, f.message, .none, 200) }
+    .ok(received) {
+      match received {
+        .many(ms) { refusal(.none, -32600, "Invalid Request", .none, 200) }
+        .one(m) {
+          match m {
+            .response(r) { refusal(.none, -32600, "Invalid Request", .none, 200) }
+            .notification(n) { Reply(text: .none, status: 202) }
+            .request(r) {
+              match r.id {
+                .null { refusal(.none, -32600, "Invalid Request", .none, 200) }
+                .number(n) { request_reply(server, incoming, to_json(n), r.method, r.params) }
+                .text(t) { request_reply(server, incoming, to_json(t), r.method, r.params) }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
