@@ -6100,6 +6100,10 @@ impl<'a> Checker<'a> {
                 };
                 sol[*p] = x.hull(*g).map(Ty::Int);
             }
+            // Two ranges that no type of 64 bits holds are compared as they are.
+            (Ty::Int(g), Ty::Param(p))
+                if self.comparing
+                    && matches!(&sol[*p], Some(Ty::Int(x)) if x != g && x.hull(*g).is_none()) => {}
             (given, pattern) => {
                 use_at(value.pos());
                 // What is needed is said as it is before the types are matched,
