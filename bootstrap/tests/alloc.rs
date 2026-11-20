@@ -172,18 +172,6 @@ fn most_together(facts: &Facts) -> usize {
     facts.together.iter().map(Vec::len).max().unwrap_or(0)
 }
 
-/// Whether two homes hold the same bytes or the same register.
-fn overlap(f: &Function, a: (Value, Home), b: (Value, Home)) -> bool {
-    match (a.1, b.1) {
-        (Home::Register(x), Home::Register(y)) => x == y,
-        (Home::Frame(x), Home::Frame(y)) => {
-            let (sx, sy) = (size(f.types[a.0.0]), size(f.types[b.0.0]));
-            x < y + sy && y < x + sx
-        }
-        _ => false,
-    }
-}
-
 /// The registers to offer: none, few, and more than the function needs.
 fn offers(needs: usize) -> Vec<Registers> {
     let mut offers = vec![
@@ -269,16 +257,34 @@ fn no_two_values_alive_together_share_a_home() {
                 Home::Held => panic!("{v} has no home, and none was said to need none"),
             }
         }
+        // No two values of a set that is alive together share a register, or
+        // frame places that overlap. The places of a set are put in order, so
+        // that a set is looked at once and not pair by pair.
         for set in &facts.together {
-            for (i, x) in set.iter().enumerate() {
-                for y in &set[i + 1..] {
-                    assert!(
-                        !overlap(f, (*x, a.homes[x.0]), (*y, a.homes[y.0])),
-                        "{x:?} and {y:?} are alive together and share a home, with {registers:?}\n{:?}\n{:?}",
+            let mut registers = std::collections::HashSet::new();
+            let mut places: Vec<(u32, u32, Value)> = Vec::new();
+            for x in set {
+                match a.homes[x.0] {
+                    Home::Register(r) => assert!(
+                        registers.insert(r),
+                        "{x:?} is alive with another value in register {r}, with {registers:?}\n{:?}\n{:?}",
                         f.blocks,
                         a.homes
-                    );
+                    ),
+                    Home::Frame(at) => places.push((at, at + size(f.types[x.0]), *x)),
+                    Home::Held => {}
                 }
+            }
+            places.sort();
+            for pair in places.windows(2) {
+                assert!(
+                    pair[0].1 <= pair[1].0,
+                    "{:?} and {:?} are alive together and share a place of the frame\n{:?}\n{:?}",
+                    pair[0].2,
+                    pair[1].2,
+                    f.blocks,
+                    a.homes
+                );
             }
         }
     });
