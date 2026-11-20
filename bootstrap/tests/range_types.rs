@@ -118,6 +118,10 @@ pub const ONCE: &[Test] = &[
         the_size_of_a_name_is_a_bound_in_a_parameter_a_result_and_a_binding_and_nothing_else_is,
     ),
     (
+        "two_ranges_that_no_type_of_64_bits_holds_are_compared_as_the_numbers_they_hold",
+        two_ranges_that_no_type_of_64_bits_holds_are_compared_as_the_numbers_they_hold,
+    ),
+    (
         "a_sum_a_difference_and_a_product_give_the_exact_range_and_no_narrower_one",
         a_sum_a_difference_and_a_product_give_the_exact_range_and_no_narrower_one,
     ),
@@ -449,19 +453,12 @@ fn narrow_name(low: i128, high: i128) -> String {
 /// the numbers say, and are refused only where no type holds both ranges.
 fn any_two_ranges_are_compared_as_the_numbers_they_hold_are() {
     generate::check(4010, 40, |g: &mut Gen| (range(g), range(g), g.below(2), g.below(2)), |((a, b), (c, d), x, y)| {
-        let (low, high) = (*a.min(c), *b.max(d));
-        let held = low >= i64::MIN as i128
-            && high <= if low < 0 { i64::MAX as i128 } else { u64::MAX as i128 };
         let (x, y) = ([*a, *b][*x], [*c, *d][*y]);
         let source = with_header(format!(
             "fn main() ! console, alloc {{\n  p: {a}..{} = {x}\n  q: {c}..{} = {y}\n  print(\"{{p == q}} {{p != q}} {{p < q}} {{p <= q}} {{p > q}} {{p >= q}}\")\n}}\n",
             b + 1,
             d + 1
         ));
-        if !held {
-            assert!(!compiles(&source), "for\n{source}");
-            return;
-        }
         let want = format!("{} {} {} {} {} {}\n", x == y, x != y, x < y, x <= y, x > y, x >= y);
         assert_eq!(stdout(&source), want, "for\n{source}");
     });
@@ -952,5 +949,36 @@ fn the_size_of_a_name_is_a_bound_in_a_parameter_a_result_and_a_binding_and_nothi
             errors.iter().any(|e| e.message.contains(says)),
             "{errors:?} for\n{source}"
         );
+    }
+}
+
+/// `==`, `!=`, `<`, `<=`, `>`, and `>=` of two ranges give what they give of
+/// the numbers, whatever the ranges are, among them a range with negative
+/// numbers against one with numbers from 2^63 up, which no type of 64 bits
+/// holds both of.
+fn two_ranges_that_no_type_of_64_bits_holds_are_compared_as_the_numbers_they_hold() {
+    // The two that no type of 64 bits holds, at their ends.
+    let ends = [-9223372036854775808i128, -1, 0, 9223372036854775807];
+    let high = [9223372036854775808i128, 9223372036854775809, 18446744073709551615];
+    for x in ends {
+        for y in high {
+            let program = with_header(format!(
+                "fn main() ! console, alloc {{\n  a: Int = {x}\n  b: Nat = {y}\n  print(\"{{a < b}} {{a <= b}} {{a > b}} {{a >= b}} {{a == b}} {{a != b}} {{b < a}} {{b >= a}} {{Ord.compare(a, b)}} {{Ord.compare(b, a)}}\")\n}}\n"
+            ));
+            let want = format!(
+                "{} {} {} {} {} {} {} {} {} {}\n",
+                x < y,
+                x <= y,
+                x > y,
+                x >= y,
+                x == y,
+                x != y,
+                y < x,
+                y >= x,
+                [".less", ".equal", ".greater"][(x.cmp(&y) as i8 + 1) as usize],
+                [".less", ".equal", ".greater"][(y.cmp(&x) as i8 + 1) as usize]
+            );
+            assert_eq!(stdout(&program), want, "for\n{program}");
+        }
     }
 }

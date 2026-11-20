@@ -1055,6 +1055,9 @@ impl<'a> Lowering<'a> {
             Expr::Call(call) if self.compares_scalars(call, "eq", env) => {
                 self.equal_scalars(out, call, env)
             }
+            Expr::Call(call) if self.compares_mixed(call, env) => {
+                self.compare_mixed(out, call, env)
+            }
             Expr::Call(call) => match typed.callee(call, env) {
                 Callee::Construct(s, args) => {
                     let inner = args.clone();
