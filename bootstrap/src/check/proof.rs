@@ -312,9 +312,29 @@ impl Builder<'_, '_> {
             Expr::Arith {
                 op, left, right, ..
             } => {
+                if matches!(op, ArithOp::Div | ArithOp::Rem) {
+                    // Two numbers that are known are divided now, and what is
+                    // not known is one value, of the range of its type.
+                    let (l, r) = (self.lin(left), self.lin(right));
+                    if let (Some(l), Some(r)) = (&l, &r)
+                        && l.terms.is_empty()
+                        && r.terms.is_empty()
+                        && let Some(n) = match op {
+                            ArithOp::Div => l.constant.checked_div(r.constant),
+                            _ => l.constant.checked_rem(r.constant),
+                        }
+                    {
+                        return Some(Lin {
+                            terms: BTreeMap::new(),
+                            constant: n,
+                        });
+                    }
+                    return self.goal.then(|| self.fresh(e));
+                }
                 let (l, r) = (self.lin(left), self.lin(right));
                 let (l, r) = (l?, r?);
                 Some(match op {
+                    ArithOp::Div | ArithOp::Rem => unreachable!("one value"),
                     ArithOp::Add => self.combine(&l, 1, &r),
                     ArithOp::Sub => self.combine(&l, -1, &r),
                     ArithOp::Mul => {
@@ -974,6 +994,105 @@ impl<'a> Checker<'a> {
         }
     }
 
+    /// Whether `arith` proves that the divisor of `left / right` or of
+    /// `left % right` is not zero, and if it does not, the goal it could not
+    /// prove.
+    pub(super) fn divisor(&mut self, body: &mut Body<'a>, e: &Expr, op_pos: Pos) {
+        if !Self::decided(body) || body.contract {
+            return;
+        }
+        let Expr::Arith { op, right, .. } = e else {
+            return;
+        };
+        let mut facts = std::mem::take(&mut body.facts);
+        let mut builder = self.builder(body, &mut facts, true);
+        let value = builder.lin(right).filter(|_| !builder.overflow);
+        // Above zero, or below it.
+        let goal = value.and_then(|value| {
+            let mut up = value.clone();
+            up.constant = up.constant.checked_sub(1)?;
+            let mut down = value.negated()?;
+            down.constant = down.constant.checked_sub(1)?;
+            Some(Formula::Or(vec![Formula::Ge(up), Formula::Ge(down)]))
+        });
+        let used = background(&facts, goal.iter());
+        body.facts = facts;
+        if goal.as_ref().is_some_and(|g| proves(&used, g)) {
+            return;
+        }
+        let (by, whole) = (written_expr(right), written_expr(e));
+        self.errors.push(
+            Error::new(
+                op_pos,
+                format!("cannot prove that `{by} != 0`, so `{whole}` may divide by zero"),
+            )
+            .with_fix(format!(
+                "check `{by} != 0` with an `if`, or use `{}` or `{}`",
+                named("checked", *op),
+                named("wrapping", *op)
+            )),
+        );
+    }
+
+    /// Whether `arith` proves that the quotient `e` fits `t`: that the least
+    /// number of `t` is not divided by `-1`, and if it does not, the goal it
+    /// could not prove.
+    fn quotient_fits(&mut self, body: &mut Body<'a>, e: &Expr, t: Int) {
+        let Expr::Arith {
+            op,
+            left,
+            right,
+            op_pos,
+        } = e
+        else {
+            return;
+        };
+        let mut facts = std::mem::take(&mut body.facts);
+        let mut builder = self.builder(body, &mut facts, true);
+        let (a, b) = (builder.lin(left), builder.lin(right));
+        let goal = match (a, b) {
+            (Some(a), Some(b)) if !builder.overflow => (|| {
+                // Not the least number, or a divisor that is not `-1`.
+                let mut above = a;
+                above.constant = above.constant.checked_sub(t.min())?.checked_sub(1)?;
+                let up = b.clone();
+                let down = {
+                    let mut down = b.negated()?;
+                    down.constant = down.constant.checked_sub(2)?;
+                    down
+                };
+                Some(Formula::Or(vec![
+                    Formula::Ge(above),
+                    Formula::Ge(up),
+                    Formula::Ge(down),
+                ]))
+            })(),
+            _ => None,
+        };
+        let used = background(&facts, goal.iter());
+        body.facts = facts;
+        if goal.as_ref().is_some_and(|g| proves(&used, g)) {
+            return;
+        }
+        let written = written_expr(e);
+        let text = match op {
+            ArithOp::Rem => format!(
+                "cannot prove that `{written}` does not take the least number of `{}` by `-1`, which a processor cannot do",
+                self.defs.spelling(t)
+            ),
+            _ => format!(
+                "cannot prove that `{written} <= {}`, so `{written}` may not fit `{}`",
+                t.max(),
+                self.defs.spelling(t)
+            ),
+        };
+        self.errors.push(Error::new(*op_pos, text).with_fix(format!(
+            "check the operands first, or use `{}` or `{}`",
+            named("wrapping", *op),
+            named("checked", *op)
+        )));
+    }
+
     /// Whether `arith` proves that the result of the operation `e` fits `t`,
     /// and if it does not, the goal it could not prove.
     pub(super) fn fits(&mut self, body: &mut Body<'a>, e: &Expr, t: Int) {
@@ -983,6 +1102,9 @@ impl<'a> Checker<'a> {
         let Expr::Arith { op, op_pos, .. } = e else {
             return;
         };
+        if matches!(op, ArithOp::Div | ArithOp::Rem) {
+            return self.quotient_fits(body, e, t);
+        }
         let mut facts = std::mem::take(&mut body.facts);
         let mut builder = self.builder(body, &mut facts, true);
         let value = builder.lin(e).filter(|_| !builder.overflow);
@@ -1634,6 +1756,8 @@ fn named(kind: &str, op: ArithOp) -> String {
         ArithOp::Add => "add",
         ArithOp::Sub => "sub",
         ArithOp::Mul => "mul",
+        ArithOp::Div => "div",
+        ArithOp::Rem => "rem",
     };
     format!("{kind}_{op}")
 }

@@ -41,7 +41,8 @@ impl<'a> Lowering<'a> {
         (ty, vec![out.int(bits_of(t), value)])
     }
 
-    /// Lowers `left + right`, `left - right`, or `left * right`.
+    /// Lowers `left + right`, `left - right`, `left * right`, `left / right`,
+    /// or `left % right`.
     pub(super) fn operation(
         &mut self,
         out: &mut Out<'a>,
@@ -51,14 +52,59 @@ impl<'a> Lowering<'a> {
     ) -> (Ty, Vec<form::Value>) {
         let typed = self.typed;
         let ty = typed.type_of(expr, env);
-        let a = self.expr(out, left, env).1[0];
+        let (taken, a) = self.expr(out, left, env);
         let b = self.expr(out, right, env).1[0];
         let word = match op {
             crate::parser::ArithOp::Add => form::Binary::Add,
             crate::parser::ArithOp::Sub => form::Binary::Sub,
             crate::parser::ArithOp::Mul => form::Binary::Mul,
+            crate::parser::ArithOp::Div | crate::parser::ArithOp::Rem => {
+                return self.division(out, (op, right), (ty, taken, a[0], b));
+            }
         };
-        (ty, vec![out.binary(word, a, b)])
+        (ty, vec![out.binary(word, a[0], b)])
+    }
+
+    /// Lowers a quotient or what is left over, from the two sides at the size
+    /// that holds both and the result, which the checker made them. The
+    /// divisor is not zero, and the least number is not divided by `-1`, as
+    /// the size holds the result too. An unsigned number divided by a power of
+    /// two is shifted, and what is left of it is the bits below the power.
+    fn division(
+        &mut self,
+        out: &mut Out<'a>,
+        (op, right): (ArithOp, &'a Expr),
+        (ty, taken, a, b): (Ty, Ty, form::Value, form::Value),
+    ) -> (Ty, Vec<form::Value>) {
+        let (Ty::Int(result), Ty::Int(at)) = (&ty, &taken) else {
+            unreachable!("checked")
+        };
+        let bits = bits_of(*at);
+        let power = match right {
+            Expr::Number {
+                magnitude,
+                negative: false,
+                ..
+            } if !at.signed() && magnitude.is_power_of_two() => Some(*magnitude),
+            _ => None,
+        };
+        let value = match (op, power) {
+            (ArithOp::Div, Some(power)) => {
+                let by = out.int(bits, i128::from(power.trailing_zeros()));
+                out.binary(form::Binary::ShiftRightU, a, by)
+            }
+            (_, Some(power)) => {
+                let mask = out.int(bits, power as i128 - 1);
+                out.binary(form::Binary::And, a, mask)
+            }
+            (ArithOp::Div, None) if at.signed() => out.binary(form::Binary::DivS, a, b),
+            (ArithOp::Div, None) => out.binary(form::Binary::DivU, a, b),
+            (_, None) if at.signed() => out.binary(form::Binary::RemS, a, b),
+            (_, None) => out.binary(form::Binary::RemU, a, b),
+        };
+        // The result is kept at the size of its own range.
+        let value = out.resize(result.signed(), value, bits_of(*result));
+        (ty, vec![value])
     }
 
     /// Whether the call is `Eq::eq` or `Ord::compare` of two values that are

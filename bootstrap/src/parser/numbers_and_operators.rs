@@ -1,5 +1,5 @@
 //! Parses numbers and operators: a number or a character written out, with a
-//! `-` before it, and `+`, `-`, `*`, and the comparisons.
+//! `-` before it, and `+`, `-`, `*`, `/`, `%`, and the comparisons.
 
 use super::*;
 
@@ -9,6 +9,8 @@ pub enum ArithOp {
     Add,
     Sub,
     Mul,
+    Div,
+    Rem,
 }
 
 impl ArithOp {
@@ -18,6 +20,8 @@ impl ArithOp {
             ArithOp::Add => "+",
             ArithOp::Sub => "-",
             ArithOp::Mul => "*",
+            ArithOp::Div => "/",
+            ArithOp::Rem => "%",
         }
     }
 }
@@ -118,11 +122,16 @@ impl Parser<'_> {
         Ok(left)
     }
 
-    /// Parses operands joined by `*`, which group to the left.
+    /// Parses operands joined by `*`, `/`, and `%`, which group to the left.
     pub(super) fn product(&mut self) -> Result<Expr, Error> {
         let mut left = self.operand()?;
-        while self.tok() == &Tok::Punct("*") {
-            left = self.arith(ArithOp::Mul, left, Self::operand)?;
+        while let Tok::Punct(op @ ("*" | "/" | "%")) = self.tok() {
+            let op = match *op {
+                "*" => ArithOp::Mul,
+                "/" => ArithOp::Div,
+                _ => ArithOp::Rem,
+            };
+            left = self.arith(op, left, Self::operand)?;
         }
         Ok(left)
     }

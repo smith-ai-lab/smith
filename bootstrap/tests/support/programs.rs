@@ -1925,7 +1925,7 @@ fn bad_literal(b: &mut Builder, pieces: &[usize]) {
     match b.kind {
         Some(Kind::UnexpectedCharacter) => {
             b.mark("unexpected character", None);
-            b.pick(&["#", "$", "?", "`", ";", "%", "é", "日"]);
+            b.pick(&["#", "$", "?", "`", ";", "~", "é", "日"]);
             literal_text(b, pieces, None);
         }
         Some(Kind::ExpressionNotBuilt) => {
@@ -1936,7 +1936,7 @@ fn bad_literal(b: &mut Builder, pieces: &[usize]) {
             literal_text(b, pieces, None);
             b.push(" ");
             b.mark(NOT_BUILT, None);
-            b.pick(&["/ \"b\"", "@ \"b\"", "^ \"b\"", "..\"b\""]);
+            b.pick(&["@ \"b\"", "^ \"b\"", "..\"b\""]);
         }
         Some(Kind::NoClosingQuote) => {
             let opening = pos_after(&b.text);

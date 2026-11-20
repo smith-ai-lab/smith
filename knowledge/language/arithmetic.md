@@ -6,9 +6,10 @@ status: partial
 built:
   - "a plain `+`, `-`, or `*` of two whole numbers, a literal included, which gives the exact range of the result with nothing proven where a type of 64 bits holds it, and where none does, as of two numbers of 64 bits, takes two sides of one type and compiles when `arith` proves that the result fits that type, and an error that says what could not be proven"
   - "`wrapping_`, `saturating_`, and `checked_` of `add`, `sub`, and `mul`"
+  - "`/` and `%` of two whole numbers, which round toward zero, give the exact range of the quotient and of what is left over, bind as `*` does, and compile when `arith` proves that the divisor is not zero and, for a signed number, that the least number is not divided by -1 where the result would not fit"
   - "a value that enters a narrower range, at a binding, a `var`, an argument, and a result, which compiles when a condition or a `requires` shows that it fits, and an error that says what could not be proven"
   - "a unary `-`, which gives the negated range and groups tighter than `*`"
-  - "not the exact range of a result that no type of 64 bits holds, `/`, `%`, or `narrow(x)` and `clamp(x)` of every range, or of a float, or a range of 65 to 128 bits, which is refused as a wider one is"
+  - "not the exact range of a result that no type of 64 bits holds, `narrow(x)` and `clamp(x)` of every range, or of a float, or a range of 65 to 128 bits, which is refused as a wider one is"
 ---
 
 # Integer arithmetic

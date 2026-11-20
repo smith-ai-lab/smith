@@ -150,8 +150,82 @@ fn exact(op: ArithOp, left: Int, right: Int) -> Option<Int> {
             ];
             (*products.iter().min()?, *products.iter().max()?)
         }
+        ArithOp::Div => quotients(left, right)?,
+        ArithOp::Rem => {
+            // What is left of the least number of the largest size, taken by
+            // `-1`, is asked of a processor that cannot give it: a smaller
+            // size is worked at a larger one.
+            let holder = left.hull(right)?.holder();
+            if left.min() < 0
+                && right.min() < 0
+                && left.min() == holder.min()
+                && holder.bits() == 64
+            {
+                return None;
+            }
+            remainders(left, right)
+        }
     };
     Int::between(low, high)
+}
+
+/// The numbers a divisor of the range `of` can be, which is its negative
+/// part and its positive part: a divisor is never zero.
+fn divisors(of: Int) -> impl Iterator<Item = (i128, i128)> {
+    let negative = (of.min() < 0).then(|| (of.min(), of.max().min(-1)));
+    let positive = (of.max() > 0).then(|| (of.min().max(1), of.max()));
+    negative.into_iter().chain(positive)
+}
+
+/// The least and the greatest quotient, rounded toward zero, of a number of
+/// the range `left` by a number of the range `right` that is not zero. A
+/// quotient is monotone in each side where the divisor keeps its sign, so
+/// they are at the ends of the ranges.
+fn quotients(left: Int, right: Int) -> Option<(i128, i128)> {
+    let mut found: Option<(i128, i128)> = None;
+    for (low, high) in divisors(right) {
+        for a in [left.min(), left.max()] {
+            for b in [low, high] {
+                let q = a.checked_div(b)?;
+                found = Some(found.map_or((q, q), |(l, h)| (l.min(q), h.max(q))));
+            }
+        }
+    }
+    // A divisor that can only be zero is refused where it is checked.
+    Some(found.unwrap_or((0, 0)))
+}
+
+/// The range that holds what is left over, which has the sign of the number
+/// divided and is below the divisor and below that number, where the divisor
+/// is not zero.
+fn remainders(left: Int, right: Int) -> (i128, i128) {
+    let most = divisors(right)
+        .flat_map(|(low, high)| [low.abs(), high.abs()])
+        .max()
+        .unwrap_or(1);
+    let least = divisors(right)
+        .map(|(low, high)| low.abs().min(high.abs()))
+        .min()
+        .unwrap_or(1);
+    if left.min() >= 0 && least > left.max() {
+        // Every divisor is above every number divided, which is left whole.
+        return (left.min(), left.max());
+    }
+    if left.max() <= 0 && least > -left.min() {
+        return (left.min(), left.max());
+    }
+    let below = (most - 1).max(0);
+    let up = if left.max() > 0 {
+        left.max().min(below)
+    } else {
+        0
+    };
+    let down = if left.min() < 0 {
+        -((-left.min()).min(below))
+    } else {
+        0
+    };
+    (down, up)
 }
 
 /// A function of `Bits` whose result has the exact range of what it makes
@@ -433,7 +507,8 @@ impl<'a> Checker<'a> {
         }
     }
 
-    /// Checks `left + right`, `left - right`, or `left * right`, whose sides
+    /// Checks `left + right`, `left - right`, `left * right`, `left / right`,
+    /// or `left % right`, whose sides
     /// are whole numbers of one type, which is the type it gives. It
     /// compiles only when `arith` proves that the result fits that type.
     pub(super) fn arith(
@@ -485,14 +560,41 @@ impl<'a> Checker<'a> {
         };
         let symbol = op.symbol();
         let defs = self.defs;
+        if matches!(op, ArithOp::Div | ArithOp::Rem)
+            && let Ty::Int(b) = &r
+            && b.min() <= 0
+            && 0 <= b.max()
+        {
+            self.divisor(body, expr, op_pos);
+        }
         let gives = match (&l, &r) {
             (Ty::Unknown, _) | (_, Ty::Unknown) => return Ty::Unknown,
             (Ty::Int(a), Ty::Int(b)) if let Some(exact) = exact(op, *a, *b) => {
                 // The result is the exact range, which no proof is asked of,
-                // and each side is the number at the size that range is kept at.
+                // and each side is the number at the size that range is kept
+                // at. A quotient is worked out at the size that holds both
+                // sides and the result, since it drops no bit of either.
+                let at = match op {
+                    ArithOp::Div | ArithOp::Rem => a.hull(*b).and_then(|h| h.hull(exact)),
+                    _ => Some(exact),
+                }
+                .unwrap_or(exact);
+                // The least number of a size taken by `-1` is what a processor
+                // cannot do, so a remainder of one is worked at a larger size.
+                let at = match op {
+                    ArithOp::Rem
+                        if at.signed()
+                            && a.min() == at.holder().min()
+                            && b.min() < 0
+                            && at.holder().bits() < 64 =>
+                    {
+                        Int::sized(true, 2 * at.holder().bits())
+                    }
+                    _ => at,
+                };
                 for (side, own) in [(left, *a), (right, *b)] {
-                    if own != exact {
-                        self.widened.insert(addr(side), exact);
+                    if own != at {
+                        self.widened.insert(addr(side), at);
                     }
                 }
                 return Ty::Int(exact);
