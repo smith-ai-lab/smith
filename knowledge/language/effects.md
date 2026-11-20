@@ -7,6 +7,7 @@ built:
   - "`console`, `alloc`, and `diverge` in a signature, each listed once and required of every caller that needs it, and checked where a lambda is written"
   - "not an effect on a function type"
   - "a function with effects passed by its name, whose effects are required of the function its name is written in"
+  - "an effect the program declares, in a signature, and required of every caller of its operations, as `console` is"
 ---
 
 # Effects

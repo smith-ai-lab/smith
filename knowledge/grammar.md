@@ -2,6 +2,9 @@
 type: specification
 title: Smith grammar
 description: Lexical rules, operator precedence, the EBNF grammar, and the properties the parser relies on.
+status: partial
+built:
+  - "`effect_def`: `effect IDENT { fn_sig }`, with `pub` in a module, whose operations are signatures with no body"
 ---
 
 # Smith grammar
