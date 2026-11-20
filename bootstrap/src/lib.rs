@@ -7,6 +7,7 @@ pub mod diag;
 mod divide;
 mod function_args;
 mod hash;
+mod item_notes;
 mod lexer;
 mod parser;
 pub mod scalar;
@@ -326,10 +327,14 @@ fn checked_in(
 }
 
 /// Makes the structs of the arguments of the file's functions, when it writes
-/// `Function`, which they are for.
+/// `Function`, which they are for, and notes the comments of its types, when
+/// it writes `Describe`.
 fn with_function_args(file: &mut parser::File, source: &[u8]) {
     if function_args::asks(file) {
         function_args::add(file, std::str::from_utf8(source).unwrap_or_default());
+    }
+    if item_notes::asks(file) {
+        item_notes::add(file, std::str::from_utf8(source).unwrap_or_default());
     }
 }
 

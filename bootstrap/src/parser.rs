@@ -64,7 +64,9 @@ pub struct File {
     /// For each function of the file that has a `Function` made for it, the
     /// name of the struct that holds its arguments, which is made with it.
     pub args: Vec<(String, String)>,
-    /// For each of those, the comment on the function.
+    /// For each of those, the comment on the function, and for a file that
+    /// writes `Describe`, the comment on each struct, field, enum, and case
+    /// that has one, by its name, as `Note` or `Note.title`.
     pub abouts: Vec<(String, String)>,
 }
 
@@ -2484,11 +2486,13 @@ impl Parser<'_> {
                         unreachable!("checked")
                     };
                     let mut call = self.call_rest(Some((qualifier, at)), name, pos)?;
+                    // Types separated by commas are a tuple that starts at the
+                    // bracket, and a tuple type in parentheses, which starts at
+                    // its own parenthesis, is one type.
                     call.type_args = match *index {
-                        Expr::Tuple { items, .. } => items,
+                        Expr::Tuple { items, pos } if pos == bracket => items,
                         one => vec![one],
                     };
-                    let _ = bracket;
                     Expr::Call(call)
                 }
                 of => Expr::Field {
