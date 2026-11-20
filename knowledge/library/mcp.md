@@ -53,6 +53,8 @@ fn main() ! messages, net, alloc {
 
 `mcp` takes the name and the version of the server, and what else the protocol lets a server say of itself as arguments with defaults, so a server that says no more writes no more.
 
+One of those arguments is `ttl`, how many milliseconds a client may keep what it was told of the tools, the resources, and the prompts, and of a resource it read, before asking again. It is 0 when not given, so a client asks each time, and each such answer says it is `private`, for the caller who asked alone, since a [guard](http.md#guards) may give two callers different lists.
+
 The server speaks the version of the protocol dated 2026-07-28, which has no handshake and keeps nothing between two requests. A client that sends `server/discover` is told the versions the server speaks, the capabilities its lines imply, and the instructions `mcp` was given, if any, and every result carries the server's name and version. A request that names a version the server does not speak is answered with the failure -32022 and the versions it does, and a client of an earlier version that begins with `initialize` is answered the same way.
 
 No tool is stored in a value. A tool may have any effects, and they are required of the function its name is written in, as [the effects of a function that is passed](../language/effects.md#a-lambdas-effects) are: a server with a tool that carries `net` has a `main` that carries `net`, so the first line of `main` says everything the server can reach. Which tool a message calls is settled when the program is built, and a call of a tool is a direct call.
@@ -82,7 +84,7 @@ fn main() ! messages, store, alloc {
 
 A client that reads `notes://note/7` is given what `note(7)` gives. A part of the pattern that begins with `:` is a parameter of the function, by its name, read as the parameter's type, as a part of a path is for a [route](http.md#where-a-parameter-comes-from). A pattern with no such part is one resource, and one with any is every resource that fits it, which a client is told of as a template with the part in braces, `notes://note/{id}`.
 
-The description is the comment, as for a tool. What the function gives has [`Serialize`](serialize.md) and is written as JSON, or is a `str` and is written as it is. `.err(e)` of a `Result` is answered as a resource that is not there, the failure -32602 with the address, and an address that fits no pattern, or whose part does not read as its parameter's type, is answered by the library and never reaches a function.
+The description is the comment, as for a tool. What the function gives has [`Serialize`](serialize.md) and is written as JSON, or is a `str` and is written as it is. `.err(e)` of a `Result` is answered as a resource that is not there, the failure -32602 with the address whatever `e` is, so a function that reads a resource says in its type that this is how it fails, and an address that fits no pattern, or whose part does not read as its parameter's type, is answered by the library and never reaches a function.
 
 ## A prompt
 
@@ -110,7 +112,7 @@ fn main() ! messages, store, alloc {
 
 A client that lists the prompts is told of `summarise`, with its comment and its two blanks, of which `sentences` may be left out. A client that asks for it with `id` as 7 is given the text, as one message from the user. The protocol sends each blank as text, so a client that fills `id` with 7 sends `"7"`, and each is read as its parameter's type from that text, as a part of a path is for a [route](http.md#where-a-parameter-comes-from). A parameter is a text, a number, a `bool`, or an `Option` of one, which a client may leave out, and one with a default may be left out too. A parameter of a type that has no reading from a text, as a struct or a list has none, is refused when the program is built: "a prompt's blanks are texts, and `Note` is not read from one". A blank that does not read as its type is answered by the library as an input that does not fit, and never reaches the function. The comment on each parameter describes its blank.
 
-`resource` and `prompt` are lines beside `tool`, are bounded by [`Function`](../language/traits.md#an-impl-for-a-function) as it is, and read no code. A server offers what its lines say, so one with no `resource` line tells a client it has no resources, and a request to list or read one is answered that the method is not found, -32601.
+`resource` and `prompt` are lines beside `tool`, are bounded by [`Function`](../language/traits.md#an-impl-for-a-function) as it is, and read no code. A server offers what its lines say, so one with no `resource` line tells a client it has no resources, and a request to list or read one is answered that the method is not found, -32601. A server tells a client of nothing that changes: no tool, resource, or prompt can send a message of its own yet, so a request to be told of changes, `subscriptions/listen`, is answered that the method is not found too.
 
 ## Who may call
 
