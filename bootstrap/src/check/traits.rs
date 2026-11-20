@@ -361,12 +361,12 @@ pub(super) fn overlaps(outs: &[bool], a: &ImplInfo, b: &ImplInfo) -> bool {
         .all(|((x, y), _)| overlap(x, &shifted(y, by), &mut sol))
 }
 
-/// The names the `requires` lines that name a trait use: the trait, and the
-/// types it is given.
-pub(super) fn needs_named(needs: &[Expr]) -> Vec<&str> {
-    fn walk<'a>(e: &'a Expr, out: &mut Vec<&'a str>) {
+/// Gives `out` the names the `requires` lines that name a trait use, with
+/// where each is: the trait, and the types it is given.
+pub(super) fn needs_named(needs: &[Expr], out: &mut impl FnMut(&str, Pos)) {
+    fn walk(e: &Expr, out: &mut impl FnMut(&str, Pos)) {
         match e {
-            Expr::Name { name, .. } => out.push(name),
+            Expr::Name { name, pos } => out(name, *pos),
             Expr::Index { of, index, .. } => {
                 walk(of, out);
                 walk(index, out);
@@ -375,18 +375,14 @@ pub(super) fn needs_named(needs: &[Expr]) -> Vec<&str> {
             _ => {}
         }
     }
-    let mut out = Vec::new();
-    needs.iter().for_each(|e| walk(e, &mut out));
-    out
+    needs.iter().for_each(|e| walk(e, out));
 }
 
-/// The names the bounds of type parameters use.
-pub(super) fn bounds_named(generics: &[Generic]) -> Vec<&str> {
-    (generics.iter())
-        .filter_map(|g| g.bound.as_ref())
-        .flat_map(type_names)
-        .map(|(name, _)| name)
-        .collect()
+/// Gives `out` the names the bounds of type parameters use, with where each is.
+pub(super) fn bounds_named(generics: &[Generic], out: &mut impl FnMut(&str, Pos)) {
+    for bound in generics.iter().filter_map(|g| g.bound.as_ref()) {
+        type_names_in(bound, out);
+    }
 }
 
 /// The type with each of its type parameters moved by `by` places.
