@@ -16,14 +16,6 @@ impl<'a> Checker<'a> {
                 ));
             }
             self.param_ty(&p.ty, scope);
-            if let Some(value) = &p.default
-                && p.ty.function
-            {
-                self.errors.push(Error::unsupported(
-                    value.pos(),
-                    "a default for a parameter that takes a function",
-                ));
-            }
         }
         if let Some(t) = &f.result {
             self.ty(t, scope);
@@ -65,13 +57,14 @@ impl<'a> Checker<'a> {
         needed: &Ty,
         scope: &'a Scope,
         params: Vec<&'a str>,
+        extra: Vec<String>,
     ) {
         let mut body = Body {
             f: None,
             default: Some(params),
             scope,
             listed: Vec::new(),
-            extra: Vec::new(),
+            extra,
             unknown_effect: false,
             missing: Vec::new(),
             names: Vec::new(),
@@ -105,10 +98,10 @@ impl<'a> Checker<'a> {
             let last_fn = i + 1 == f.params.len() && p.ty.function;
             match (&p.default, first) {
                 (None, Some(_)) if last_fn => {}
-                (Some(_), _) if p.ty.function => {}
                 (Some(value), _) => {
                     first = first.or(Some(p.name.as_str()));
-                    self.default(value, ty, &sig.scope, names.clone());
+                    let extra = sig.fn_effects.get(i).cloned().unwrap_or_default();
+                    self.default(value, ty, &sig.scope, names.clone(), extra);
                 }
                 (None, Some(q)) => self.errors.push(
                     Error::new(

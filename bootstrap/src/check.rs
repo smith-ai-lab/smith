@@ -6089,7 +6089,7 @@ impl<'a> Checker<'a> {
         }
         for (field, ty) in def.fields.iter().zip(&defs.fields[s]) {
             if let Some(value) = &field.default {
-                self.default(value, ty, scope, Vec::new());
+                self.default(value, ty, scope, Vec::new(), Vec::new());
             }
         }
     }
