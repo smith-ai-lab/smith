@@ -1,0 +1,28 @@
+name: warm
+
+# Keeps what `ci` keeps between runs where `ci` can read it. A cache that a
+# run saves can be read only by runs of the same branch and by those of the
+# default branch, and `ci` never runs there, so a pull request or the merge
+# queue would never find what another one saved. This run is on the default
+# branch, after each merge that changes how it is kept, and once a week so that
+# what is kept does not go unused for the days after which GitHub deletes it.
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/actions/**
+      - .github/workflows/warm.yml
+  schedule:
+    - cron: '17 3 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  emulator:
+    name: keep the emulator of x86-64 chips
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: ./.github/actions/qemu
