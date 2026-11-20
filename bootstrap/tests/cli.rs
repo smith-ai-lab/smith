@@ -14,20 +14,36 @@ use crate::targets::{self, any, case_files, updating};
 
 pub const ONCE: &[Test] = &[
     (
-        "the_cases_build_or_report_their_error_first_quarter",
-        the_cases_build_or_report_their_error_first_quarter,
+        "the_cases_build_or_report_their_error_part_1_of_8",
+        || cases_build_or_report_their_error(0),
     ),
     (
-        "the_cases_build_or_report_their_error_second_quarter",
-        the_cases_build_or_report_their_error_second_quarter,
+        "the_cases_build_or_report_their_error_part_2_of_8",
+        || cases_build_or_report_their_error(1),
     ),
     (
-        "the_cases_build_or_report_their_error_third_quarter",
-        the_cases_build_or_report_their_error_third_quarter,
+        "the_cases_build_or_report_their_error_part_3_of_8",
+        || cases_build_or_report_their_error(2),
     ),
     (
-        "the_cases_build_or_report_their_error_fourth_quarter",
-        the_cases_build_or_report_their_error_fourth_quarter,
+        "the_cases_build_or_report_their_error_part_4_of_8",
+        || cases_build_or_report_their_error(3),
+    ),
+    (
+        "the_cases_build_or_report_their_error_part_5_of_8",
+        || cases_build_or_report_their_error(4),
+    ),
+    (
+        "the_cases_build_or_report_their_error_part_6_of_8",
+        || cases_build_or_report_their_error(5),
+    ),
+    (
+        "the_cases_build_or_report_their_error_part_7_of_8",
+        || cases_build_or_report_their_error(6),
+    ),
+    (
+        "the_cases_build_or_report_their_error_part_8_of_8",
+        || cases_build_or_report_their_error(7),
     ),
     (
         "build_writes_the_executable_to_the_folder_it_ran_in",
@@ -106,25 +122,9 @@ fn build(dir: &Path, target: Target, file: &str) -> Output {
 
 /// Every case builds for every target and starts the compiler each time, so
 /// the cases are shared by four tests, and none computes for near the limit.
-fn the_cases_build_or_report_their_error_first_quarter() {
-    cases_build_or_report_their_error(0);
-}
-
-fn the_cases_build_or_report_their_error_second_quarter() {
-    cases_build_or_report_their_error(1);
-}
-
-fn the_cases_build_or_report_their_error_third_quarter() {
-    cases_build_or_report_their_error(2);
-}
-
-fn the_cases_build_or_report_their_error_fourth_quarter() {
-    cases_build_or_report_their_error(3);
-}
-
-/// The cases whose place in the order is `quarter` more than a multiple of four.
-fn cases_build_or_report_their_error(quarter: usize) {
-    for source in case_files().into_iter().skip(quarter).step_by(4) {
+/// The cases whose place in the order is `part` more than a multiple of eight.
+fn cases_build_or_report_their_error(part: usize) {
+    for source in case_files().into_iter().skip(part).step_by(8) {
         let name = source.file_stem().unwrap().to_str().unwrap();
         let file = format!("{name}.smith");
         let out = source.with_extension("out");
