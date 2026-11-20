@@ -9,6 +9,7 @@ built:
   - "and, for a `var` of a list, a struct, or a tuple, and each of its fields, what is known of it, as of any value, until it or a field of it is assigned, at which a fact about it is forgotten, in a loop, a lambda, and an arm of an `if` or a `match` as it is outside one, and a `var` the loop or lambda assigns is not known from before it"
   - "and the range of what `bit_and`, `bit_or`, `bit_xor`, `shift_right`, and `shift_left` give, of an unsigned number or, for a shift left, of any whole number, from what is known of the numbers they are given"
   - "and, for a `var` of a whole number, outside a loop as inside one, what it was last given, where no assignment to it lies between that and the use on any path, an `if`, a `match`, a loop that may run no time, an earlier round of a loop, and a lambda each counting as one that may lie between"
+  - "and `/` and `%`, whose divisor `arith` must prove is not zero, and, for a signed number, that the least number is not divided by -1 where the result would not fit, and which it treats as one unknown quantity of the range of the result, or as the number itself when both sides are literals"
   - "and `+`, `-`, and `*` on a `Nat`, proven as on any whole number, with the fix \"check the operands first\", as a `Nat` has no wrapping, saturating, or checked function"
   - "not the facts of a `match` block, or a proof held in a value"
 ---

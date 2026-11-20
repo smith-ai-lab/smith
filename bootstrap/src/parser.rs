@@ -1090,6 +1090,7 @@ fn continues_expression(tok: &Tok) -> bool {
                 | "-"
                 | "*"
                 | "/"
+                | "%"
                 | "@"
                 | "^"
                 | "=="

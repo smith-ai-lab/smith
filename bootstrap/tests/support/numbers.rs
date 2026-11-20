@@ -717,7 +717,7 @@ pub fn program_with_mistake(g: &mut Gen) -> NumberCase {
     } else {
         -1 - g.below(1000) as i128
     };
-    let sum = *g.pick(&["/", "@", "^"]);
+    let sum = *g.pick(&["@", "^"]);
     let kind = g.below(10);
     let mut fix: Option<String> = None;
     let literal = value(g, ty);

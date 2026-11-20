@@ -1567,7 +1567,8 @@ fn written_with(s: &dyn Fn(&str) -> Option<String>, e: &Expr) -> String {
         } => {
             // An operand that groups looser than the operator, and a right
             // operand that groups as tightly, was in parentheses.
-            let binds = |op: &ArithOp| matches!(op, ArithOp::Mul) as u8;
+            let binds =
+                |op: &ArithOp| matches!(op, ArithOp::Mul | ArithOp::Div | ArithOp::Rem) as u8;
             let side = |e: &Expr, right: bool| match e {
                 Expr::Arith { op: inner, .. }
                     if binds(inner) < binds(op) || (right && binds(inner) == binds(op)) =>
