@@ -28,8 +28,8 @@ pub const ONCE: &[Test] = &[
         an_escaped_text_holds_no_byte_of_markup_that_the_text_did_not_have_as_an_entity,
     ),
     (
-        "text_writes_a_text_as_the_reference_escapes_it_whatever_the_handler_is",
-        text_writes_a_text_as_the_reference_escapes_it_whatever_the_handler_is,
+        "text_writes_a_text_as_the_reference_escapes_it",
+        text_writes_a_text_as_the_reference_escapes_it,
     ),
     (
         "what_text_writes_holds_no_byte_of_markup_that_the_text_did_not_have_as_an_entity",
@@ -186,97 +186,15 @@ fn an_escaped_text_holds_no_byte_of_markup_that_the_text_did_not_have_as_an_enti
     );
 }
 
-/// A handler of `markup` that a program holds, so that what `text` gives a
-/// handler is checked with no `render`: it writes what it is given as it is, and
-/// leaves a tag open until something that is not an attribute comes.
-const HANDLER: &str = "fn show(body: fn() ! markup) ! console, alloc {
-  var open = false
-  var acc = \"\"
-  markup(
-    start: fn(tag) {
-      if open {
-        acc = \"{acc}>\"
-      }
-      acc = \"{acc}<{tag}\"
-      open = true
-    },
-    attribute: fn(name, value) {
-      acc = \"{acc} {name}=\\\"{value}\\\"\"
-    },
-    emit: fn(s) {
-      if open {
-        acc = \"{acc}>\"
-        open = false
-      }
-      acc = \"{acc}{s}\"
-    },
-    include: fn(page) {
-      if open {
-        acc = \"{acc}>\"
-        open = false
-      }
-    },
-    void: {
-      if open {
-        acc = \"{acc}>\"
-        open = false
-      }
-    },
-    end: fn(tag) {
-      if open {
-        acc = \"{acc}>\"
-        open = false
-      }
-      acc = \"{acc}</{tag}>\"
-    },
-    body: body,
-  )
-  print(acc)
-}
-";
-
-/// The lines a program prints that gives `markup` to `HANDLER`, a line for
-/// each of the `blocks`, which are the lines of what is written.
-fn written(blocks: &[Vec<String>]) -> Vec<String> {
-    let mut body = String::new();
-    for lines in blocks {
-        body += "  show() {\n";
-        for line in lines {
-            body += &format!("    {line}\n");
-        }
-        body += "  }\n";
-    }
-    let source = format!(
-        "use std.console (console, print)\nuse std.html (attribute, emit, end, include, markup, start, text, void)\n\n{HANDLER}\nfn main() ! console, alloc {{\n{body}}}\n"
-    );
-    let lowered = lower(source.as_bytes()).unwrap_or_else(|e| panic!("{e:?} for {source}"));
-    let outcome = scalar::run(&lowered);
-    assert_eq!(outcome.status, 0, "for {source}");
-    let printed = String::from_utf8(outcome.stdout).unwrap();
-    let lines: Vec<String> = printed.lines().map(str::to_string).collect();
-    assert_eq!(lines.len(), blocks.len(), "for {source}");
-    lines
-}
-
-fn text_writes_a_text_as_the_reference_escapes_it_whatever_the_handler_is() {
+fn text_writes_a_text_as_the_reference_escapes_it() {
     generate::check(
         8303,
         6,
         |g| (0..8).map(|_| any_text(g)).collect::<Vec<_>>(),
         |texts| {
-            let blocks: Vec<Vec<String>> = texts
-                .iter()
-                .map(|t| {
-                    vec![
-                        "start(\"t\")".to_string(),
-                        format!("text({})", literal(t)),
-                        "end(\"t\")".to_string(),
-                    ]
-                })
-                .collect();
-            let expected: Vec<String> =
-                texts.iter().map(|t| format!("<t>{}</t>", reference_escape(t))).collect();
-            assert_eq!(written(&blocks), expected);
+            let calls: Vec<String> = texts.iter().map(|t| format!("text({})", literal(t))).collect();
+            let expected: Vec<String> = texts.iter().map(|t| reference_escape(t)).collect();
+            assert_eq!(shown("", &calls), expected);
         },
     );
 }
@@ -287,9 +205,8 @@ fn what_text_writes_holds_no_byte_of_markup_that_the_text_did_not_have_as_an_ent
         6,
         |g| (0..8).map(|_| any_text(g)).collect::<Vec<_>>(),
         |texts| {
-            let blocks: Vec<Vec<String>> =
-                texts.iter().map(|t| vec![format!("text({})", literal(t))]).collect();
-            for (text, line) in texts.iter().zip(written(&blocks)) {
+            let calls: Vec<String> = texts.iter().map(|t| format!("text({})", literal(t))).collect();
+            for (text, line) in texts.iter().zip(shown("", &calls)) {
                 assert!(!line.contains(['<', '>', '"', '\'']), "{line:?} holds a byte of markup");
                 assert_eq!(reference_unescape(&line).as_deref(), Some(text.as_str()));
             }
@@ -297,21 +214,20 @@ fn what_text_writes_holds_no_byte_of_markup_that_the_text_did_not_have_as_an_ent
     );
 }
 
-/// The elements and the effect that the programs below use.
+/// The elements and the names that the programs below use.
 const IMPORTS: &str = "use std.console (console, print)
-use std.html (a, article, attribute, b, body, br, emit, end, h1, h2, head, html, include, input, li, markup, p, span, start, text, title, ul, void)
+use std.html (Html, a, article, b, body, br, h1, h2, head, html, input, insert, li, markup, p, render, span, text, title, ul)
 ";
 
 /// The lines a program prints that has the functions `functions` and, for each
-/// of `calls`, gives `HANDLER` the call to write. When a program can read an
-/// `Html`, this is the one function that changes: a call is `render() { call }`
-/// and its page is read.
+/// of `calls`, renders the call as a page and prints it, as a page is read
+/// through `Fmt`.
 fn shown(functions: &str, calls: &[String]) -> Vec<String> {
     let mut body = String::new();
-    for call in calls {
-        body += &format!("  show() {{\n    {call}\n  }}\n");
+    for (i, call) in calls.iter().enumerate() {
+        body += &format!("  page{i} = render() {{\n    {call}\n  }}\n  print(\"{{page{i}}}\")\n");
     }
-    let source = format!("{IMPORTS}\n{HANDLER}\n{functions}\nfn main() ! console, alloc {{\n{body}}}\n");
+    let source = format!("{IMPORTS}\n{functions}\nfn main() ! console, alloc {{\n{body}}}\n");
     let lowered = lower(source.as_bytes()).unwrap_or_else(|e| panic!("{e:?} for {source}"));
     let outcome = scalar::run(&lowered);
     assert_eq!(outcome.status, 0, "for {source}");
@@ -392,6 +308,19 @@ fn about() ! markup, alloc {
     p(\"Smith is a programming language.\")
   }
 }
+
+fn frame(inside: Html) ! markup, alloc {
+  span(class: \"frame\") {
+    insert(inside)
+  }
+}
+
+fn framed() ! markup, alloc {
+  inside = render() {
+    about()
+  }
+  frame(inside)
+}
 ";
 
 fn the_examples_of_the_page_give_the_pages_the_page_says() {
@@ -401,6 +330,7 @@ fn the_examples_of_the_page_give_the_pages_the_page_says() {
         "links()",
         "notes([Note(title: \"a\", body: \"x\", pinned: true), Note(title: \"b\", body: \"y\", pinned: false)])",
         "about()",
+        "framed()",
     ]
     .map(String::from)
     .to_vec();
@@ -412,6 +342,7 @@ fn the_examples_of_the_page_give_the_pages_the_page_says() {
             "<a href=\"/notes/7\" class=\"button\">Open</a><input name=\"title\" placeholder=\"Title\"><br>",
             "<ul><li><article class=\"card\"><h2>a</h2><p>x</p><span class=\"badge\">Pinned</span></article></li><li><article class=\"card\"><h2>b</h2><p>y</p></article></li></ul>",
             "<html><head><title>About</title></head><body><h1>About</h1><p>Smith is a programming language.</p></body></html>",
+            "<span class=\"frame\"><html><head><title>About</title></head><body><h1>About</h1><p>Smith is a programming language.</p></body></html></span>",
         ]
     );
 }
