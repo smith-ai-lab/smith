@@ -2,7 +2,9 @@
 type: specification
 title: What is trusted
 description: The rule that Smith trusts nothing but a small kernel that checks proofs step by step, the four rules that keep a proof from being a lie, and the list of what is still taken on trust.
-status: planned
+status: partial
+built:
+  - "the kernel, in `bootstrap/src/kernel.rs`, which works a core term out one step at a time with no compiled code and depends on the core term alone: numbers, the comparisons, `+`, `-`, `*`, structs, tuples, lists, enums, `match`, bindings, calls of functions of the file, and lambdas; a run is given a number of steps and fails naming it when it takes more; and a `bool` carries the comparison that decided it, with where it is written and the numbers it compared; it is not yet asked to prove anything, and does not work out a loop, an index, or text operations"
 ---
 
 # What is trusted

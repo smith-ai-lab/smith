@@ -168,10 +168,10 @@ fn outcome(source: &str) -> Outcome {
 }
 
 #[derive(Debug)]
-struct Program {
-    source: String,
-    a: i128,
-    b: i128,
+pub struct Program {
+    pub source: String,
+    pub a: i128,
+    pub b: i128,
 }
 
 fn number(g: &mut Gen) -> i128 {
@@ -211,7 +211,7 @@ fn bool_expr(g: &mut Gen, depth: usize, binds: &[&str]) -> String {
     }
 }
 
-fn program(g: &mut Gen) -> Program {
+pub fn program(g: &mut Gen) -> Program {
     let (a, b) = (number(g), number(g));
     let (bind, binds): (String, &[&str]) = if g.one_in(2) {
         (format!("  t = {}\n", int_expr(g, 1, &[])), &["t"])

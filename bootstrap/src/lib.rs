@@ -9,6 +9,7 @@ mod divide;
 mod function_args;
 mod hash;
 mod item_notes;
+pub mod kernel;
 mod lexer;
 mod parser;
 pub mod scalar;
