@@ -52,6 +52,8 @@ use std::time::{Duration, Instant};
 pub type Test = (&'static str, fn());
 
 thread_local! {
+    /// The name of the test this thread runs.
+    static CURRENT: std::cell::Cell<&'static str> = const { std::cell::Cell::new("") };
     /// What the test this thread runs said when it panicked.
     static MESSAGE: RefCell<Option<String>> = const { RefCell::new(None) };
 }
@@ -231,9 +233,19 @@ fn main() -> ExitCode {
     }
 }
 
+/// Whether the test this thread runs is one of the group that depends on the
+/// machine, which is the group a fingerprint is made of.
+pub fn in_a_machine_test() -> bool {
+    static NAMES: std::sync::OnceLock<std::collections::HashSet<&'static str>> =
+        std::sync::OnceLock::new();
+    let names = NAMES.get_or_init(|| machine_tests().iter().map(|(n, _)| *n).collect());
+    names.contains(CURRENT.get())
+}
+
 /// Runs the test on this thread and gives whether it passed and what it computed for,
 /// keeping what a failing test said.
 fn measure(name: &'static str, test: fn(), failures: &Mutex<Failed>) -> (bool, Duration) {
+    CURRENT.set(name);
     let begin = clock::thread_time();
     MESSAGE.with(|m| *m.borrow_mut() = None);
     let passed = panic::catch_unwind(AssertUnwindSafe(test)).is_ok();

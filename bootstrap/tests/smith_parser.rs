@@ -145,8 +145,8 @@ fn said_of_each(texts: &[String]) -> Vec<Vec<String>> {
     let mut each: Vec<Vec<Vec<String>>> = Vec::new();
     for target in targets::runnable() {
         let bytes = targets::build(source.as_bytes(), target).unwrap_or_else(|e| panic!("{e:?}"));
+        targets::record(target, &[&bytes]);
         if targets::fingerprinting() {
-            targets::record(target, &[&bytes]);
             continue;
         }
         let said = targets::run(&bytes);

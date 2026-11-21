@@ -57,4 +57,4 @@ fn fixed[T](body: fn() -> T ! entropy) -> T ! alloc {
 }
 ```
 
-A secret, such as a token, is taken from `entropy` itself and not from a `Key`, which repeats when it starts from the same seed.
+A secret, such as a token, is taken from `entropy` itself and not from a [`Key`](random.md#where-a-key-comes-from), which repeats when it starts from the same seed.

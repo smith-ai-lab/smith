@@ -61,8 +61,10 @@ fn every_executable_for_this_machine_that_asks_for_entropy_prints_64_hex_digits_
         .filter(|t| t.is_machine_code())
     {
         let bytes = targets::build(DRAW.as_bytes(), target).unwrap_or_else(|e| panic!("{e:?}"));
+        let large = targets::build(LARGE.as_bytes(), target).unwrap_or_else(|e| panic!("{e:?}"));
+        targets::record(target, &[&bytes]);
+        targets::record(target, &[&large]);
         if targets::fingerprinting() {
-            targets::record(target, &[&bytes]);
             continue;
         }
         let lines: Vec<String> = (0..2)
@@ -77,6 +79,17 @@ fn every_executable_for_this_machine_that_asks_for_entropy_prints_64_hex_digits_
             })
             .collect();
         assert_ne!(lines[0], lines[1], "{}", target.name());
+        // A list of more than one piece is filled to its last byte.
+        let ran = targets::run(&large);
+        large_is_filled(
+            aarch64::Ran {
+                stdout: ran.stdout,
+                stderr: Vec::new(),
+                status: ran.status,
+                steps: 0,
+            },
+            target.name(),
+        );
     }
 }
 
@@ -97,16 +110,9 @@ fn ran(target: Target, entropy: Entropy) -> Option<aarch64::Ran> {
     if aarch64::is_executable(&bytes) {
         return Some(aarch64::run_with(&bytes, entropy));
     }
-    if Target::host() != Some(target) {
-        return None;
-    }
-    let ran = targets::run(&bytes);
-    Some(aarch64::Ran {
-        stdout: ran.stdout,
-        stderr: Vec::new(),
-        status: ran.status,
-        steps: 0,
-    })
+    // An executable for this machine is run by the test of the machine, which
+    // is the one a fingerprint holds.
+    None
 }
 
 /// Whether `node` is installed. A test that needs it says so and is skipped
@@ -262,33 +268,28 @@ filled = fill(bytes)\n  var all: u64 = 0\n  var last: u64 = 0\n  \
 loop i in 0..filled.size {\n    if filled[i] != 0 {\n      all = wrapping_add(all, 1)\n      if i >= 69000 { last = wrapping_add(last, 1) }\n    }\n  }\n  \
 print(\"{all} {last}\")\n}\n";
 
-/// Every byte of a list larger than a piece is filled, to the last.
+/// The counts the program prints are those of a list filled whole: about 255
+/// in 256 of the bytes are not 0, and so are those past the first piece.
+fn large_is_filled(ran: aarch64::Ran, name: &str) {
+    assert_eq!(ran.status, 0, "{name}");
+    let text = String::from_utf8(ran.stdout).unwrap();
+    let counts: Vec<u32> = text.split_whitespace().map(|n| n.parse().unwrap()).collect();
+    assert!(counts[0] > 69_000 && counts[0] <= 70_000, "{name}: {text}");
+    assert!(counts[1] > 900 && counts[1] <= 1_000, "{name}: {text}");
+}
+
+/// Every byte of a list larger than a piece is filled, to the last, in the
+/// module a host answers. The executables for a machine are run by the test of
+/// the machine.
 fn a_list_of_more_than_one_piece_is_filled_to_its_last_byte() {
-    for target in Target::ALL.iter().copied() {
-        let ran = if target.is_machine_code() {
-            let bytes = compile(LARGE.as_bytes(), target).unwrap();
-            if aarch64::is_executable(&bytes) || Target::host() != Some(target) {
-                continue;
-            }
-            let ran = targets::run(&bytes);
-            aarch64::Ran {
-                stdout: ran.stdout,
-                stderr: Vec::new(),
-                status: ran.status,
-                steps: 0,
-            }
-        } else {
-            match run_module(target, LARGE, None) {
-                Some(ran) => ran,
-                None => continue,
-            }
-        };
-        assert_eq!(ran.status, 0, "{}", target.name());
-        let text = String::from_utf8(ran.stdout).unwrap();
-        let counts: Vec<u32> = text.split_whitespace().map(|n| n.parse().unwrap()).collect();
-        // About 255 in 256 of the bytes are not 0.
-        assert!(counts[0] > 69_000 && counts[0] <= 70_000, "{}: {text}", target.name());
-        assert!(counts[1] > 900 && counts[1] <= 1_000, "{}: {text}", target.name());
+    for target in Target::ALL
+        .iter()
+        .copied()
+        .filter(|t| !t.is_machine_code())
+    {
+        if let Some(ran) = run_module(target, LARGE, None) {
+            large_is_filled(ran, target.name());
+        }
     }
 }
 

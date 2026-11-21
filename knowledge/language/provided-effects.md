@@ -29,7 +29,7 @@ The standard library declares six effects. Each has operations, and a program ca
 | [`console`](../library/console.md) | Standard input, output, and error |
 | [`fs`](../library/fs.md) | Files |
 | `net` | The network |
-| `time` | The clock |
+| [`time`](../library/time.md) | The clock, and waiting for a time |
 | [`entropy`](../library/entropy.md) | Bytes nobody can predict |
 | `ui` | Windows and events |
 
@@ -68,13 +68,13 @@ This gives "`spin` needs the `diverge` effect, which `main` does not declare", w
 
 ## What a signature says about time
 
-A function that lists no effect ends, asks the system for no memory, and waits for nothing, because not ending is `diverge`, memory of a size known only at run time is `alloc`, and every wait for the world outside is an effect of the library. So the signature alone says that a function is fit to be called where time is short, as the function that fills the next buffer of sound is.
+A function that lists no effect ends, asks the system for no memory, and waits for nothing, because not ending is `diverge`, memory of a size known only at run time is `alloc`, and every wait for the world outside, a file, the network, a lock, or a time, is an effect of the library. So the signature alone says that a function is fit to be called where time is short, as the function that fills the next buffer of sound is.
 
 ```
 fn fill(out: take Buffer, state: take Synth) -> (Buffer, Synth)
 ```
 
-`fill` cannot loop without end, cannot ask for memory, and cannot wait for a file, the network, or a lock, and neither can anything it calls, since a caller lists the effects of what it calls. Nothing is written to say so, and nothing is checked beyond what is checked of every function.
+`fill` cannot loop without end, cannot ask for memory, and cannot wait for a file, the network, a lock, or a time, and neither can anything it calls, since a caller lists the effects of what it calls. Nothing is written to say so, and nothing is checked beyond what is checked of every function.
 
 This says that the time is bounded and not what the bound is. A bound in steps, stated in a contract and proven, is not in the language, and a bound in seconds depends on the processor and is outside it.
 

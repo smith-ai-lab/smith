@@ -20,6 +20,35 @@ fn first_page(a: str, b: str) -> Result[List[Byte], NetError] ! net, alloc {
 
 `first_page` joins `ta` only. When the block ends, `tb` is cancelled if it has not finished.
 
+## A deadline
+
+Giving up on work that takes too long is ordinary code: spawn the work and a wait, take the first to finish, and let the end of the block cancel the other. This fetches a page, or says that 5 seconds passed.
+
+```
+use std.fetch (FetchError, Request, Response, fetch, send)
+use std.time (sleep, time)
+
+enum Outcome {
+  page: Result[Response[65536], FetchError]
+  late
+}
+
+fn fetch_within_5_seconds(url: str) -> Result[Response[65536], FetchError] ! fetch, time, alloc {
+  with tasks()
+  work = spawn { Outcome.page(send(Request(url: url), 65536)) }
+  wait = spawn {
+    sleep(5000)
+    Outcome.late
+  }
+  match first(work, [wait]) {
+    .page(result) { result }
+    .late { .err(.failed("the time ran out after 5 seconds")) }
+  }
+}
+```
+
+If the page comes first, the sleeping child is cancelled when the block ends, and it ends at once, as a waiting task does. If the 5 seconds come first, the fetch is cancelled the same way, and what `send` was waiting for is not waited for. A call of an operation takes no time to give up of its own: the deadline is the second child.
+
 ## When it takes effect
 
 A cancelled task that is waiting, as for a read, ends at once. One that is running ends the next time it would suspend, so code that never suspends is never interrupted.
