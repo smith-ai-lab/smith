@@ -216,10 +216,14 @@ impl Parser<'_> {
                 self.bump();
                 self.bump();
             }
-            self.name_bound_ok = self.bound_names_allowed && self.tok() != &Tok::Keyword("fn");
-            let ty = self.ty();
-            self.name_bound_ok = false;
-            result = Some(ty?);
+            if let Some(statement) = self.statement_type() {
+                result = Some(statement);
+            } else {
+                self.name_bound_ok = self.bound_names_allowed && self.tok() != &Tok::Keyword("fn");
+                let ty = self.ty();
+                self.name_bound_ok = false;
+                result = Some(ty?);
+            }
         }
         let effects = self.effects()?;
         if self.tok() == &Tok::Newline
@@ -231,6 +235,58 @@ impl Parser<'_> {
             self.bump();
         }
         Ok((name, pos, generics, params, result, result_name, effects))
+    }
+
+    /// Reads a type that is a statement: a comparison of values, or comparisons
+    /// joined with `and`, `or`, and `not`, as `a < 10` is. Gives none, and
+    /// leaves what follows as it was, when what follows is not one, so that it
+    /// is read as the type it is.
+    pub(super) fn statement_type(&mut self) -> Option<Type> {
+        if !self.comparison_ahead() {
+            return None;
+        }
+        let (at, errors, unbuilt) = (self.at, self.errors.len(), self.unbuilt.len());
+        let pos = self.pos();
+        // The `{` after it opens the body, so no block follows a name in it.
+        let no_lambda = std::mem::replace(&mut self.no_lambda, true);
+        let read = self.expr();
+        self.no_lambda = no_lambda;
+        let statement = match read {
+            Ok(e) if is_statement(&e) => Some(e),
+            _ => None,
+        };
+        let Some(statement) = statement else {
+            self.at = at;
+            self.errors.truncate(errors);
+            self.unbuilt.truncate(unbuilt);
+            return None;
+        };
+        Some(Type {
+            name: STATEMENT.to_string(),
+            pos,
+            args: Vec::new(),
+            function: false,
+            range: None,
+            statement: Some(Box::new(statement)),
+        })
+    }
+
+    /// Whether a comparison, or `and`, `or`, or `not`, is written before the
+    /// `{` or the line break that ends what follows, which only a statement
+    /// has: no type is written with one.
+    fn comparison_ahead(&self) -> bool {
+        for token in &self.tokens[self.at..] {
+            match &token.tok {
+                Tok::Punct("==" | "!=" | "<" | "<=" | ">" | ">=")
+                | Tok::Keyword("and" | "or" | "not") => return true,
+                Tok::Punct("{" | "!")
+                | Tok::Keyword("requires" | "ensures")
+                | Tok::Newline
+                | Tok::Eof => return false,
+                _ => {}
+            }
+        }
+        false
     }
 
     /// Parses `name: type`, and `= default` after it if it has one.
@@ -306,6 +362,7 @@ impl Parser<'_> {
                 args: Vec::new(),
                 function: false,
                 range: None,
+                statement: None,
             });
         }
         let bang = self.pos();
@@ -321,6 +378,7 @@ impl Parser<'_> {
             args,
             function: true,
             range: None,
+            statement: None,
         };
         Ok((function, takes, effects))
     }
@@ -509,5 +567,20 @@ impl Parser<'_> {
             value,
             after: false,
         })
+    }
+}
+
+/// Whether an expression is a statement: a comparison of values, or one of
+/// `and`, `or`, and `not`.
+fn is_statement(e: &Expr) -> bool {
+    match e {
+        Expr::Match(m) => match m.form {
+            Form::Not | Form::And | Form::Or => true,
+            Form::Match => matches!(&m.of, Expr::Call(c)
+                if c.qualifier.as_ref().is_some_and(|(q, _)| q == "Ord") && c.callee == "compare"),
+            Form::If { .. } | Form::Try => false,
+        },
+        Expr::Call(c) => c.qualifier.as_ref().is_some_and(|(q, _)| q == "Eq") && c.callee == "eq",
+        _ => false,
     }
 }

@@ -59,7 +59,8 @@ item       = use | [ "pub" ] ( fn_def | struct_def | enum_def | trait_def | effe
 fn_def     = fn_sig block ;
 fn_sig     = "fn" IDENT [ generics ] "(" [ params ] ")" [ "->" result ]
              [ effects ] { contract } ;
-result     = [ IDENT ":" ] type ;
+result     = [ IDENT ":" ] type | statement ;
+statement  = expr ;   (* a comparison, or comparisons joined with `and`, `or`, `not` *)
 generics   = "[" generic { "," generic } "]" ;
 generic    = [ "out" ] IDENT [ ":" type ] [ "=" type ] ;
 params     = param { "," param } [ "," ] ;
