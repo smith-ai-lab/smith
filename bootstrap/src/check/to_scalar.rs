@@ -1145,7 +1145,20 @@ impl<'a> Lowering<'a> {
                 Callee::Run(instance, gives) => {
                     let inner = typed.env_of(&Callee::Run(instance.clone(), gives.clone()));
                     let params = defs.params(instance.template);
-                    let prepared = self.copy_for(out, &instance);
+                    // `Function.call` of a function that carries an effect a
+                    // handler answers calls the function here, under the
+                    // handlers in force, and not through a function of its
+                    // own that has none.
+                    let prepared = match self.handled_function_call(&instance) {
+                        Some(f) => self.copy_for(
+                            out,
+                            &Instance {
+                                template: Template::Free(f),
+                                args: Vec::new(),
+                            },
+                        ),
+                        None => self.copy_for(out, &instance),
+                    };
                     // Arguments are worked out in the order they are
                     // written, and then passed in the order of the
                     // parameters.

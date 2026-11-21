@@ -691,13 +691,33 @@ impl<'a> Lowering<'a> {
     /// those handlers use; any other is one copy.
     pub(super) fn copy_for(&mut self, out: &mut Out<'a>, instance: &Instance) -> Prepared {
         let defs = self.typed.defs;
-        let handled: Vec<usize> = match instance.template {
-            Template::Free(f) if !defs.is_operation(f) => (defs.signatures[f].effects.iter())
-                .filter(|e| defs.handled(e))
-                .filter_map(|e| defs.effect_named(e))
-                .collect(),
+        // The effects a function carries, and those of each function whose name
+        // the copy is made for, since it calls them through `Function`.
+        let mut named: Vec<usize> = Vec::new();
+        fn names(t: &Ty, found: &mut Vec<usize>) {
+            if let Ty::Named(g) = t {
+                found.push(*g);
+            }
+            t.args().iter().for_each(|a| names(a, found));
+        }
+        instance.args.iter().for_each(|t| names(t, &mut named));
+        let mut effects: Vec<&String> = match instance.template {
+            Template::Free(f) if !defs.is_operation(f) => {
+                defs.signatures[f].effects.iter().collect()
+            }
+            Template::Free(_) => return self.copy_without_handlers(instance),
             _ => Vec::new(),
         };
+        for g in &named {
+            effects.extend(defs.signatures[*g].effects.iter());
+        }
+        let mut handled: Vec<usize> = effects
+            .into_iter()
+            .filter(|e| defs.handled(e))
+            .filter_map(|e| defs.effect_named(e))
+            .collect();
+        handled.sort_unstable();
+        handled.dedup();
         if handled.is_empty() {
             return Prepared {
                 function: self.place(Body::Copy(instance.clone())),
@@ -754,6 +774,33 @@ impl<'a> Lowering<'a> {
             function,
             extra,
             slots,
+        }
+    }
+
+    /// The function that `Function.call` calls, when the instance is that call
+    /// and the function carries an effect that a handler answers.
+    pub(super) fn handled_function_call(&self, instance: &Instance) -> Option<usize> {
+        let defs = self.typed.defs;
+        let Template::Given(k, 2) = instance.template else {
+            return None;
+        };
+        if k != defs.function {
+            return None;
+        }
+        let Some(Ty::Named(f)) = instance.args.first() else {
+            return None;
+        };
+        (defs.signatures[*f].effects.iter())
+            .any(|e| defs.handled(e))
+            .then_some(*f)
+    }
+
+    /// One copy of the function, for no handler.
+    fn copy_without_handlers(&mut self, instance: &Instance) -> Prepared {
+        Prepared {
+            function: self.place(Body::Copy(instance.clone())),
+            extra: Vec::new(),
+            slots: Vec::new(),
         }
     }
 
