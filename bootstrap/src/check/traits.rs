@@ -80,6 +80,7 @@ pub(super) fn expr_type(e: &Expr) -> Option<Type> {
             args: Vec::new(),
             function: false,
             range: None,
+            statement: None,
         }),
         Expr::Index {
             of,
@@ -101,6 +102,7 @@ pub(super) fn expr_type(e: &Expr) -> Option<Type> {
                 args: given.into_iter().map(expr_type).collect::<Option<_>>()?,
                 function: false,
                 range: None,
+                statement: None,
             })
         }
         Expr::Tuple { pos, items } => Some(Type {
@@ -109,6 +111,7 @@ pub(super) fn expr_type(e: &Expr) -> Option<Type> {
             args: items.iter().map(expr_type).collect::<Option<_>>()?,
             function: false,
             range: None,
+            statement: None,
         }),
         _ => None,
     }
