@@ -188,6 +188,13 @@ fn around(h: &Hidden, takes: bool) -> (String, String) {
 }
 ",
         ),
+        "Key" => (
+            "Key, seeded",
+            "fn main() {
+  f(seeded(1))
+}
+",
+        ),
         other => panic!("the test makes no `{other}`, so it needs a way to"),
     };
     let main = if takes {
