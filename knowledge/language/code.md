@@ -2,7 +2,9 @@
 type: specification
 title: Functions over code
 description: A function that receives the checked code of an argument when the program is built and returns code that takes the place of the call, which is how expect is a library function.
-status: planned
+status: partial
+built:
+  - "the core term as data, in `bootstrap/src/core.rs`: the nodes `lit`, `name`, `call`, `apply`, `lambda`, `bind`, `make`, `field`, and `choose`, each holding its type and its place in the source, with their parts and a one-line printing; the checker does not yet produce it, and `for` and `loop` are not nodes yet"
 ---
 
 # Functions over code
