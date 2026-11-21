@@ -68,8 +68,20 @@ pub const ONCE: &[Test] = &[
         || a_name_that_is_imported_and_not_used_is_a_warning_at_its_name_and_changes_nothing(5),
     ),
     (
-        "each_mistake_in_a_use_is_one_error_at_its_place",
-        each_mistake_in_a_use_is_one_error_at_its_place,
+        "each_mistake_in_a_use_is_one_error_at_its_place_part_1_of_4",
+        || each_mistake_in_a_use_is_one_error_at_its_place(0),
+    ),
+    (
+        "each_mistake_in_a_use_is_one_error_at_its_place_part_2_of_4",
+        || each_mistake_in_a_use_is_one_error_at_its_place(1),
+    ),
+    (
+        "each_mistake_in_a_use_is_one_error_at_its_place_part_3_of_4",
+        || each_mistake_in_a_use_is_one_error_at_its_place(2),
+    ),
+    (
+        "each_mistake_in_a_use_is_one_error_at_its_place_part_4_of_4",
+        || each_mistake_in_a_use_is_one_error_at_its_place(3),
     ),
     (
         "a_use_after_another_item_is_one_error_at_the_use",
@@ -540,8 +552,8 @@ fn uses(g: &mut Gen) -> Uses {
 
 /// Each mistake in a `use` is one error at the place the generator wrote
 /// it, the file with none is accepted, and no other error follows.
-fn each_mistake_in_a_use_is_one_error_at_its_place() {
-    generate::check(301, 200, uses, |file| match lower(file.source.as_bytes()) {
+fn each_mistake_in_a_use_is_one_error_at_its_place(part: u64) {
+    generate::check_part(301, 200, part, 4, uses, |file| match lower(file.source.as_bytes()) {
         Ok(_) => assert!(file.expected.is_empty(), "accepted"),
         Err(errors) => {
             let places: Vec<Pos> = errors.iter().map(|e| e.pos).collect();

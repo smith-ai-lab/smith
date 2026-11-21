@@ -13,16 +13,52 @@ pub const ONCE: &[Test] = &[
         the_examples_of_bits_md_give_what_the_page_says,
     ),
     (
-        "the_range_of_bit_and_is_the_least_to_the_greatest_result",
-        the_range_of_bit_and_is_the_least_to_the_greatest_result,
+        "the_range_of_bit_and_is_the_least_to_the_greatest_result_part_1_of_4",
+        || the_range_of_bit_and_is_the_least_to_the_greatest_result(0),
     ),
     (
-        "the_range_of_bit_or_is_the_least_to_the_greatest_result",
-        the_range_of_bit_or_is_the_least_to_the_greatest_result,
+        "the_range_of_bit_and_is_the_least_to_the_greatest_result_part_2_of_4",
+        || the_range_of_bit_and_is_the_least_to_the_greatest_result(1),
     ),
     (
-        "the_range_of_bit_xor_is_the_least_to_the_greatest_result",
-        the_range_of_bit_xor_is_the_least_to_the_greatest_result,
+        "the_range_of_bit_and_is_the_least_to_the_greatest_result_part_3_of_4",
+        || the_range_of_bit_and_is_the_least_to_the_greatest_result(2),
+    ),
+    (
+        "the_range_of_bit_and_is_the_least_to_the_greatest_result_part_4_of_4",
+        || the_range_of_bit_and_is_the_least_to_the_greatest_result(3),
+    ),
+    (
+        "the_range_of_bit_or_is_the_least_to_the_greatest_result_part_1_of_4",
+        || the_range_of_bit_or_is_the_least_to_the_greatest_result(0),
+    ),
+    (
+        "the_range_of_bit_or_is_the_least_to_the_greatest_result_part_2_of_4",
+        || the_range_of_bit_or_is_the_least_to_the_greatest_result(1),
+    ),
+    (
+        "the_range_of_bit_or_is_the_least_to_the_greatest_result_part_3_of_4",
+        || the_range_of_bit_or_is_the_least_to_the_greatest_result(2),
+    ),
+    (
+        "the_range_of_bit_or_is_the_least_to_the_greatest_result_part_4_of_4",
+        || the_range_of_bit_or_is_the_least_to_the_greatest_result(3),
+    ),
+    (
+        "the_range_of_bit_xor_is_the_least_to_the_greatest_result_part_1_of_4",
+        || the_range_of_bit_xor_is_the_least_to_the_greatest_result(0),
+    ),
+    (
+        "the_range_of_bit_xor_is_the_least_to_the_greatest_result_part_2_of_4",
+        || the_range_of_bit_xor_is_the_least_to_the_greatest_result(1),
+    ),
+    (
+        "the_range_of_bit_xor_is_the_least_to_the_greatest_result_part_3_of_4",
+        || the_range_of_bit_xor_is_the_least_to_the_greatest_result(2),
+    ),
+    (
+        "the_range_of_bit_xor_is_the_least_to_the_greatest_result_part_4_of_4",
+        || the_range_of_bit_xor_is_the_least_to_the_greatest_result(3),
     ),
     (
         "the_range_of_shift_left_is_the_least_to_the_greatest_result",
@@ -86,10 +122,21 @@ fn program(call: &str, first: (i128, i128), second: (i128, i128), gives: (i128, 
     )
 }
 
+/// How many parts the first ranges of a bit function are in, which the names
+/// of its tests say.
+const PARTS: usize = 4;
+
 /// The function gives its exact range, and not a range that is one less at
-/// either end.
-fn exact(function: &str, op: fn(i128, i128) -> i128, second: &dyn Fn(i128) -> Vec<(i128, i128)>) {
-    exact_of(ranges(), function, op, second);
+/// either end, for the first ranges that are `part` places from the start, a
+/// part at each of `PARTS` places, so that every first range is in one part.
+fn exact(
+    function: &str,
+    op: fn(i128, i128) -> i128,
+    second: &dyn Fn(i128) -> Vec<(i128, i128)>,
+    part: usize,
+) {
+    let firsts = ranges().into_iter().skip(part).step_by(PARTS).collect();
+    exact_of(firsts, function, op, second);
 }
 
 fn exact_of(
@@ -136,16 +183,16 @@ fn every_second(_: i128) -> Vec<(i128, i128)> {
     ranges().into_iter().filter(|(a, b)| (a + b) % 2 == 0).collect()
 }
 
-fn the_range_of_bit_and_is_the_least_to_the_greatest_result() {
-    exact("bit_and", |a, b| a & b, &every_second);
+fn the_range_of_bit_and_is_the_least_to_the_greatest_result(part: usize) {
+    exact("bit_and", |a, b| a & b, &every_second, part);
 }
 
-fn the_range_of_bit_or_is_the_least_to_the_greatest_result() {
-    exact("bit_or", |a, b| a | b, &every_second);
+fn the_range_of_bit_or_is_the_least_to_the_greatest_result(part: usize) {
+    exact("bit_or", |a, b| a | b, &every_second, part);
 }
 
-fn the_range_of_bit_xor_is_the_least_to_the_greatest_result() {
-    exact("bit_xor", |a, b| a ^ b, &every_second);
+fn the_range_of_bit_xor_is_the_least_to_the_greatest_result(part: usize) {
+    exact("bit_xor", |a, b| a ^ b, &every_second, part);
 }
 
 /// A shift by an amount from a range below 6 is `a` times two to the amount
