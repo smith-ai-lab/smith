@@ -9,9 +9,15 @@ use crate::core::{Callee, Function, Kind, Operator, Pattern, Proof, Step, Term, 
 
 /// Whether the proof proves its statement, or what is wrong with it, in words
 /// that say the statement owed and what the step gave.
-pub fn check_proof(functions: &[Function], proof: &Proof, limit: u64) -> Result<(), String> {
+pub fn check_proof(
+    functions: &[Function],
+    proofs: &[Proof],
+    proof: &Proof,
+    limit: u64,
+) -> Result<(), String> {
     let mut check = Check {
         functions,
+        proofs,
         proof,
         limit,
         facts: Vec::new(),
@@ -22,6 +28,8 @@ pub fn check_proof(functions: &[Function], proof: &Proof, limit: u64) -> Result<
 
 struct Check<'a> {
     functions: &'a [Function],
+    /// Every proof function of the file, which a proof may call.
+    proofs: &'a [Proof],
     proof: &'a Proof,
     limit: u64,
     /// What each name in the proof is a proof of.
@@ -42,7 +50,13 @@ impl Check<'_> {
                 args,
             } => self.arith(args, owed),
             Kind::Bind { name, value, rest } => {
-                let fact = self.unfold(value)?;
+                let fact = match &value.kind {
+                    Kind::Call {
+                        callee: Callee::Function(place),
+                        args,
+                    } => self.called(*place, args)?,
+                    _ => self.unfold(value)?,
+                };
                 self.facts.push((name.clone(), fact));
                 let result = self.steps(rest, owed);
                 self.facts.pop();
@@ -65,6 +79,23 @@ impl Check<'_> {
                 self.proof.written
             )),
         }
+    }
+
+    /// A call of a proof function is a proof of its statement, with the
+    /// arguments put for its parameters.
+    fn called(&self, place: usize, args: &[Term]) -> Result<Term, String> {
+        let proof = self
+            .proofs
+            .iter()
+            .find(|p| p.place == place)
+            .ok_or("a call of a proof function the kernel does not read")?;
+        let map: Vec<(&str, &Term)> = proof
+            .params
+            .iter()
+            .map(|(n, _)| n.as_str())
+            .zip(args)
+            .collect();
+        Ok(substitute(&proof.statement, &map))
     }
 
     /// `unfold(f(x))` gives that `f(x)` equals the body of `f` with `x` put in,

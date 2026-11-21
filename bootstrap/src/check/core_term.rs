@@ -876,6 +876,38 @@ impl<'a> Typed<'a> {
                     *pos,
                 ))
             }
+            [
+                Stmt::Define {
+                    name,
+                    pos,
+                    value: Expr::Call(c),
+                    var: false,
+                    ..
+                },
+                rest @ ..,
+            ] if self.proof_function_called(c).is_some() => {
+                let place = self.proof_function_called(c)?;
+                let args: Option<Vec<Term>> =
+                    c.args.iter().map(|a| self.core_expr(&a.value)).collect();
+                let value = Term::new(
+                    Kind::Call {
+                        callee: Callee::Function(place),
+                        args: args?,
+                    },
+                    core::Type::Nothing,
+                    c.pos,
+                );
+                let rest = self.core_proof(rest)?;
+                Some(Term::new(
+                    Kind::Bind {
+                        name: name.clone(),
+                        value: Box::new(value),
+                        rest: Box::new(rest),
+                    },
+                    core::Type::Nothing,
+                    *pos,
+                ))
+            }
             [Stmt::Expr(Expr::Match(m))] if matches!(m.form, Form::If { otherwise: true }) => {
                 let of = self.core_expr(&m.of)?;
                 let [then, otherwise] = m.arms.as_slice() else {
@@ -901,6 +933,15 @@ impl<'a> Typed<'a> {
         }
     }
 
+    /// The place of the proof function a call is of, if it is one.
+    fn proof_function_called(&self, c: &Call) -> Option<usize> {
+        if c.qualifier.is_some() {
+            return None;
+        }
+        let f = self.defs.function(c.name_pos, &c.callee)?;
+        is_proof(&self.defs.file.functions[f]).then_some(f)
+    }
+
     /// Checks every proof function of the file with the kernel, and gives the
     /// errors of those that do not prove their statement.
     pub(super) fn prove_proofs(&self) -> Vec<Error> {
@@ -917,6 +958,7 @@ impl<'a> Typed<'a> {
         }
         let all = self.core_terms();
         let mut errors = Vec::new();
+        let mut built: Vec<core::Proof> = Vec::new();
         for (place, f) in proofs {
             let Some(statement_expr) = f.result.as_ref().and_then(|t| t.statement.as_deref())
             else {
@@ -946,16 +988,19 @@ impl<'a> Typed<'a> {
                 Stmt::Expr(e) => e.pos(),
                 _ => f.pos,
             });
-            let proof = core::Proof {
+            built.push(core::Proof {
                 name: f.name.clone(),
+                place,
                 pos: at,
                 params,
                 statement,
                 written: proof::written_contract(&|_| None, statement_expr),
                 body,
-            };
-            if let Err(message) = crate::kernel::check_proof(&all, &proof, STEPS) {
-                errors.push(Error::new(at, message));
+            });
+        }
+        for proof in &built {
+            if let Err(message) = crate::kernel::check_proof(&all, &built, proof, STEPS) {
+                errors.push(Error::new(proof.pos, message));
             }
         }
         errors
