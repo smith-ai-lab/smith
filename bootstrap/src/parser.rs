@@ -2773,6 +2773,11 @@ fn writes_float(token: &Token) -> bool {
                 || text.starts_with("0E")
         }
         Tok::Ident(name) => name == "f32" || name == "f64",
+        // The expressions in a string are tokens too.
+        Tok::Interp(pieces) => pieces.iter().any(|piece| match piece {
+            Piece::Expr(tokens) => tokens.iter().any(writes_float),
+            Piece::Text(_) => false,
+        }),
         _ => false,
     }
 }
