@@ -1220,7 +1220,7 @@ fn left_case(r: take In) -> In {
 // The places of the tags of the cases that are open and written with one are
 // `tags`. A case written with a tag is `pending` from its name until what it
 // holds is begun.
-struct In {
+pub struct In {
   bytes: Slice[Byte]
   at: Nat
   mark: Nat
@@ -1838,6 +1838,23 @@ fn again(b: Slice[Byte], from: Nat, name: str) -> Option[Bad] ! alloc {
     }
   }
   Option.none
+}
+
+// The reader of the text, from its start, for a type that reads a part of
+// what it is given as JSON.
+pub fn json_in(text: str) -> In {
+  In(bytes: text.bytes, at: 0, mark: 0, json: Json(cases: .key, names: .written), forms: 0, deep: [], cases: 0, pending: false, tags: [])
+}
+
+// Whether the reader is at the end of its text, as one value is read from
+// it, with nothing but space after.
+pub fn json_ended(r: In) -> Result[(), ReadError] ! alloc {
+  a = skip_space(r.bytes, r.at)
+  if a < r.bytes.size {
+    Result.err(read_error(r.bytes, malformed(a)))
+  } else {
+    Result.ok(())
+  }
 }
 
 pub trait FromJson[T] {
