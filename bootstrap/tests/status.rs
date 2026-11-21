@@ -322,8 +322,8 @@ fn main(args: List[str]) -> Result[(), str] ! console, alloc {
 fn executables_end_as(source: &str, expected: &(Outcome, Vec<u8>)) {
     for target in runnable() {
         let bytes = build(source.as_bytes(), target).unwrap_or_else(|e| panic!("{e:?}"));
+        record(target, &[&bytes, &expected.0.stdout, &expected.1]);
         if fingerprinting() {
-            record(target, &[&bytes, &expected.0.stdout, &expected.1]);
             continue;
         }
         let output = output_of(&bytes, &[]);
