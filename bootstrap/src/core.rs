@@ -9,7 +9,9 @@
 use crate::diag::Pos;
 
 /// What a term gives. Every type here is settled: none is a type parameter or
-/// a number whose range is not yet decided.
+/// a number whose range is not yet decided. `bool` is the prelude's enum with
+/// the cases `false` and `true`, so it is an `Enum`; a float has no type here
+/// until the checker produces one.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum Type {
     Text,
@@ -44,7 +46,6 @@ impl Type {
 #[derive(Clone, Debug, PartialEq)]
 pub enum Lit {
     Int(i128),
-    Float(f64),
     Text(Vec<u8>),
 }
 
@@ -69,6 +70,49 @@ pub enum Callee {
     Function(usize),
     /// A function of a trait's implementation, by the trait and the function.
     Trait(usize, usize),
+    /// An operation of whole numbers, which no function of the file is.
+    Operator(Operator),
+}
+
+/// The operations of whole numbers. A sum, a difference, and a product give
+/// the exact range of the result; a comparison gives a `bool`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Operator {
+    Add,
+    Sub,
+    Mul,
+    Less,
+    LessEqual,
+    Greater,
+    GreaterEqual,
+    Equal,
+}
+
+impl Operator {
+    /// How it is written.
+    pub fn symbol(self) -> &'static str {
+        match self {
+            Operator::Add => "+",
+            Operator::Sub => "-",
+            Operator::Mul => "*",
+            Operator::Less => "<",
+            Operator::LessEqual => "<=",
+            Operator::Greater => ">",
+            Operator::GreaterEqual => ">=",
+            Operator::Equal => "==",
+        }
+    }
+}
+
+/// A function of the file, checked: its parameters with their types, and its
+/// body as a term.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Function {
+    pub name: String,
+    /// The function's place among the file's functions, which a `call` names.
+    pub place: usize,
+    pub params: Vec<(String, Type)>,
+    pub body: Term,
 }
 
 /// One node of the core term, with its type and place.
@@ -161,13 +205,13 @@ impl Term {
     pub fn show(&self) -> String {
         let (head, parts): (String, Vec<String>) = match &self.kind {
             Kind::Lit(Lit::Int(n)) => return n.to_string(),
-            Kind::Lit(Lit::Float(x)) => return format!("{x:?}"),
             Kind::Lit(Lit::Text(t)) => return format!("{:?}", String::from_utf8_lossy(t)),
             Kind::Name(n) => return n.clone(),
             Kind::Call { callee, args } => (
                 match callee {
                     Callee::Function(f) => format!("call f{f}"),
                     Callee::Trait(t, f) => format!("call t{t}.f{f}"),
+                    Callee::Operator(o) => format!("call {}", o.symbol()),
                 },
                 args.iter().map(Term::show).collect(),
             ),
@@ -225,7 +269,6 @@ impl Pattern {
             Pattern::Any => "_".to_string(),
             Pattern::Bind(n) => n.clone(),
             Pattern::Lit(Lit::Int(n)) => n.to_string(),
-            Pattern::Lit(Lit::Float(x)) => format!("{x:?}"),
             Pattern::Lit(Lit::Text(t)) => format!("{:?}", String::from_utf8_lossy(t)),
             Pattern::Case(c, None) => format!(".c{c}"),
             Pattern::Case(c, Some(p)) => format!(".c{c}({})", p.show()),
