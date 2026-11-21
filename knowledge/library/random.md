@@ -14,6 +14,16 @@ fn bits(key: take Key) -> u64
 
 `uniform(key)` gives an `f32` from 0 up to but not including 1, and `standard_normal(key)` gives one from the normal distribution with mean 0 and deviation 1. Both are arithmetic on `bits`.
 
+## Where a key comes from
+
+A `Key` made from a fixed seed gives the same bits each run, so a program that starts from one repeats, which a test and a model's training need. A `Key` made from [`entropy`](entropy.md) does not repeat: the function that makes one asks `entropy` for the bytes of a key, so a function that calls it lists `entropy`.
+
+```
+fn fresh() -> Key ! entropy
+```
+
+A secret, such as a token or the challenge of a passkey, is taken from `entropy` itself and never from a `Key`. A `Key` is a way to repeat or split randomness, and a secret is what no one can repeat.
+
 ## Distributions
 
 A distribution is an ordinary struct that holds its parameters. What it can do is said by traits, and drawing a value from it is `Sample`, whose `out` type is what a draw gives.
