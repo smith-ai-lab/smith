@@ -1,9 +1,0 @@
-use std.console (console, print)
-
-fn half(n: Int) -> f64 { float(n) / 2.0 }
-
-fn main() ! console, alloc {
-  print("{half(5)} {half(4)} {1.0 / 3.0} {0.1 + 0.2} {1e22} {1.5e-7} {0.00001} {-0.0} {1.0 / 0.0} {-1.0 / 0.0} {0.0 / 0.0}")
-  y: f32 = 0.1
-  print("{y} {y + y + y} {16777216.0 + 1.0}")
-}
