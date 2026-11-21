@@ -33,6 +33,7 @@ use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, OnceLock};
 
 mod arith;
+mod core_term;
 mod effects_with_and_try;
 mod functions_calls_and_lambdas;
 mod lists_and_text;
@@ -1792,6 +1793,14 @@ pub struct Checked {
     /// The traits of numbers of the prelude that were read: those the program,
     /// or a module it imports, calls for.
     pub prelude_numeric: Vec<String>,
+    /// The core term of the functions of the file that have one, when it was
+    /// asked for.
+    pub core: Vec<crate::core::Function>,
+}
+
+/// `check`, and the core term of the functions of the file that have one.
+pub fn check_core(file: File, library: &Library) -> Result<Checked, Vec<Error>> {
+    check_reading(file, library, &PRELUDE, None, true)
 }
 
 /// Checks the file, and lowers what `main` reaches to the scalar form. Every
@@ -1832,7 +1841,7 @@ pub(crate) fn check_with_source(
 
 /// `check`, with the prelude given.
 fn check_with(file: File, library: &Library, prelude: &Prelude) -> Result<Checked, Vec<Error>> {
-    check_reading(file, library, prelude, None)
+    check_reading(file, library, prelude, None, false)
 }
 
 /// Which of the prelude's traits of numbers the module writes a name of: a
@@ -1857,6 +1866,7 @@ fn check_reading(
     library: &Library,
     prelude: &Prelude,
     whole: Option<&str>,
+    want_core: bool,
 ) -> Result<Checked, Vec<Error>> {
     // Whether a function of a module is given a struct of arguments, which the
     // file that is built asks for by writing `Function`.
@@ -1932,7 +1942,7 @@ fn check_reading(
         errors,
         warnings,
         (prelude, &numeric),
-        whole,
+        (whole, want_core),
     );
     if unimported.is_empty() {
         return checked
@@ -1967,7 +1977,9 @@ pub fn check_library(library: &Library) -> Vec<Error> {
     for (name, _) in &library.modules {
         let tokens = crate::lexer::lex(b"fn main() {}\n").expect("the file lexes");
         let file = crate::parser::parse(&tokens).expect("the file parses");
-        if let Err(errors) = check_reading(file, library, &PRELUDE, Some(&format!("std.{name}"))) {
+        if let Err(errors) =
+            check_reading(file, library, &PRELUDE, Some(&format!("std.{name}")), false)
+        {
             found.extend(errors);
         }
     }
@@ -2006,7 +2018,7 @@ fn check_file(
     mut errors: Vec<Error>,
     import_warnings: Vec<Error>,
     (prelude, numeric): (&Prelude, &[bool]),
-    whole: bool,
+    (whole, want_core): (bool, bool),
 ) -> Result<Checked, Vec<Error>> {
     let mut loaded: Vec<usize> = Vec::new();
     let mut file = split_needs(with_prelude(file, prelude, &loaded, numeric));
@@ -2430,6 +2442,11 @@ fn check_file(
     }
 
     let program = to_scalar::lower(&typed, start)?;
+    let core = if want_core {
+        typed.core_terms()
+    } else {
+        Vec::new()
+    };
     let prelude_reached = reached.iter().fold((0, 0), |(f, i), item| match *item {
         Item::Fn(k) if of_prelude(file.functions[k].pos) => (f + 1, i),
         Item::Impl(k) if of_prelude(file.impls[k].pos) => (f, i + 1),
@@ -2439,6 +2456,7 @@ fn check_file(
         program,
         prelude_reached,
         prelude_loaded: loaded.len(),
+        core,
         prelude_numeric: (prelude.numeric.iter().zip(numeric))
             .filter(|(_, wanted)| **wanted)
             .map(|(n, _)| n.names[0].to_string())
