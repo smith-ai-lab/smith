@@ -507,6 +507,17 @@ impl Reader[Reading] {
   }
 }
 
+// Whether one of the parameters is read from the body.
+fn takes_body(r: Reading) -> bool {
+  var found = false
+  loop i in 0..r.params.size {
+    if r.params[i].body {
+      found = true
+    }
+  }
+  found
+}
+
 // The value of a type that a function takes as its parameters, read from the
 // request, or what is wrong with it. A body that is not all read is wrong.
 pub trait FromRequest[A] {
@@ -522,7 +533,7 @@ impl[A] FromRequest[A]
     match got {
       .err(e) { Result.err(e) }
       .ok(v) {
-        if w.has_body {
+        if w.has_body and takes_body(w) {
           match json_ended(w.json) {
             .ok(done) { Result.ok(v) }
             .err(e) { Result.err(e) }
@@ -597,4 +608,136 @@ impl[T, E] Respond[Result[T, E]]
       .err(e) { answer(Status[E].status(e), "application/json", to_json(e)) }
     }
   }
+}
+
+// What a server of HTTP asks for each request, and answers it with.
+pub effect http {
+  pub fn request() -> Request
+  pub fn send(response: Response)
+}
+
+// What `get` and the other methods ask of the routes they are written in:
+// whether the request fits a method and a path, with the parts of the path
+// that the pattern names when it does and no route has answered it yet, the
+// request itself, and to note the response of the route that answers it.
+pub effect routing {
+  fn fits(method: str, path: str) -> Option[List[Part]]
+  fn asked_of() -> Request
+  fn answered(response: Response)
+}
+
+// Why a request does not fit the parameters of a function, as it is answered.
+struct Rejected {
+  path: str
+  problem: Problem
+}
+
+// The function reads its parameters from the request and answers with what it
+// gives, or answers 400 with what is wrong, and does not run.
+fn add[F, A, R](method: str, path: str, f: F) ! routing, alloc
+  requires Function[F, A, R]
+  requires FromRequest[A]
+  requires Describe[A]
+  requires Respond[R]
+  requires Discard[R]
+{
+  match fits(method, path) {
+    .some(parts) {
+      asked = asked_of()
+      params = Describe[A].describe(no_params())
+      r = reading(params_of(params), parts, query_parts(asked.query), asked.body)
+      got: Result[A, ReadError] = FromRequest[A].from_request(r)
+      match got {
+        .ok(args) { answered(Respond[R].respond(Function.call(f, args))) }
+        .err(e) { answered(answer(400, "application/json", to_json(Rejected(path: e.path, problem: e.problem)))) }
+      }
+    }
+    .none { }
+  }
+}
+
+// `f` answers `GET` of the path, with its parameters read from the request.
+pub fn get[F, A, R](path: str, f: F) ! routing, alloc
+  requires Function[F, A, R]
+  requires FromRequest[A]
+  requires Describe[A]
+  requires Respond[R]
+  requires Discard[R]
+{
+  add("GET", path, f)
+}
+
+pub fn post[F, A, R](path: str, f: F) ! routing, alloc
+  requires Function[F, A, R]
+  requires FromRequest[A]
+  requires Describe[A]
+  requires Respond[R]
+  requires Discard[R]
+{
+  add("POST", path, f)
+}
+
+pub fn put[F, A, R](path: str, f: F) ! routing, alloc
+  requires Function[F, A, R]
+  requires FromRequest[A]
+  requires Describe[A]
+  requires Respond[R]
+  requires Discard[R]
+{
+  add("PUT", path, f)
+}
+
+pub fn patch[F, A, R](path: str, f: F) ! routing, alloc
+  requires Function[F, A, R]
+  requires FromRequest[A]
+  requires Describe[A]
+  requires Respond[R]
+  requires Discard[R]
+{
+  add("PATCH", path, f)
+}
+
+pub fn delete[F, A, R](path: str, f: F) ! routing, alloc
+  requires Function[F, A, R]
+  requires FromRequest[A]
+  requires Describe[A]
+  requires Respond[R]
+  requires Discard[R]
+{
+  add("DELETE", path, f)
+}
+
+// A server whose routes are what `body` writes: the request is asked of
+// `http`, the first route that fits its method and its path answers it, a
+// request that fits none is answered 404, and the response is given to `http`.
+pub fn routes[T](body: fn() -> T ! routing) -> T ! http, alloc {
+  asked = request()
+  var done = false
+  var response = Response(status: 404, headers: [], body: "")
+  result = routing(
+    fits: fn(method, path) {
+      if done or method != asked.method {
+        Option.none
+      } else {
+        route_match(path, asked.path)
+      }
+    },
+    asked_of: { copy_of(asked) },
+    answered: fn(r) {
+      response = r
+      done = true
+    },
+    body: body,
+  )
+  send(response)
+  result
+}
+
+// The request again, with its own list of headers.
+fn copy_of(r: Request) -> Request ! alloc {
+  var headers: List[(str, str)] = []
+  loop i in 0..r.headers.size {
+    headers = push(headers, r.headers[i])
+  }
+  Request(method: r.method, path: r.path, query: r.query, headers: headers, body: r.body)
 }
