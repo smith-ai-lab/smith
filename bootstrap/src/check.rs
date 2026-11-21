@@ -41,6 +41,7 @@ mod names;
 mod numbers_and_operators;
 mod ownership;
 mod proof;
+mod proof_functions;
 mod scope;
 mod to_scalar;
 mod traits;
@@ -1059,6 +1060,10 @@ impl<'a> Defs<'a> {
         let name = t.name.as_str();
         if t.unbuilt() {
             return Ty::Unknown;
+        }
+        // A statement is a type a proof is a value of, and a proof is erased.
+        if t.statement.is_some() {
+            return Ty::Nothing;
         }
         if let Some((first, end)) = &t.range {
             let (Some(min), Some(end)) = (
@@ -2485,6 +2490,12 @@ fn check_file(
 /// check of the library, at everything in it.
 fn roots_of(file: &File, start_at: usize, whole: bool) -> Vec<Item> {
     let mut roots = vec![Item::Fn(start_at)];
+    // A proof function is called by no code, so nothing reaches it.
+    roots.extend(
+        (file.functions.iter().enumerate())
+            .filter(|(_, f)| is_proof(f))
+            .map(|(i, _)| Item::Fn(i)),
+    );
     if whole {
         let in_std = |pos: Pos| of_std(pos);
         roots.extend(
@@ -2791,8 +2802,10 @@ fn reach(
         let function = |f: &Function, found: &mut Vec<Item>| {
             types_named(f, &mut |name, pos| type_name(name, pos, found));
             let defaults = f.params.iter().filter_map(|p| p.default.as_ref());
+            let statement = f.result.as_ref().and_then(|t| t.statement.as_deref());
             let contracts = (f.requires.iter().chain(&f.ensures))
                 .chain(&f.decreases)
+                .chain(statement)
                 .filter(|_| contracts);
             called(
                 values(&f.body).chain(defaults).chain(contracts).collect(),
@@ -4834,7 +4847,10 @@ fn names_in_items(file: &File, impls: &[Arc<Impl>], out: &mut dyn FnMut(&str, Po
 fn names_in_function(f: &Function, out: &mut dyn FnMut(&str, Pos, Ask)) {
     types_named(f, &mut |n, pos| out(n, pos, Ask::Type));
     let defaults = f.params.iter().filter_map(|p| p.default.as_ref());
-    let contracts = (f.requires.iter().chain(&f.ensures)).chain(&f.decreases);
+    let statement = f.result.as_ref().and_then(|t| t.statement.as_deref());
+    let contracts = (f.requires.iter().chain(&f.ensures))
+        .chain(&f.decreases)
+        .chain(statement);
     // A name of a parameter is the parameter in the function, so it calls for
     // no function of the module that has one of that name.
     let params: Vec<&str> = f.params.iter().map(|p| p.name.as_str()).collect();
@@ -6938,6 +6954,12 @@ impl<'a> Checker<'a> {
     /// at with each such number undecided, to find what its uses ask of it,
     /// and then checked, with each decided and the mistakes reported.
     fn body(&mut self, template: Template) {
+        if let Template::Free(f) = template
+            && is_proof(&self.defs.file.functions[f])
+        {
+            self.proof_function(f);
+            return;
+        }
         USES.with(|u| *u.borrow_mut() = Uses::default());
         let (errors, refusals, no_impl) = (self.errors.len(), self.refusals, self.no_impl);
         let places = self.run_body(template, Numbers::Finding(Vec::new()));
@@ -8573,4 +8595,9 @@ impl<'a> Checker<'a> {
         let args = sol.into_iter().map(|t| t.unwrap_or(Ty::Unknown)).collect();
         Ty::structure(s, args)
     }
+}
+
+/// Whether a function is a proof: its result is a statement.
+fn is_proof(f: &Function) -> bool {
+    f.result.as_ref().is_some_and(|t| t.statement.is_some())
 }

@@ -4,6 +4,7 @@ title: Proofs as functions
 description: A proof is a value that is passed, returned, and held, a predicate is an ordinary function that returns bool, and arith reads through a call of one.
 status: partial
 built:
+  - "a statement as the result of a function, a comparison of values or comparisons joined with `and`, `or`, and `not` written where a type is, which is checked as a `bool` over the parameters; a function with one is a proof function, which is checked whether or not any code reaches it, never built, and carries no effect; its body is not read yet"
   - "a predicate in a contract: a function that returns `bool`, carries no effect, and is one expression of comparisons of whole numbers joined with `and`, `or`, and `not`, or a call of another such function, which `arith` reads as that expression with the arguments put in"
 ---
 
@@ -23,6 +24,10 @@ fn cursor[size: Nat](at: Nat) -> Option[Cursor[size]] {
 ```
 
 `keep` takes a proof that `at <= size` and gives it back. The parameter `p` is a proof, so the caller owes one, and here it comes from the `check`. `Cursor` is the struct of [A struct that holds a proof](proof-fields.md), and the proof `keep` gives is the one its field `inside` needs.
+
+## A proof function is checked and never built
+
+A function whose result is a statement is a proof function. It is checked with the rest of the file, whether or not any code calls it, as a test is, and it is never lowered, so it is in no executable. A statement is a boolean expression over the parameters, and a proof is erased, so a call of a proof function costs nothing.
 
 ## What a proof may not do
 

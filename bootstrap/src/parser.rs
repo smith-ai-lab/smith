@@ -268,6 +268,9 @@ pub struct Type {
     /// The bounds of a range type, written `a..b`, whose name is `RANGE`: the
     /// first, and the end, which the range stops short of.
     pub range: Option<(Bound, Bound)>,
+    /// The statement a proof's type is, written as a boolean expression, whose
+    /// name is `STATEMENT`.
+    pub statement: Option<Box<Expr>>,
 }
 
 /// A bound of a range type: a whole number written out, the name of a
@@ -323,6 +326,10 @@ pub const UNBUILT: &str = "?";
 /// The name of a range type, written `a..b`. It is no name a program can
 /// write, and the bounds are in the type's `range`.
 pub const RANGE: &str = "..";
+
+/// The name of a type that is a statement: a boolean expression, such as
+/// `a < 10`, that a proof is a value of.
+pub const STATEMENT: &str = "<statement>";
 
 impl Type {
     /// How the type is written in the source.
@@ -1661,6 +1668,7 @@ impl Parser<'_> {
                     args: Vec::new(),
                     function: false,
                     range: None,
+                    statement: None,
                 }),
                 _ => {}
             }
@@ -1673,6 +1681,7 @@ impl Parser<'_> {
             args,
             function: false,
             range: None,
+            statement: None,
         })
     }
 
@@ -1699,6 +1708,7 @@ impl Parser<'_> {
                     args,
                     function: false,
                     range: None,
+                    statement: None,
                 })
             }
             Tok::Number(_) | Tok::Punct("-") => self.range_type(pos, names, None),
@@ -1713,6 +1723,7 @@ impl Parser<'_> {
                         args,
                         function: false,
                         range: None,
+                        statement: None,
                     };
                     self.bump();
                     let result = self.ty()?;
@@ -1735,6 +1746,7 @@ impl Parser<'_> {
                     args,
                     function: false,
                     range: None,
+                    statement: None,
                 })
             }
             tok => Err(self.expected("a type", tok)),
@@ -1792,6 +1804,7 @@ impl Parser<'_> {
                     args: Vec::new(),
                     function: false,
                     range: None,
+                    statement: None,
                 });
             }
             _ => {}
@@ -1802,6 +1815,7 @@ impl Parser<'_> {
             args: Vec::new(),
             function: false,
             range: Some((first, end)),
+            statement: None,
         })
     }
 
