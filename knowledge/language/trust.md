@@ -4,7 +4,7 @@ title: What is trusted
 description: The rule that Smith trusts nothing but a small kernel that checks proofs step by step, the four rules that keep a proof from being a lie, and the list of what is still taken on trust.
 status: partial
 built:
-  - "the kernel, in `bootstrap/src/kernel.rs`, which works a core term out one step at a time with no compiled code and depends on the core term alone: numbers, the comparisons, `+`, `-`, `*`, structs, tuples, lists, enums, `match`, bindings, calls of functions of the file, lambdas, loops, a round at a time with the `var`s handed on; a run is given a number of steps and fails naming it when it takes more; and a `bool` carries the comparison that decided it, with where it is written and the numbers it compared; it proves a `requires` of a predicate whose arguments are written out, as [Contracts](contracts.md#a-requirement-that-is-worked-out) says, checks the steps of a proof function against the statement it owes, of which `same`, `unfold`, `arith`, and a call of a proof function are read, `arith` by the kernel's own solution of the sums of equalities, with no checker's `arith` in it, and works out `xs.size`, `xs[i]`, `t.bytes`, and a loop over a text"
+  - "the kernel, in `bootstrap/src/kernel.rs`, which works a core term out one step at a time with no compiled code and depends on the core term alone: numbers, the comparisons, `+`, `-`, `*`, structs, tuples, lists, enums, `match`, bindings, calls of functions of the file, lambdas, loops, a round at a time with the `var`s handed on; a run is given a number of steps and fails naming it when it takes more; and a `bool` carries the comparison that decided it, with where it is written and the numbers it compared; it proves a `requires` of a predicate whose arguments are written out, as [Contracts](contracts.md#a-requirement-that-is-worked-out) says, checks the steps of a proof function against the statement it owes, of which `same`, `unfold`, `arith`, and a call of a proof function are read, `arith` by the kernel's own solution of the sums of equalities, with no checker's `arith` in it, and works out `xs.size`, `xs[i]`, `t.bytes`, a loop over a text, `push(xs, x)`, and `xs[a..b]` of a slice, of which a proof may use the size, as the next section says of what is added"
 ---
 
 # What is trusted
@@ -35,6 +35,15 @@ It does one thing unasked: it runs an expression that has nothing unknown in it,
 | --- | --- |
 | `append([1], [2]).size == 2` | It runs both sides, as every value is known |
 | `append(a, b).size == a.size + b.size` | Only by a proof that writes each step, as `a` and `b` are not known |
+
+Two operations on lists are worked out by the same evaluator, and the sizes that come of them are what a proof may use of them. The kernel does not take either as a law it was handed: each size is what the evaluator gives for any list, and a test runs each against it on lists that are empty, and on a range that begins where it ends.
+
+| Operation | Its size, for any `xs` |
+| --- | --- |
+| `push(xs, x)` | `xs.size + 1` |
+| `xs[a..b]` | `b - a`, where `a <= b <= xs.size` |
+
+The size of a slice is given only where `a <= b <= xs.size` is known, from a `requires` of the proof or from the case it is in. A range that is not known to lie inside the list gives no size, so no proof can use one. Nothing else is added to what the kernel works out.
 
 So the time a proof takes to check grows with its length and with what it asks to be run, both of which are in the source. The steps are long, and a person does not write them: a [function over code](code.md) writes them once, and it is outside the kernel, so its mistakes are refused and not believed.
 

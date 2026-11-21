@@ -4,7 +4,7 @@ title: Statements
 description: A statement is a type built from what data is built from, a proof is a value of it, and a boolean expression is the statement that it is true, so there is no second language for proofs.
 status: partial
 built:
-  - "a proof function, a function whose result is a statement, whose body is steps the kernel checks: `same`; `arith(p, q)`, which gives an equality of whole numbers that is the sum of the equalities `p` and `q` say, each times a number, with a product of unknowns taken as one unknown of its own; a name given by `unfold(f(x))`, which says that `f(x)` equals the body of `f` with `x` put in, where each condition the body tests is decided by the cases the proof is in; and an `if` that splits the proof into cases, each of which knows which it is in; a name given by a call of a proof function, which is a proof of its statement for the arguments, so that a proof that calls itself on a smaller value, with its `decreases` proven as for any function, is an induction: `gauss` and the sum of a double; `replace` and a statement as a parameter or a field are not built"
+  - "a proof function, a function whose result is a statement, whose body is steps the kernel checks: `same`; `arith(p, q)`, which gives an equality of whole numbers that is the sum of the equalities `p` and `q` say, each times a number, with a product of unknowns taken as one unknown of its own; a name given by `unfold(f(x))`, which says that `f(x)` equals the body of `f` with `x` put in, where each condition the body tests is decided by the cases the proof is in; and an `if` that splits the proof into cases, each of which knows which it is in; a name given by a call of a proof function, which is a proof of its statement for the arguments, so that a proof that calls itself on a smaller value, with its `decreases` proven as for any function, is an induction: `gauss` and the sum of a double; `arith` takes the size of `push(xs, x)` as one more than that of `xs`, and the size of `xs[a..b]` of a slice as `b - a` where the proof knows `a <= b <= xs.size`, from its `requires` or the case it is in; `replace` and a statement as a parameter or a field are not built"
 ---
 
 # Statements
@@ -52,10 +52,10 @@ A proof about every number, or every list, is a function that calls itself, and 
 
 ```
 fn size_of_append(a: List[Byte], b: List[Byte]) -> append(a, b).size == a.size + b.size
-  decreases a.size
+  decreases b.size
 ```
 
-`size_of_append` is declared here without its body. Its result is a statement that names its parameters, and a call of it gives the caller that statement for the two lists it passes.
+`append` adds at the end, so the call on the smaller value is the one on `b` without its last element, and the measure is `b.size`. The size of that piece is what a [slice](ranges.md) and a `push` give, as [What is trusted](trust.md#what-the-kernel-does-by-itself) says. `size_of_append` is declared here without its body. Its result is a statement that names its parameters, and a call of it gives the caller that statement for the two lists it passes.
 
 ## The steps of a proof
 

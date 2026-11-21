@@ -407,6 +407,33 @@ impl<'a> Typed<'a> {
                     *pos,
                 ))
             }
+            Expr::Slice { of, from, to, pos } => {
+                let of = self.core_expr(of)?;
+                let whole = core::Type::int(0, i128::from(i64::MAX));
+                let from = match from {
+                    Some(from) => self.core_expr(from)?,
+                    None => Term::new(Kind::Lit(Lit::Int(0)), whole.clone(), *pos),
+                };
+                let to = match to {
+                    Some(to) => self.core_expr(to)?,
+                    None => Term::new(
+                        Kind::Call {
+                            callee: Callee::Operator(Operator::Size),
+                            args: vec![of.clone()],
+                        },
+                        whole,
+                        *pos,
+                    ),
+                };
+                Some(Term::new(
+                    Kind::Call {
+                        callee: Callee::Operator(Operator::Slice),
+                        args: vec![of, from, to],
+                    },
+                    ty,
+                    *pos,
+                ))
+            }
             _ => None,
         }
     }
@@ -455,6 +482,20 @@ impl<'a> Typed<'a> {
         }
         if call.qualifier.is_some() || call.args.iter().any(|a| a.name.is_some() || a.after) {
             return None;
+        }
+        // `push` is the compiler's own, as long as no function of the file
+        // takes the name.
+        if call.args.len() == 2
+            && call.callee == "push"
+            && super::lists_and_text::is_push(self.defs, call)
+        {
+            return self.core_call(
+                Operator::Push,
+                &call.args[0].value,
+                &call.args[1].value,
+                ty,
+                call.pos,
+            );
         }
         let f = self.defs.function(call.name_pos, &call.callee)?;
         let (def, sig) = (&self.defs.file.functions[f], &self.defs.signatures[f]);
@@ -970,8 +1011,11 @@ impl<'a> Typed<'a> {
                 .iter()
                 .map(|(n, t)| Some((n.clone(), self.core_type(t)?)))
                 .collect();
-            let (Some(params), Some(statement), Some(body)) = (
+            let requires: Option<Vec<Term>> =
+                f.requires.iter().map(|r| self.core_expr(r)).collect();
+            let (Some(params), Some(requires), Some(statement), Some(body)) = (
                 params,
+                requires,
                 self.core_expr(statement_expr),
                 self.core_proof(&f.body),
             ) else {
@@ -993,6 +1037,7 @@ impl<'a> Typed<'a> {
                 place,
                 pos: at,
                 params,
+                requires,
                 statement,
                 written: proof::written_contract(&|_| None, statement_expr),
                 body,

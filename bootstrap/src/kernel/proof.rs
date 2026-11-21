@@ -5,7 +5,7 @@
 use std::collections::BTreeMap;
 
 use super::{Failure, Machine, Value};
-use crate::core::{Callee, Function, Kind, Operator, Pattern, Proof, Step, Term, Type};
+use crate::core::{Callee, Function, Kind, Make, Operator, Pattern, Proof, Step, Term, Type};
 
 /// Whether the proof proves its statement, or what is wrong with it, in words
 /// that say the statement owed and what the step gave.
@@ -21,7 +21,12 @@ pub fn check_proof(
         proof,
         limit,
         facts: Vec::new(),
-        known: Vec::new(),
+        known: proof
+            .requires
+            .iter()
+            .flat_map(each_conjunct)
+            .map(|c| (c, true))
+            .collect(),
     };
     check.steps(&proof.body, &proof.statement)
 }
@@ -161,6 +166,13 @@ impl Check<'_> {
                 .ok_or("an arm is missing")?;
             return self.decide(block);
         }
+        // A name a body gives a value is that value, as nothing in a body
+        // changes.
+        if let Kind::Bind { name, value, rest } = &t.kind {
+            let value = self.decide(value)?;
+            let rest = substitute(rest, &[(name.as_str(), &value)]);
+            return self.decide(&rest);
+        }
         let mut out = t.clone();
         out.rebuild(&mut |part| self.decide(part))?;
         Ok(out)
@@ -267,11 +279,11 @@ impl Check<'_> {
                 ));
             };
             names.push(format!("`{n}`"));
-            rows.push(difference(fact).ok_or_else(|| {
+            rows.push(difference(fact, &self.known).ok_or_else(|| {
                 format!("`arith` reads equalities of whole numbers, and `{n}` is not one")
             })?);
         }
-        let goal = difference(owed).ok_or_else(|| {
+        let goal = difference(owed, &self.known).ok_or_else(|| {
             format!(
                 "`arith` proves an equality of whole numbers so far, and `{}` is not one",
                 self.render(owed)
@@ -333,7 +345,7 @@ impl Check<'_> {
 fn plain(t: &Term) -> bool {
     !matches!(
         t.kind,
-        Kind::Lambda { .. } | Kind::Loop { .. } | Kind::Apply { .. } | Kind::Bind { .. }
+        Kind::Lambda { .. } | Kind::Loop { .. } | Kind::Apply { .. }
     ) && t.parts().iter().all(|p| plain(p))
 }
 
@@ -372,7 +384,7 @@ fn key(t: &Term) -> String {
 
 /// What two sides of an equality differ by, as a sum of products of the
 /// things that are not numbers.
-fn difference(statement: &Term) -> Option<Poly> {
+fn difference(statement: &Term, known: &[(Term, bool)]) -> Option<Poly> {
     let Kind::Call {
         callee: Callee::Operator(Operator::Equal),
         args,
@@ -380,8 +392,8 @@ fn difference(statement: &Term) -> Option<Poly> {
     else {
         return None;
     };
-    let mut d = poly(&args[0])?;
-    for (m, c) in poly(&args[1])? {
+    let mut d = poly(&args[0], known)?;
+    for (m, c) in poly(&args[1], known)? {
         let entry = d.entry(m).or_insert(0);
         *entry = entry.checked_sub(c)?;
     }
@@ -393,14 +405,14 @@ fn difference(statement: &Term) -> Option<Poly> {
 /// with a number it is multiplied by.
 type Poly = BTreeMap<Vec<String>, i128>;
 
-fn poly(t: &Term) -> Option<Poly> {
+fn poly(t: &Term, known: &[(Term, bool)]) -> Option<Poly> {
     match &t.kind {
         Kind::Lit(crate::core::Lit::Int(n)) => Some(BTreeMap::from([(Vec::new(), *n)])),
         Kind::Call {
             callee: Callee::Operator(op @ (Operator::Add | Operator::Sub)),
             args,
         } => {
-            let (mut a, b) = (poly(&args[0])?, poly(&args[1])?);
+            let (mut a, b) = (poly(&args[0], known)?, poly(&args[1], known)?);
             for (m, c) in b {
                 let entry = a.entry(m).or_insert(0);
                 *entry = if *op == Operator::Add {
@@ -416,7 +428,7 @@ fn poly(t: &Term) -> Option<Poly> {
             callee: Callee::Operator(Operator::Mul),
             args,
         } => {
-            let (a, b) = (poly(&args[0])?, poly(&args[1])?);
+            let (a, b) = (poly(&args[0], known)?, poly(&args[1], known)?);
             let mut out: Poly = BTreeMap::new();
             for (ma, ca) in &a {
                 for (mb, cb) in &b {
@@ -429,9 +441,168 @@ fn poly(t: &Term) -> Option<Poly> {
             out.retain(|_, c| *c != 0);
             Some(out)
         }
+        // How many elements a list has, where what the evaluator works out
+        // says so for any list: a list written out has as many as it holds, a
+        // push gives one more, and a slice has the difference of its ends
+        // when it is made, which only a range inside the list is.
+        Kind::Call {
+            callee: Callee::Operator(Operator::Size),
+            args,
+        } => {
+            let of = &args[0];
+            let size_of = |list: &Term| {
+                Term::new(
+                    Kind::Call {
+                        callee: Callee::Operator(Operator::Size),
+                        args: vec![list.clone()],
+                    },
+                    t.ty.clone(),
+                    t.pos,
+                )
+            };
+            match &of.kind {
+                Kind::Make(Make::List, items) => Some(BTreeMap::from([(
+                    Vec::new(),
+                    i128::try_from(items.len()).ok()?,
+                )])),
+                Kind::Call {
+                    callee: Callee::Operator(Operator::Push),
+                    args: pushed,
+                } => {
+                    let mut size = poly(&size_of(&pushed[0]), known)?;
+                    let entry = size.entry(Vec::new()).or_insert(0);
+                    *entry = entry.checked_add(1)?;
+                    size.retain(|_, c| *c != 0);
+                    Some(size)
+                }
+                Kind::Call {
+                    callee: Callee::Operator(Operator::Slice),
+                    args: range,
+                } => {
+                    let (from, to) = (poly(&range[1], known)?, poly(&range[2], known)?);
+                    let whole = poly(&size_of(&range[0]), known)?;
+                    if inside(&from, &to, &whole, known) {
+                        Some(minus(to, &from)?)
+                    } else {
+                        Some(BTreeMap::from([(vec![SIZE_OF.to_string() + &key(of)], 1)]))
+                    }
+                }
+                _ => Some(BTreeMap::from([(vec![SIZE_OF.to_string() + &key(of)], 1)])),
+            }
+        }
         // A name, a call, or a field is an unknown of its own.
         _ => Some(BTreeMap::from([(vec![key(t)], 1)])),
     }
+}
+
+/// What the unknown that is the size of a list begins with, which is a thing
+/// no name does.
+const SIZE_OF: &str = "size of ";
+
+/// `a` less `b`.
+fn minus(mut a: Poly, b: &Poly) -> Option<Poly> {
+    for (m, c) in b {
+        let entry = a.entry(m.clone()).or_insert(0);
+        *entry = entry.checked_sub(*c)?;
+    }
+    a.retain(|_, c| *c != 0);
+    Some(a)
+}
+
+/// Whether `from <= to <= whole` is known: each difference is not below nothing,
+/// where a size is not, a size the cases say is not nothing is at least one,
+/// and a `<=` that the cases say holds is as much as it says.
+fn inside(from: &Poly, to: &Poly, whole: &Poly, known: &[(Term, bool)]) -> bool {
+    let (Some(a), Some(b)) = (minus(to.clone(), from), minus(whole.clone(), to)) else {
+        return false;
+    };
+    let facts: Vec<Poly> = known
+        .iter()
+        .filter(|(_, held)| *held)
+        .filter_map(|(c, _)| match &c.kind {
+            Kind::Call {
+                callee: Callee::Operator(Operator::LessEqual),
+                args,
+            } => minus(poly(&args[1], &[])?, &poly(&args[0], &[])?),
+            _ => None,
+        })
+        .collect();
+    [a, b].iter().all(|d| {
+        at_least_nothing(d, known)
+            || facts
+                .iter()
+                .any(|f| minus(d.clone(), f).is_some_and(|rest| at_least_nothing(&rest, known)))
+    })
+}
+
+/// Whether a sum is not below nothing for what the cases say: its number is
+/// not below nothing once each size is taken at the least it can be, and no
+/// size is taken away.
+fn at_least_nothing(d: &Poly, known: &[(Term, bool)]) -> bool {
+    let mut least: i128 = 0;
+    for (m, c) in d {
+        let Some(unknown) = (m.len() == 1).then(|| m[0].as_str()) else {
+            if m.is_empty() {
+                least = match least.checked_add(*c) {
+                    Some(l) => l,
+                    None => return false,
+                };
+                continue;
+            }
+            return false;
+        };
+        if !unknown.starts_with(SIZE_OF) || *c < 0 {
+            return false;
+        }
+        let at_least = i128::from(is_not_nothing(unknown, known));
+        least = match c.checked_mul(at_least).and_then(|x| least.checked_add(x)) {
+            Some(l) => l,
+            None => return false,
+        };
+    }
+    least >= 0
+}
+
+/// Whether the cases say the size is not `0`: it is not equal to it, or it is
+/// above it.
+fn is_not_nothing(size: &str, known: &[(Term, bool)]) -> bool {
+    known.iter().any(|(c, held)| match &c.kind {
+        Kind::Call {
+            callee: Callee::Operator(op),
+            args,
+        } => {
+            let is_size = |t: &Term| {
+                poly(t, &[])
+                    .is_some_and(|p| p.len() == 1 && p.contains_key(&vec![size.to_string()]))
+            };
+            let zero = |t: &Term| matches!(t.kind, Kind::Lit(crate::core::Lit::Int(0)));
+            match (op, held) {
+                (Operator::Equal, false) => {
+                    (is_size(&args[0]) && zero(&args[1])) || (zero(&args[0]) && is_size(&args[1]))
+                }
+                (Operator::Greater, true) => is_size(&args[0]) && zero(&args[1]),
+                (Operator::Less, true) => zero(&args[0]) && is_size(&args[1]),
+                _ => false,
+            }
+        }
+        _ => false,
+    })
+}
+
+/// The conditions a boolean term says together: `a and b` is both.
+fn each_conjunct(t: &Term) -> Vec<Term> {
+    if let Kind::Choose { of, arms } = &t.kind
+        && let [
+            (Pattern::Case(1, None), then),
+            (Pattern::Case(0, None), otherwise),
+        ] = arms.as_slice()
+        && matches!(&otherwise.kind, Kind::Make(Make::Case(_, 0), parts) if parts.is_empty())
+    {
+        let mut out = each_conjunct(of);
+        out.extend(each_conjunct(then));
+        return out;
+    }
+    vec![t.clone()]
 }
 
 /// Whether `goal` is a sum of the `rows`, each times a number, by solving for

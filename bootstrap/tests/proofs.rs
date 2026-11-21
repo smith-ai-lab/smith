@@ -52,6 +52,14 @@ pub const ONCE: &[Test] = &[
         a_proof_that_changes_a_step_is_refused_and_says_the_statement_owed,
     ),
     (
+        "a_push_has_one_more_and_a_slice_has_the_difference_of_its_ends_only_where_it_is_made",
+        a_push_has_one_more_and_a_slice_has_the_difference_of_its_ends_only_where_it_is_made,
+    ),
+    (
+        "unfold_gives_a_name_the_body_binds_as_the_value_it_is_given",
+        unfold_gives_a_name_the_body_binds_as_the_value_it_is_given,
+    ),
+    (
         "a_proof_function_is_in_no_executable",
         a_proof_function_is_in_no_executable,
     ),
@@ -361,4 +369,59 @@ fn a_proof_function_is_in_no_executable() {
         out
     };
     assert_eq!(unplaced(format!("{with:?}")), unplaced(format!("{alone:?}")));
+}
+
+/// What a push and a slice are, written as proofs.
+pub const LISTS: &str = "use std.bits (u64)\nuse std.list (push, freeze)\nuse std.console (console, print)\n\n\
+fn push_grows(xs: take List[Byte], x: take Byte) -> push(xs, x).size == xs.size + 1 {\n  arith()\n}\n\n\
+fn slice_size(xs: Slice[Byte], a: u64, b: u64) -> xs[a..b].size == b - a\n  requires a <= b and b <= xs.size\n{\n  arith()\n}\n\n\
+fn grown(xs: take List[Byte], x: take Byte) -> List[Byte] ! alloc { push(xs, x) }\n\n\
+fn cut(xs: Slice[Byte], a: u64, b: u64) -> u64\n  requires a <= b and b <= xs.size\n{\n  xs[a..b].size\n}\n\n\
+fn main() ! console, alloc {\n  xs: List[Byte] = [1]\n  s: Slice[Byte] = freeze([1, 2, 3])\n  if 3 <= s.size {\n    print(\"{grown(xs, 2).size} {cut(s, 1, 3)}\")\n  }\n}\n";
+
+fn lists_refused(change: impl Fn(&str) -> String) -> Vec<String> {
+    match check(change(LISTS).as_bytes()) {
+        Ok(_) => Vec::new(),
+        Err(errors) => errors.into_iter().map(|e| e.message).collect(),
+    }
+}
+
+/// A push is one more and a slice is the difference of its ends as the kernel's
+/// evaluator works them out. The slice needs its range inside the list, and a
+/// proof that does not say so has no size to use.
+fn a_push_has_one_more_and_a_slice_has_the_difference_of_its_ends_only_where_it_is_made() {
+    let found = lists_refused(|s| s.to_string());
+    assert!(found.is_empty(), "{found:?}");
+    // Another number than the evaluator gives.
+    let found = lists_refused(|s| s.replace("xs.size + 1 {", "xs.size + 2 {"));
+    assert!(found.iter().any(|m| m.contains("`arith` cannot get")), "{found:?}");
+    let found = lists_refused(|s| s.replace("== b - a\n", "== b - a + 1\n"));
+    assert!(found.iter().any(|m| m.contains("`arith` cannot get")), "{found:?}");
+    // The range is not known to be inside the list: not the second end, not
+    // the first.
+    let found = lists_refused(|s| s.replace("requires a <= b and b <= xs.size\n{\n  arith()", "requires a <= b\n{\n  arith()"));
+    assert!(found.iter().any(|m| m.contains("`arith` cannot get")), "{found:?}");
+    let found = lists_refused(|s| s.replace("requires a <= b and b <= xs.size\n{\n  arith()", "requires b <= xs.size\n{\n  arith()"));
+    assert!(found.iter().any(|m| m.contains("`arith` cannot get")), "{found:?}");
+}
+
+const BOUND: &str = "use std.bits (u64)\nuse std.console (console, print)\n\n\
+fn twice(n: u64) -> u64\n  requires n < 100\n{\n  k = n + n\n  k + 1\n}\n\n\
+fn twice_and_one(n: u64) -> twice(n) == n + n + 1\n  requires n < 100\n{\n  opened = unfold(twice(n))\n  arith(opened)\n}\n\n\
+fn main() ! console, alloc {\n  print(\"{twice(4)}\")\n}\n";
+
+/// A name the body of a function binds is the value it is given, in what
+/// `unfold` says, and what is said of it is checked as it is for any other.
+fn unfold_gives_a_name_the_body_binds_as_the_value_it_is_given() {
+    let found = match check(BOUND.as_bytes()) {
+        Ok(_) => Vec::new(),
+        Err(errors) => errors.into_iter().map(|e| e.message).collect(),
+    };
+    assert!(found.is_empty(), "{found:?}");
+    let wrong = BOUND.replace("n + n + 1\n", "n + n + 2\n");
+    let found = match check(wrong.as_bytes()) {
+        Ok(_) => Vec::new(),
+        Err(errors) => errors.into_iter().map(|e| e.message).collect(),
+    };
+    assert!(found.iter().any(|m| m.contains("`arith` cannot get")), "{found:?}");
 }

@@ -142,6 +142,43 @@ impl<'a> Machine<'a> {
                 }
             }
             Kind::Call {
+                callee: Callee::Operator(Operator::Slice),
+                args,
+            } => {
+                let (of, from, to) = (
+                    self.work(&args[0], env)?.0,
+                    self.work(&args[1], env)?.0,
+                    self.work(&args[2], env)?.0,
+                );
+                match (of, from, to) {
+                    (Value::Parts(items), Value::Int(a), Value::Int(b)) => {
+                        match (usize::try_from(a), usize::try_from(b)) {
+                            (Ok(a), Ok(b)) if a <= b && b <= items.len() => {
+                                plain(Value::Parts(items[a..b].to_vec()))
+                            }
+                            _ => Err(Failure::Stuck(format!(
+                                "a slice {a}..{b} of a list of {}",
+                                items.len()
+                            ))),
+                        }
+                    }
+                    other => Err(Failure::Stuck(format!("a slice of {other:?}"))),
+                }
+            }
+            Kind::Call {
+                callee: Callee::Operator(Operator::Push),
+                args,
+            } => {
+                let (of, item) = (self.work(&args[0], env)?.0, self.work(&args[1], env)?.0);
+                match of {
+                    Value::Parts(mut items) => {
+                        items.push(item);
+                        plain(Value::Parts(items))
+                    }
+                    other => Err(Failure::Stuck(format!("a push onto {other:?}"))),
+                }
+            }
+            Kind::Call {
                 callee: Callee::Operator(Operator::Index),
                 args,
             } => {
@@ -189,7 +226,11 @@ impl<'a> Machine<'a> {
                     Operator::Greater => truth(x > y),
                     Operator::GreaterEqual => truth(x >= y),
                     Operator::Equal => truth(x == y),
-                    Operator::Index | Operator::Size | Operator::Bytes => {
+                    Operator::Index
+                    | Operator::Size
+                    | Operator::Bytes
+                    | Operator::Slice
+                    | Operator::Push => {
                         unreachable!("worked out above")
                     }
                 }

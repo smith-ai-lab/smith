@@ -124,7 +124,11 @@ fn work_out(all: &[Function], t: &Term, env: &mut Vec<(String, Value)>) -> Value
                 Operator::Greater => truth(a > b),
                 Operator::GreaterEqual => truth(a >= b),
                 Operator::Equal => truth(a == b),
-                Operator::Index | Operator::Size | Operator::Bytes => panic!("no text here"),
+                Operator::Index
+                | Operator::Size
+                | Operator::Bytes
+                | Operator::Slice
+                | Operator::Push => panic!("no list here"),
             }
         }
         Kind::Call {
