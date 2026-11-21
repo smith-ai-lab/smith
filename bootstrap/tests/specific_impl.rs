@@ -104,7 +104,7 @@ fn two_impls_that_fit_with_neither_for_fewer_types_are_refused() {
 impl[T] R[(T, P)] {\n  fn r(x: (T, P)) -> str { \"first\" }\n}\n\n\
 impl[U] R[(P, U)] {\n  fn r(x: (P, U)) -> str { \"second\" }\n}\n\n\
 fn main() ! console {\n  print(R[(P, P)].r((P(a: \"a\"), P(a: \"b\"))))\n}\n";
-    let errors = check(source.as_bytes()).err().expect("refused");
+    let errors = check(source.as_bytes()).expect_err("refused");
     assert!(
         errors.iter().any(|e| e.message.contains("already implemented")),
         "{errors:?}"
