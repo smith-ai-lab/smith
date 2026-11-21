@@ -665,3 +665,19 @@ impl Eq[f64] {
 impl Ord[f64] {
   fn compare(a: f64, b: f64) -> Order { __compare(a, b) }
 }
+
+impl Fmt[f32] {
+  fn fmt(value: f32) -> str ! alloc { __float_text(value) }
+}
+
+impl Repr[f32] {
+  fn repr(value: f32) -> str ! alloc { __float_text(value) }
+}
+
+impl Fmt[f64] {
+  fn fmt(value: f64) -> str ! alloc { __float_text(value) }
+}
+
+impl Repr[f64] {
+  fn repr(value: f64) -> str ! alloc { __float_text(value) }
+}

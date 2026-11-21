@@ -61,6 +61,7 @@ pub(super) fn lower(typed: &Typed, start: Instance) -> Result<form::Program, Vec
         bodies: Vec::new(),
         copies: Map::default(),
         runtimes: Vec::new(),
+        float_tables: None,
         data: Vec::new(),
         files: Map::default(),
         unders: Map::default(),
@@ -136,6 +137,9 @@ struct Lowering<'a> {
     /// them has no hash, as it is defined where the runtime is.
     runtimes: Vec<(Runtime, usize)>,
     data: Vec<Vec<u8>>,
+    /// Where the two tables of the text of a float are in the data, once a
+    /// program asks for one.
+    float_tables: Option<(usize, usize)>,
     /// The number of the name of the file of each module, once it is asked for.
     files: Map<usize, u32>,
 }
