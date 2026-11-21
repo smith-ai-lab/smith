@@ -10,6 +10,8 @@ use smith::scalar::{
 use crate::Test;
 use crate::float_form as ff;
 use crate::generate::{self, Gen};
+use smith::target::Target;
+
 use crate::targets::{runnable, scalar_runs_as};
 use crate::vector_form as vf;
 
@@ -328,6 +330,14 @@ fn generated(g: &mut Gen) -> (Type, FloatBinary, bool, [u128; 3]) {
     (ty, op, g.below(2) == 0, args)
 }
 
+/// The targets that build floats and that this machine runs, or that a
+/// fingerprint is made for.
+fn building() -> Vec<Target> {
+    (runnable().into_iter())
+        .filter(|t| t.builds_floats())
+        .collect()
+}
+
 fn every_executable_of_a_fused_product_gives_what_the_evaluator_gives() {
     generate::check(6171, 60, generated, |(ty, op, first, args)| {
         let f = shape(*ty, *op, *first).finish(&[*ty]);
@@ -338,7 +348,7 @@ fn every_executable_of_a_fused_product_gives_what_the_evaluator_gives() {
         assert_eq!(scalar::check(&made), Ok(()));
         let said = scalar::run(&made);
         let passed = scalar::passes(&made);
-        for target in runnable() {
+        for target in building() {
             scalar_runs_as(&made, target, &said);
             scalar_runs_as(&passed, target, &said);
         }
