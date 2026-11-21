@@ -168,11 +168,49 @@ fn outcome(source: &str) -> Outcome {
     scalar::run(&lower(source.as_bytes()).unwrap_or_else(|e| panic!("{e:?} for\n{source}")))
 }
 
+/// One function of numbers and `bool`, which is one case of the test: its
+/// definitions, named by the place `k` of the case so that ten of them are one
+/// program, and the numbers it is called with.
 #[derive(Debug)]
 pub struct Program {
-    pub source: String,
+    pub k: usize,
+    pub defs: String,
     pub a: i128,
     pub b: i128,
+}
+
+impl Program {
+    /// The name of the function the case is about.
+    pub fn name(&self) -> String {
+        format!("f{}", self.k)
+    }
+}
+
+/// Ten cases, which are checked as one program and, where it is refused, one
+/// at a time.
+#[derive(Debug)]
+pub struct Batch {
+    pub cases: Vec<Program>,
+}
+
+/// How many cases are one program: a program is checked with the library each
+/// time, so the cost of a test is the number of programs.
+pub const BATCH: usize = 10;
+
+pub fn batch(g: &mut Gen) -> Batch {
+    Batch {
+        cases: (0..BATCH).map(|k| program(g, k)).collect(),
+    }
+}
+
+/// The program of cases, each printing what its function gives on its own line.
+pub fn batch_source(cases: &[Program]) -> String {
+    let defs: String = cases.iter().map(|c| c.defs.as_str()).collect();
+    let prints: String = cases
+        .iter()
+        .map(|c| format!("  print(\"{{{}({}, {})}}\")\n", c.name(), c.a, c.b))
+        .collect();
+    with_header(format!("{defs}fn main() ! console, alloc {{\n{prints}}}\n"))
 }
 
 fn number(g: &mut Gen) -> i128 {
@@ -212,7 +250,7 @@ fn bool_expr(g: &mut Gen, depth: usize, binds: &[&str]) -> String {
     }
 }
 
-pub fn program(g: &mut Gen) -> Program {
+pub fn program(g: &mut Gen, k: usize) -> Program {
     let (a, b) = (number(g), number(g));
     let (bind, binds): (String, &[&str]) = if g.one_in(2) {
         (format!("  t = {}\n", int_expr(g, 1, &[])), &["t"])
@@ -221,21 +259,21 @@ pub fn program(g: &mut Gen) -> Program {
     };
     let body = int_expr(g, 2, binds);
     let helper = if g.one_in(2) {
-        format!("fn h(a: i32, b: i32) -> bool {{ {} }}\n\n", bool_expr(g, 1, &[]))
+        format!(
+            "fn h{k}(a: i32, b: i32) -> bool {{ {} }}\n\n",
+            bool_expr(g, 1, &[])
+        )
     } else {
         String::new()
     };
     let body = if helper.is_empty() {
         body
     } else {
-        format!("if h(a, b) {{ {body} }} else {{ b }}")
+        format!("if h{k}(a, b) {{ {body} }} else {{ b }}")
     };
     Program {
-        source: with_header(format!(
-            "{helper}fn f(a: i32, b: i32) -> i32 {{\n{bind}  {body}\n}}\n\nfn main() ! console, alloc {{\n  print(\"{{f({}, {})}}\")\n}}\n",
-            a,
-            b
-        )),
+        k,
+        defs: format!("{helper}fn f{k}(a: i32, b: i32) -> i32 {{\n{bind}  {body}\n}}\n\n"),
         a,
         b,
     }
@@ -245,27 +283,44 @@ pub fn program(g: &mut Gen) -> Program {
 /// bindings, and calls of functions like it, the term is worked out to what
 /// the program prints.
 fn the_core_term_of_a_function_of_numbers_and_bool_gives_what_the_program_prints() {
-    generate::check(120, 200, program, |p| {
+    generate::check(120, 200 / BATCH as u64, batch, |batch| {
         // A program `arith` cannot prove fits is refused, which is not what is
-        // tested here.
-        let Ok(all) = core_terms(p.source.as_bytes()) else {
-            return;
-        };
-        let f = all.iter().find(|f| f.name == "f").expect("a term for f");
+        // tested here: its cases are then each tried alone.
+        if !worked_out(&batch.cases) {
+            for case in &batch.cases {
+                worked_out(std::slice::from_ref(case));
+            }
+        }
+    });
+}
+
+/// Whether the cases are accepted as one program, and if they are, that the
+/// term of each is worked out to the line the program prints for it.
+fn worked_out(cases: &[Program]) -> bool {
+    let source = batch_source(cases);
+    let Ok(all) = core_terms(source.as_bytes()) else {
+        return false;
+    };
+    let mut expected = String::new();
+    for case in cases {
+        let name = case.name();
+        let f = all.iter().find(|f| f.name == name).expect("a term for f");
         let mut env = vec![
-            ("a".to_string(), Value::Int(p.a)),
-            ("b".to_string(), Value::Int(p.b)),
+            ("a".to_string(), Value::Int(case.a)),
+            ("b".to_string(), Value::Int(case.b)),
         ];
         let got = int(&work_out(&all, &f.body, &mut env));
-        let printed = outcome(&p.source);
-        assert_eq!(
-            printed,
-            Outcome {
-                stdout: format!("{got}\n").into_bytes(),
-                status: 0
-            }
-        );
-    });
+        expected.push_str(&format!("{got}\n"));
+    }
+    assert_eq!(
+        outcome(&source),
+        Outcome {
+            stdout: expected.into_bytes(),
+            status: 0
+        },
+        "{source}"
+    );
+    true
 }
 
 fn a_sum_a_difference_and_a_product_are_calls_of_operators_with_the_exact_range() {
@@ -307,97 +362,179 @@ fn a_function_with_anything_else_in_it_has_no_core_term() {
     assert!(!names.contains(&"later"), "{names:?}");
 }
 
+/// One case of the test of structs, tuples, and enums: what its `size` says
+/// and the numbers `f` is called with.
 #[derive(Debug)]
 struct Data {
-    source: String,
+    at: usize,
     k: i128,
     a: i128,
     b: i128,
+    first: &'static str,
+    order: &'static str,
+    pick: i128,
 }
 
-fn data(g: &mut Gen) -> Data {
-    let (k, a, b) = (number(g), number(g), number(g));
-    let first = ["a", "b", "p.x", "p.y"][g.below(4)];
-    let order = ["<", "<=", ">", ">=", "=="][g.below(5)];
-    let pick = number(g);
-    Data {
-        source: with_header(format!(
-            "struct P {{\n  x: i32\n  y: i32\n}}\n\n\
-enum S {{\n  dot\n  circle: i32\n  rect: P\n}}\n\n\
-fn make(k: i32, a: i32, b: i32) -> S {{\n  if k < 0 {{ S.dot }} else if k == 0 {{ .circle(a) }} else {{ .rect(P(x: a, y: b)) }}\n}}\n\n\
-fn size(s: S, a: i32, b: i32) -> i32 {{\n  match s {{\n    .dot {{ {pick} }}\n    .circle(r) {{ r }}\n    .rect(p) {{ if p.x {order} p.y {{ {first} }} else {{ p.y }} }}\n  }}\n}}\n\n\
-fn pair(a: i32, b: i32) -> i32 {{\n  match (a, b) {{\n    (0, y) {{ y }}\n    (x, _) {{ x }}\n  }}\n}}\n\n\
-fn f(k: i32, a: i32, b: i32) -> i32 {{\n  pair(size(make(k, a, b), a, b), a)\n}}\n\n\
-fn main() ! console, alloc {{\n  print(\"{{f({k}, {a}, {b})}}\")\n}}\n"
-        )),
-        k,
-        a,
-        b,
+#[derive(Debug)]
+struct Datas(Vec<Data>);
+
+fn data(g: &mut Gen) -> Datas {
+    Datas(
+        (0..BATCH)
+            .map(|at| Data {
+                at,
+                k: number(g),
+                a: number(g),
+                b: number(g),
+                first: ["a", "b", "p.x", "p.y"][g.below(4)],
+                order: ["<", "<=", ">", ">=", "=="][g.below(5)],
+                pick: number(g),
+            })
+            .collect(),
+    )
+}
+
+/// The program of cases: the struct, the enum, `make`, and `pair` once, and a
+/// `size` and an `f` for each case.
+fn data_source(cases: &[Data]) -> String {
+    let mut source = String::from(
+        "struct P {\n  x: i32\n  y: i32\n}\n\nenum S {\n  dot\n  circle: i32\n  rect: P\n}\n\nfn make(k: i32, a: i32, b: i32) -> S {\n  if k < 0 { S.dot } else if k == 0 { .circle(a) } else { .rect(P(x: a, y: b)) }\n}\n\nfn pair(a: i32, b: i32) -> i32 {\n  match (a, b) {\n    (0, y) { y }\n    (x, _) { x }\n  }\n}\n\n",
+    );
+    for c in cases {
+        let Data { at, first, order, pick, .. } = c;
+        source.push_str(&format!(
+            "fn size{at}(s: S, a: i32, b: i32) -> i32 {{\n  match s {{\n    .dot {{ {pick} }}\n    .circle(r) {{ r }}\n    .rect(p) {{ if p.x {order} p.y {{ {first} }} else {{ p.y }} }}\n  }}\n}}\n\nfn f{at}(k: i32, a: i32, b: i32) -> i32 {{\n  pair(size{at}(make(k, a, b), a, b), a)\n}}\n\n"
+        ));
     }
+    source.push_str("fn main() ! console, alloc {\n");
+    for c in cases {
+        source.push_str(&format!(
+            "  print(\"{{f{}({}, {}, {})}}\")\n",
+            c.at, c.k, c.a, c.b
+        ));
+    }
+    source.push_str("}\n");
+    with_header(source)
 }
 
 /// For every function of structs, tuples, enums, `match`, and fields, the
 /// term is worked out to what the program prints.
 fn the_core_term_of_a_function_of_structs_tuples_and_enums_gives_what_the_program_prints() {
-    generate::check(121, 150, data, |p| {
-        let Ok(all) = core_terms(p.source.as_bytes()) else {
-            return;
-        };
-        let f = all.iter().find(|f| f.name == "f").expect("a term for f");
-        let mut env = vec![
-            ("k".to_string(), Value::Int(p.k)),
-            ("a".to_string(), Value::Int(p.a)),
-            ("b".to_string(), Value::Int(p.b)),
-        ];
-        let got = int(&work_out(&all, &f.body, &mut env));
-        assert_eq!(
-            outcome(&p.source),
-            Outcome {
-                stdout: format!("{got}\n").into_bytes(),
-                status: 0
+    generate::check(121, 150 / BATCH as u64, data, |p| {
+        if !data_worked_out(&p.0) {
+            for case in &p.0 {
+                data_worked_out(std::slice::from_ref(case));
             }
-        );
+        }
     });
 }
 
-#[derive(Debug)]
-struct Lambdas {
-    source: String,
-    a: i128,
+fn data_worked_out(cases: &[Data]) -> bool {
+    let source = data_source(cases);
+    let Ok(all) = core_terms(source.as_bytes()) else {
+        return false;
+    };
+    let mut expected = String::new();
+    for case in cases {
+        let name = format!("f{}", case.at);
+        let f = all.iter().find(|f| f.name == name).expect("a term for f");
+        let mut env = vec![
+            ("k".to_string(), Value::Int(case.k)),
+            ("a".to_string(), Value::Int(case.a)),
+            ("b".to_string(), Value::Int(case.b)),
+        ];
+        expected.push_str(&format!("{}\n", int(&work_out(&all, &f.body, &mut env))));
+    }
+    assert_eq!(
+        outcome(&source),
+        Outcome {
+            stdout: expected.into_bytes(),
+            status: 0
+        },
+        "{source}"
+    );
+    true
 }
 
+#[derive(Debug)]
+struct Lambda {
+    at: usize,
+    a: i128,
+    lo: i128,
+    hi: i128,
+    order: &'static str,
+    pivot: i128,
+}
+
+#[derive(Debug)]
+struct Lambdas(Vec<Lambda>);
+
 fn lambdas(g: &mut Gen) -> Lambdas {
-    let a = number(g);
-    let (lo, hi) = (number(g), number(g));
-    let (lo, hi) = (lo.min(hi), lo.max(hi));
-    let order = ["<", "<=", ">", ">=", "=="][g.below(5)];
-    let pivot = number(g);
-    Lambdas {
-        source: with_header(format!(
-            "fn twice(f: fn(i32) -> i32, x: i32) -> i32 {{ f(f(x)) }}\n\n\
-fn f(a: i32) -> i32 ! alloc {{\n  xs: List[i32] = [a, {lo}, {hi}]\n  twice(fn(v) {{ if v {order} {pivot} {{ {lo} }} else if v > {hi} {{ {hi} }} else {{ v }} }}, a)\n}}\n\n\
-fn main() ! console, alloc {{\n  print(\"{{f({a})}}\")\n}}\n"
-        )),
-        a,
+    Lambdas(
+        (0..BATCH)
+            .map(|at| {
+                let a = number(g);
+                let (lo, hi) = (number(g), number(g));
+                Lambda {
+                    at,
+                    a,
+                    lo: lo.min(hi),
+                    hi: lo.max(hi),
+                    order: ["<", "<=", ">", ">=", "=="][g.below(5)],
+                    pivot: number(g),
+                }
+            })
+            .collect(),
+    )
+}
+
+/// The program of cases: `twice` once, and an `f` for each case.
+fn lambda_source(cases: &[Lambda]) -> String {
+    let mut source = String::from("fn twice(f: fn(i32) -> i32, x: i32) -> i32 { f(f(x)) }\n\n");
+    for Lambda { at, lo, hi, order, pivot, .. } in cases {
+        source.push_str(&format!(
+            "fn f{at}(a: i32) -> i32 ! alloc {{\n  xs: List[i32] = [a, {lo}, {hi}]\n  twice(fn(v) {{ if v {order} {pivot} {{ {lo} }} else if v > {hi} {{ {hi} }} else {{ v }} }}, a)\n}}\n\n"
+        ));
     }
+    source.push_str("fn main() ! console, alloc {\n");
+    for c in cases {
+        source.push_str(&format!("  print(\"{{f{}({})}}\")\n", c.at, c.a));
+    }
+    source.push_str("}\n");
+    with_header(source)
 }
 
 /// For every function that holds a list, writes a lambda, and calls a function
 /// that is a value, the term is worked out to what the program prints.
 fn the_core_term_of_a_function_with_a_list_a_lambda_and_a_call_of_a_function_value_gives_what_the_program_prints() {
-    generate::check(122, 150, lambdas, |p| {
-        let Ok(all) = core_terms(p.source.as_bytes()) else {
-            return;
-        };
-        let f = all.iter().find(|f| f.name == "f").expect("a term for f");
-        let mut env = vec![("a".to_string(), Value::Int(p.a))];
-        let got = int(&work_out(&all, &f.body, &mut env));
-        assert_eq!(
-            outcome(&p.source),
-            Outcome {
-                stdout: format!("{got}\n").into_bytes(),
-                status: 0
+    generate::check(122, 150 / BATCH as u64, lambdas, |p| {
+        if !lambda_worked_out(&p.0) {
+            for case in &p.0 {
+                lambda_worked_out(std::slice::from_ref(case));
             }
-        );
+        }
     });
+}
+
+fn lambda_worked_out(cases: &[Lambda]) -> bool {
+    let source = lambda_source(cases);
+    let Ok(all) = core_terms(source.as_bytes()) else {
+        return false;
+    };
+    let mut expected = String::new();
+    for case in cases {
+        let name = format!("f{}", case.at);
+        let f = all.iter().find(|f| f.name == name).expect("a term for f");
+        let mut env = vec![("a".to_string(), Value::Int(case.a))];
+        expected.push_str(&format!("{}\n", int(&work_out(&all, &f.body, &mut env))));
+    }
+    assert_eq!(
+        outcome(&source),
+        Outcome {
+            stdout: expected.into_bytes(),
+            status: 0
+        },
+        "{source}"
+    );
+    true
 }
