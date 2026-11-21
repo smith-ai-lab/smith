@@ -986,6 +986,20 @@ impl Program {
         self.functions[self.main].blocks[0].params.len() == ARGUMENTS.len()
     }
 
+    /// Whether the program asks the system for random bytes.
+    pub fn asks_for_entropy(&self) -> bool {
+        let instructions = self.functions.iter().flat_map(|f| &f.blocks);
+        instructions.flat_map(|b| &b.instructions).any(|i| {
+            matches!(
+                i.op,
+                Op::System {
+                    call: System::Entropy,
+                    ..
+                }
+            )
+        })
+    }
+
     /// Whether the program asks the system for memory.
     pub fn allocates(&self) -> bool {
         let instructions = self.functions.iter().flat_map(|f| &f.blocks);

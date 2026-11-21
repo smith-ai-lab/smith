@@ -3,9 +3,9 @@
 //! by `x86_64`.
 
 use super::Part;
-use super::macho::{self, EINTR, ERROR, EXIT, MMAP, MMAP_REQUEST, Machine, WRITE};
+use super::macho::{self, EINTR, ERROR, EXIT, GETENTROPY, MMAP, MMAP_REQUEST, Machine, WRITE};
 use super::x86_64::{
-    self, Asm, L, LE, Place, R8, R9, R12, RAX, RBX, RCX, RDI, RDX, RSI, Reg, S, System, Z,
+    self, Asm, L, LE, NE, Place, R8, R9, R12, RAX, RBX, RCX, RDI, RDX, RSI, Reg, S, System, Z,
 };
 use crate::scalar::{Program, Stream};
 
@@ -20,7 +20,7 @@ const MACHINE: Machine = Machine {
 pub fn emit(program: &Program) -> (Vec<u8>, Vec<Part>) {
     let (asm, data, parts) = x86_64::code::<Macos>(program);
     let size = asm.len() + data.iter().map(|(_, d)| d.len()).sum::<usize>();
-    let imports = macho::imports(program.allocates());
+    let imports = macho::imports(program.allocates(), program.asks_for_entropy());
     let mut at = 0;
     let executable = macho::executable(&MACHINE, size as u64, imports, |code, got| {
         at = code;
@@ -75,10 +75,39 @@ impl System for Macos {
         asm.load(R12, 8, false, Place::Frame(8));
     }
 
-    /// The system is not asked yet, and `compile` refuses a program that asks
-    /// for bytes for this target, so this is not reached.
+    /// Asks the system for the bytes, `getentropy` taking at most 256 at a
+    /// time and giving 0 when it filled them and -1 when it did not, in pieces
+    /// of at most 64 until every byte is filled. The place and the count still
+    /// to fill stay in rbx and r12, which calls keep.
     fn entropy(asm: &mut Asm) {
+        asm.store(Place::Frame(0), RBX, 8);
+        asm.store(Place::Frame(8), R12, 8);
+        asm.mov(RBX, RDI);
+        asm.mov(R12, RSI);
+        let again = asm.label();
+        let filled = asm.label();
+        let refused = asm.label();
+        let end = asm.label();
+        asm.bind(again);
+        asm.test(R12);
+        asm.jcc(Z, filled);
+        asm.mov(RDI, RBX);
+        piece(asm);
+        asm.call_slot(GETENTROPY);
+        asm.test(RAX);
+        asm.jcc(NE, refused);
+        piece(asm);
+        asm.add(RBX, RSI);
+        asm.sub(R12, RSI);
+        asm.jmp(again);
+        asm.bind(refused);
         asm.mov32(RAX, 1);
+        asm.jmp(end);
+        asm.bind(filled);
+        asm.mov32(RAX, 0);
+        asm.bind(end);
+        asm.load(RBX, 8, false, Place::Frame(0));
+        asm.load(R12, 8, false, Place::Frame(8));
     }
 
     fn end(asm: &mut Asm) {
@@ -105,6 +134,16 @@ impl System for Macos {
     }
 
     fn arguments_by_call(_: &mut Asm) {}
+}
+
+/// Puts in rsi the most that is filled at a time: the count left, or 64.
+fn piece(asm: &mut Asm) {
+    let whole = asm.label();
+    asm.mov(RSI, R12);
+    asm.cmp_imm8(RSI, 64);
+    asm.jcc(LE, whole);
+    asm.mov32(RSI, 64);
+    asm.bind(whole);
 }
 
 fn fd(stream: Stream) -> u32 {

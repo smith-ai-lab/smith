@@ -256,30 +256,13 @@ pub fn compile_timed(
     Ok(emit(program, target, false, timings)?.executable)
 }
 
-/// Whether the program asks the system for random bytes, which only the
-/// targets that answer `entropy` can build.
-fn asks_for_entropy(program: &scalar::Program) -> bool {
-    (program.functions.iter())
-        .flat_map(|f| &f.blocks)
-        .flat_map(|b| &b.instructions)
-        .any(|i| {
-            matches!(
-                i.op,
-                scalar::Op::System {
-                    call: scalar::System::Entropy,
-                    ..
-                }
-            )
-        })
-}
-
 fn emit(
     program: scalar::Program,
     target: Target,
     map: bool,
     timings: &mut Timings,
 ) -> Result<Built, Vec<diag::Error>> {
-    if asks_for_entropy(&program) && !target.answers_entropy() {
+    if program.asks_for_entropy() && !target.answers_entropy() {
         return Err(vec![diag::Error::new(
             diag::Pos::START,
             format!(

@@ -3,8 +3,10 @@
 //! requires. The executable is written by `macho`.
 
 use super::Part;
-use super::arm64::{self, Asm, EQ, LE, LT, Place, System, X0, X1, X2, X3, X4, X5, X19, X20};
-use super::macho::{self, EINTR, ERROR, EXIT, MMAP, MMAP_REQUEST, Machine, WRITE};
+use super::arm64::{
+    self, Asm, EQ, LE, LO, LT, NE, Place, System, X0, X1, X2, X3, X4, X5, X19, X20,
+};
+use super::macho::{self, EINTR, ERROR, EXIT, GETENTROPY, MMAP, MMAP_REQUEST, Machine, WRITE};
 use crate::scalar::{Program, Stream};
 
 const MACHINE: Machine = Machine {
@@ -18,7 +20,7 @@ const MACHINE: Machine = Machine {
 pub fn emit(program: &Program) -> (Vec<u8>, Vec<Part>) {
     let (asm, data, parts) = arm64::code::<Macos>(program);
     let size = asm.len() + data.iter().map(|(_, d)| d.len()).sum::<usize>();
-    let imports = macho::imports(program.allocates());
+    let imports = macho::imports(program.allocates(), program.asks_for_entropy());
     let mut at = 0;
     let executable = macho::executable(&MACHINE, size as u64, imports, |code, got| {
         at = code;
@@ -76,10 +78,40 @@ impl System for Macos {
         asm.load(X20, 8, false, Place::Frame(8));
     }
 
-    /// The system is not asked yet, and `compile` refuses a program that asks
-    /// for bytes for this target, so this is not reached.
+    /// Asks the system for the bytes, `getentropy` taking at most 256 at a
+    /// time and giving 0 when it filled them and -1 when it did not, in pieces
+    /// of at most 64 until every byte is filled. The place and the count still
+    /// to fill stay in x19 and x20, which calls keep.
     fn entropy(asm: &mut Asm) {
+        asm.store(Place::Frame(0), X19, 8);
+        asm.store(Place::Frame(8), X20, 8);
+        asm.mov(X19, X1);
+        asm.mov(X20, X2);
+        let again = asm.label();
+        let filled = asm.label();
+        let refused = asm.label();
+        let end = asm.label();
+        asm.bind(again);
+        asm.cbz(X20, filled);
+        asm.mov(X0, X19);
+        piece(asm);
+        asm.call(GETENTROPY);
+        // cmp x0, #0; b.ne refused
+        asm.word(0xf100_001f);
+        asm.cond(NE, refused);
+        piece(asm);
+        // add x19, x19, x1; sub x20, x20, x1; b again
+        asm.word(0x8b00_0000 | X1 << 16 | X19 << 5 | X19);
+        asm.word(0xcb00_0000 | X1 << 16 | X20 << 5 | X20);
+        asm.branch(again);
+        asm.bind(refused);
         asm.mov_w(X0, 1);
+        asm.branch(end);
+        asm.bind(filled);
+        asm.mov_w(X0, 0);
+        asm.bind(end);
+        asm.load(X19, 8, false, Place::Frame(0));
+        asm.load(X20, 8, false, Place::Frame(8));
     }
 
     fn end(asm: &mut Asm) {
@@ -107,6 +139,17 @@ impl System for Macos {
     }
 
     fn arguments_by_call(_: &mut Asm) {}
+}
+
+/// Puts in x1 the most that is filled at a time: the count left, or 64.
+fn piece(asm: &mut Asm) {
+    let whole = asm.label();
+    asm.mov(X1, X20);
+    // cmp x1, #64; b.lo whole
+    asm.word(0xf100_001f | 64 << 10 | X1 << 5);
+    asm.cond(LO, whole);
+    asm.mov_w(X1, 64);
+    asm.bind(whole);
 }
 
 fn fd(stream: Stream) -> u16 {

@@ -5,7 +5,8 @@
 //!
 //! From `libSystem` the program uses only thin wrappers over the kernel:
 //! `write`, `_exit`, `__error`, which gives the thread's error number, and,
-//! in a program that asks for memory, `mmap`.
+//! in a program that asks for memory, `mmap`, and in one that asks for random
+//! bytes, `getentropy`.
 //! Nothing from the system is needed to build: the load commands that ask
 //! the loader for the library and its symbols, and the signature, are
 //! written here.
@@ -18,7 +19,7 @@ const SIGNATURE_PAGE: usize = 0x1000;
 /// The symbols a program may import from `libSystem`, in the order of their
 /// slots in `__got`. A program that never asks for memory imports only the
 /// first three.
-const IMPORTS: [&str; 4] = ["_write", "___error", "__exit", "_mmap"];
+const IMPORTS: [&str; 5] = ["_write", "___error", "__exit", "_mmap", "_getentropy"];
 /// `write`, which writes bytes to a file.
 pub const WRITE: usize = 0;
 /// `__error`, which gives the address of the thread's error number.
@@ -27,10 +28,20 @@ pub const ERROR: usize = 1;
 pub const EXIT: usize = 2;
 /// `mmap`, which maps memory.
 pub const MMAP: usize = 3;
+/// `getentropy`, which fills at most 256 bytes with bytes nobody can predict.
+pub const GETENTROPY: usize = 4;
 
-/// The symbols a program imports: `mmap` only if it asks for memory.
-pub fn imports(allocates: bool) -> &'static [&'static str] {
-    if allocates { &IMPORTS } else { &IMPORTS[..3] }
+/// The symbols a program imports: `mmap` only if it asks for memory, and
+/// `getentropy` only if it asks for random bytes, which it says it could not
+/// get in a text it asks for memory to write, so it asks for memory too.
+pub fn imports(allocates: bool, entropy: bool) -> &'static [&'static str] {
+    if entropy {
+        &IMPORTS
+    } else if allocates {
+        &IMPORTS[..4]
+    } else {
+        &IMPORTS[..3]
+    }
 }
 
 /// What `mmap` is asked for: pages that are read and written, and fresh

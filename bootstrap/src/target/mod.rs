@@ -315,11 +315,8 @@ impl Target {
     /// system gave none.
     pub fn answers_entropy(self) -> bool {
         match self {
-            Target::LinuxX64 | Target::LinuxArm64 => true,
-            Target::MacosX64 | Target::MacosArm64 | Target::WindowsX64 | Target::WindowsArm64 => {
-                false
-            }
-            Target::Wasm => false,
+            Target::LinuxX64 | Target::LinuxArm64 | Target::MacosX64 | Target::MacosArm64 => true,
+            Target::WindowsX64 | Target::WindowsArm64 | Target::Wasm => false,
         }
     }
 
