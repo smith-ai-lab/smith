@@ -29,11 +29,11 @@ use std.fetch (FetchError, Request, Response, fetch, send)
 use std.time (sleep, time)
 
 enum Outcome {
-  page: Result[Response, FetchError]
+  page: Result[Response[65536], FetchError]
   late
 }
 
-fn fetch_within_5_seconds(url: str) -> Result[Response, FetchError] ! fetch, time, alloc {
+fn fetch_within_5_seconds(url: str) -> Result[Response[65536], FetchError] ! fetch, time, alloc {
   with tasks()
   work = spawn { Outcome.page(send(Request(url: url), 65536)) }
   wait = spawn {
