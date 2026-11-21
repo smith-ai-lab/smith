@@ -17,6 +17,10 @@ pub const ONCE: &[Test] = &[
         a_parameter_named_as_a_function_of_its_module_calls_for_nothing,
     ),
     (
+        "an_operation_with_a_type_the_file_does_not_name_is_refused_as_a_value",
+        an_operation_with_a_type_the_file_does_not_name_is_refused_as_a_value,
+    ),
+    (
         "an_effect_a_file_does_not_list_is_no_effect_of_the_file",
         an_effect_a_file_does_not_list_is_no_effect_of_the_file,
     ),
@@ -67,6 +71,18 @@ fn an_effect_a_file_does_not_list_is_no_effect_of_the_file() {
     };
     assert!(
         found.iter().any(|e| e.message.contains("no effect named `fx`")),
+        "{found:?}"
+    );
+}
+
+/// `print` has a parameter of `Stream`, which the file does not import, so its
+/// name as a value had a type that passed for any type, and what the program
+/// built from it was no program: the mistake is reported where the name is.
+fn an_operation_with_a_type_the_file_does_not_name_is_refused_as_a_value() {
+    let source = "use std.console (console, print)\n\nfn main() ! console {\n  x = print\n  print(x)\n}\n";
+    let found = errors(source);
+    assert!(
+        found.len() == 1 && found[0].contains("passing a function with a type this file does not name"),
         "{found:?}"
     );
 }
