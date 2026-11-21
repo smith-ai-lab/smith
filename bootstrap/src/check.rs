@@ -8114,6 +8114,11 @@ impl<'a> Checker<'a> {
         if agrees(needed, &gives) {
             return gives;
         }
+        // A number whose type its uses decide is asked to be the type needed.
+        use_at(at);
+        if flex_pair(needed, &gives) {
+            return gives;
+        }
         // A range is taken where a wider one is wanted, with nothing written.
         if let (Want::Ty(Ty::Int(n)), Ty::Int(g), End::Value(_, value)) = (want, &gives, &end) {
             self.widened.insert(addr(*value), *n);
