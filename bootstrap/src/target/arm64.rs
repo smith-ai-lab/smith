@@ -779,6 +779,11 @@ pub trait System {
     /// change x0 to x17, and leaves x19 to x28 as they were, which it may do
     /// by holding them in the bytes at the bottom of the frame.
     fn write(asm: &mut Asm, stream: Stream, fail: usize);
+    /// Fills every byte of the bytes whose address is in x1 and whose count is
+    /// in x2 with bytes the system gives, asking again until they are filled,
+    /// and leaves 0 in x0 when it did and another number when the system
+    /// refused. It may change what `write` may.
+    fn entropy(asm: &mut Asm);
     /// Ends the program with the status in x0.
     fn end(asm: &mut Asm);
     /// Ends the program with the status.
@@ -1688,6 +1693,21 @@ impl<S: System> Writer<'_, S> {
                     .collect();
                 self.run(asm, &moves);
                 S::write(asm, *stream, self.fail);
+            }
+            Op::System {
+                call: Call::Entropy,
+                args,
+            } => {
+                let moves: Vec<Move<Loc>> = (args.iter().zip([X1, X2]))
+                    .map(|(arg, to)| Move {
+                        to: Loc::Register(to),
+                        from: self.at[arg.0],
+                        width: self.width(*arg),
+                    })
+                    .collect();
+                self.run(asm, &moves);
+                S::entropy(asm);
+                self.finish(asm, results[0], X0, true);
             }
             Op::System {
                 call: Call::Exit,

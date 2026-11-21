@@ -628,3 +628,25 @@ pub(super) fn check(valid: usize, decimal: usize, join: usize) -> Function {
     f.ret(vec![]);
     f.finish(&[])
 }
+
+/// Fills the bytes at the address from the system, and says that the system
+/// gave no random bytes, and ends with a failing status, when it refuses.
+pub(super) fn entropy() -> Function {
+    let mut f = Builder::new();
+    let p = f.params(&[ADDRESS, LENGTH]);
+    let status = f.entropy(p[0], p[1]);
+    let zero = byte(&mut f, 0);
+    let filled = f.compare(Compare::Equal, status, zero);
+    let (done, _) = f.block(&[]);
+    let (failed, _) = f.block(&[]);
+    f.switch(filled, vec![(failed, vec![]), (done, vec![])]);
+    f.at(done);
+    f.ret(vec![]);
+    f.at(failed);
+    let [line, length] = text_of(&mut f, b"the system gave no random bytes\n");
+    f.write_error(line, length);
+    let status = byte(&mut f, 1);
+    f.exit(status);
+    f.ret(vec![]);
+    f.finish(&[])
+}

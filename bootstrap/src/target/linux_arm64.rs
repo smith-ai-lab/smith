@@ -10,6 +10,7 @@ use crate::scalar::{Program, Stream};
 
 const SYS_WRITE: u16 = 64;
 const SYS_MMAP: u16 = 222;
+const SYS_GETRANDOM: u16 = 278;
 const PROT_READ_WRITE: u16 = 0x1 | 0x2;
 const MAP_PRIVATE_ANONYMOUS: u16 = 0x02 | 0x20;
 const SYS_EXIT_GROUP: u16 = 94;
@@ -61,6 +62,45 @@ impl System for Linux {
         asm.cond(EQ, again);
         asm.branch(fail);
         asm.bind(done);
+        asm.load(X19, 8, false, Place::Frame(0));
+        asm.load(X20, 8, false, Place::Frame(8));
+    }
+
+    /// Asks the kernel for the bytes until every one is filled, retrying a
+    /// call that gives fewer or is interrupted. The kernel gives a failure as
+    /// minus its error number.
+    fn entropy(asm: &mut Asm) {
+        asm.store(Place::Frame(0), X19, 8);
+        asm.store(Place::Frame(8), X20, 8);
+        asm.mov(X19, X1);
+        asm.mov(X20, X2);
+        let again = asm.label();
+        let filled = asm.label();
+        let refused = asm.label();
+        let end = asm.label();
+        asm.bind(again);
+        asm.cbz(X20, filled);
+        asm.mov(X0, X19);
+        asm.mov(X1, X20);
+        asm.mov_w(X2, 0);
+        asm.mov_w(X8, SYS_GETRANDOM);
+        asm.svc();
+        // cmp x0, #0; b.le refused
+        asm.word(0xf100_001f);
+        asm.cond(LE, refused);
+        // add x19, x19, x0; sub x20, x20, x0; b again
+        asm.word(0x8b00_0000 | X0 << 16 | X19 << 5 | X19);
+        asm.word(0xcb00_0000 | X0 << 16 | X20 << 5 | X20);
+        asm.branch(again);
+        asm.bind(refused);
+        // cmn x0, #EINTR; b.eq again
+        asm.word(0xb100_001f | EINTR << 10 | X0 << 5);
+        asm.cond(EQ, again);
+        asm.mov_w(X0, 1);
+        asm.branch(end);
+        asm.bind(filled);
+        asm.mov_w(X0, 0);
+        asm.bind(end);
         asm.load(X19, 8, false, Place::Frame(0));
         asm.load(X20, 8, false, Place::Frame(8));
     }

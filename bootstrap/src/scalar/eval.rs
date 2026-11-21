@@ -959,6 +959,23 @@ impl Machine<'_> {
                         self.memory.resize(self.memory.len() + count as usize, 0);
                         vec![Word::Address(at)]
                     }
+                    // Bytes nobody can predict are not what an evaluator that
+                    // says the same every time can give: it fills each byte
+                    // with its place, which is what no system gives.
+                    Op::System {
+                        call: System::Entropy,
+                        args,
+                    } => {
+                        let (Word::Address(at), Word::Int(count)) = (get(&args[0]), get(&args[1]))
+                        else {
+                            panic!("a fill that is not of an address and a count")
+                        };
+                        let from = at - BASE;
+                        for k in 0..count as usize {
+                            self.memory[from + k] = k as u8;
+                        }
+                        vec![Word::Int(0)]
+                    }
                     Op::System {
                         call: System::Exit,
                         args,

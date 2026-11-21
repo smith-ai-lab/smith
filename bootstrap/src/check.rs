@@ -769,6 +769,19 @@ impl Signature {
         }
     }
 
+    /// `fill` of `entropy`: a list of bytes, which the system fills.
+    fn fill() -> Signature {
+        Signature {
+            scope: Scope::default(),
+            params: vec![("bytes".to_string(), Ty::List(vec![Ty::Int(Int::U8)]))],
+            defaults: vec![false],
+            param_defaults: Vec::new(),
+            gives: Ty::List(vec![Ty::Int(Int::U8)]),
+            effects: vec!["entropy".to_string()],
+            fn_effects: Vec::new(),
+        }
+    }
+
     fn print() -> Signature {
         Signature {
             scope: Scope::default(),
@@ -5638,6 +5651,9 @@ enum Callee {
     Eprint,
     /// `__end`, which the prelude calls to end the program with a status.
     End,
+    /// `entropy.fill`, which the system answers by filling the bytes of a list
+    /// and giving it back.
+    Fill,
     Construct(usize, Vec<Ty>),
     /// A case of an enum written in full, by its place among the enum's
     /// cases.
@@ -6045,6 +6061,7 @@ impl<'a> Typed<'a> {
             Callee::Print
             | Callee::Eprint
             | Callee::End
+            | Callee::Fill
             | Callee::Case(_)
             | Callee::Value
             | Callee::Intrinsic

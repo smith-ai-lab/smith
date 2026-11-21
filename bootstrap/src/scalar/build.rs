@@ -278,6 +278,18 @@ impl Builder {
         )[0]
     }
 
+    /// Fills the bytes from the address, as many as the 64-bit integer says,
+    /// from the system, and gives the byte that says whether it did.
+    pub fn entropy(&mut self, address: Value, count: Value) -> Value {
+        self.emit(
+            Op::System {
+                call: System::Entropy,
+                args: vec![address, count],
+            },
+            &[Type::Int(Bits::B8)],
+        )[0]
+    }
+
     /// Writes the bytes from the address, as many as the 64-bit integer
     /// says, to standard error.
     pub fn write_error(&mut self, address: Value, count: Value) {

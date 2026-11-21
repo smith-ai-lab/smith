@@ -1,0 +1,3 @@
+pub effect entropy {
+  pub fn fill(bytes: take List[Byte]) -> List[Byte]
+}

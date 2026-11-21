@@ -255,6 +255,12 @@ pub enum System {
     /// Ends the program with the status, a byte, that it takes. It gives
     /// nothing.
     Exit,
+    /// Fills the bytes from an address, as many as a 64-bit integer says,
+    /// with bytes nobody can predict, which the system gives. It takes the
+    /// address and then the count, and gives a byte: 0 when every byte is
+    /// filled, which it asks the system again for until they are, and
+    /// another when the system refused, with some bytes perhaps filled.
+    Entropy,
 }
 
 /// What an instruction does with two integers of the same size, except a

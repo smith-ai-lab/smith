@@ -76,6 +76,12 @@ impl System for Macos {
         asm.load(X20, 8, false, Place::Frame(8));
     }
 
+    /// The system is not asked yet, so it has given no bytes, and the program
+    /// that asked for them says so and ends.
+    fn entropy(asm: &mut Asm) {
+        asm.mov_w(X0, 1);
+    }
+
     fn end(asm: &mut Asm) {
         asm.call(EXIT);
     }

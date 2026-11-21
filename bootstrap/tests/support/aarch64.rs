@@ -4,8 +4,8 @@
 //! message that names the word when it meets one it does not know, so a
 //! new instruction is a failing test and not a wrong answer.
 //!
-//! The kernel's part is three calls: `write` to the standard output, `mmap`
-//! of fresh pages, and `exit_group`.
+//! The kernel's part is four calls: `write` to the standard output and the
+//! standard error, `mmap` of fresh pages, `getrandom`, and `exit_group`.
 
 const STACK_BASE: u64 = 0x7000_0000;
 const STACK_SIZE: u64 = 1 << 20;
@@ -22,6 +22,7 @@ const AARCH64: u16 = 0xb7;
 #[derive(Debug, PartialEq, Eq)]
 pub struct Ran {
     pub stdout: Vec<u8>,
+    pub stderr: Vec<u8>,
     pub status: i32,
     /// How many instructions it ran.
     pub steps: u64,
@@ -60,11 +61,35 @@ struct Machine {
     c: bool,
     v: bool,
     stdout: Vec<u8>,
+    stderr: Vec<u8>,
     next_heap: u64,
+    /// How the kernel answers `getrandom`, and what it has been asked.
+    entropy: Entropy,
+    asked: u64,
+    random: u64,
+}
+
+/// How the kernel answers a request for random bytes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Entropy {
+    /// Every byte asked for, never the same twice.
+    Fresh,
+    /// At most this many bytes a call, so a program that asks once is not
+    /// given all it needs.
+    ByPieces(u64),
+    /// The first call is interrupted, and the next are as `Fresh` says.
+    Interrupted,
+    /// Every call fails, with an error that is not an interrupt.
+    Refused,
 }
 
 /// Runs the executable, which must be one `is_executable` accepts.
 pub fn run(bytes: &[u8]) -> Ran {
+    run_with(bytes, Entropy::Fresh)
+}
+
+/// Runs the executable, with the kernel answering random bytes as said.
+pub fn run_with(bytes: &[u8], entropy: Entropy) -> Ran {
     assert!(is_executable(bytes), "not an arm64 executable");
     let mut m = Machine {
         regions: Vec::new(),
@@ -77,7 +102,19 @@ pub fn run(bytes: &[u8]) -> Ran {
         c: false,
         v: false,
         stdout: Vec::new(),
+        stderr: Vec::new(),
         next_heap: HEAP_BASE,
+        entropy,
+        asked: 0,
+        // What no two runs have the same: the time, and a number that
+        // counts the runs.
+        random: {
+            static RUNS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_or(1, |d| d.as_nanos() as u64);
+            (now ^ RUNS.fetch_add(1, std::sync::atomic::Ordering::Relaxed).wrapping_mul(0x9e37_79b9_7f4a_7c15)) | 1
+        },
     };
     let headers = u64_at(bytes, 32) as usize;
     let size = u16_at(bytes, 54) as usize;
@@ -184,6 +221,7 @@ impl Machine {
             if let Some(status) = self.step(w, at) {
                 return Ran {
                     stdout: std::mem::take(&mut self.stdout),
+                    stderr: std::mem::take(&mut self.stderr),
                     status,
                     steps,
                 };
@@ -809,10 +847,40 @@ impl Machine {
             64 => {
                 let (fd, address, len) = (self.x[0], self.x[1], self.x[2]);
                 let bytes = self.region(address, len).to_vec();
-                if fd == 1 {
-                    self.stdout.extend_from_slice(&bytes);
+                match fd {
+                    1 => self.stdout.extend_from_slice(&bytes),
+                    2 => self.stderr.extend_from_slice(&bytes),
+                    _ => {}
                 }
                 self.x[0] = len;
+                None
+            }
+            // `getrandom(buffer, count, flags)`: gives the number of bytes it
+            // filled, or minus the error number.
+            278 => {
+                let (address, len, flags) = (self.x[0], self.x[1], self.x[2]);
+                assert_eq!(flags, 0, "getrandom with flags");
+                self.asked += 1;
+                let most = match self.entropy {
+                    Entropy::Refused => {
+                        self.x[0] = (-5i64) as u64;
+                        return None;
+                    }
+                    Entropy::Interrupted if self.asked == 1 => {
+                        self.x[0] = (-4i64) as u64;
+                        return None;
+                    }
+                    Entropy::ByPieces(n) => n,
+                    _ => len,
+                };
+                let count = len.min(most);
+                for k in 0..count {
+                    self.random ^= self.random << 13;
+                    self.random ^= self.random >> 7;
+                    self.random ^= self.random << 17;
+                    self.write(address + k, 1, self.random >> 24 & 0xff);
+                }
+                self.x[0] = count;
                 None
             }
             94 => Some(self.x[0] as u8 as i32),
