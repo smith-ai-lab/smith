@@ -572,3 +572,15 @@ fn every_executable_prints_2_5_for_half_of_5() {
         runs_as(source.as_bytes(), target, &outcome);
     }
 }
+
+/// The sources of the programs of floats that the other tests of this file
+/// run: every operator and comparison, and the text, of each size, so that a
+/// target that is run by a host is held to the evaluator on them.
+pub fn sources() -> Vec<String> {
+    vec![
+        generate::sample(0, 0, program::<f32>).0,
+        generate::sample(1, 0, program::<f64>).0,
+        generate::sample(2, 0, text_program::<f32>).0,
+        generate::sample(3, 0, text_program::<f64>).0,
+    ]
+}

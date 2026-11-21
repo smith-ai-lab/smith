@@ -6,6 +6,8 @@
 pub enum Kind {
     I32,
     I64,
+    F32,
+    F64,
 }
 
 impl Kind {
@@ -13,6 +15,8 @@ impl Kind {
         match self {
             Kind::I32 => 0x7F,
             Kind::I64 => 0x7E,
+            Kind::F32 => 0x7D,
+            Kind::F64 => 0x7C,
         }
     }
 }
@@ -37,8 +41,12 @@ pub const I32_LOAD: u8 = 0x28;
 pub const I64_LOAD: u8 = 0x29;
 pub const I32_LOAD8_U: u8 = 0x2D;
 pub const I32_LOAD16_U: u8 = 0x2F;
+pub const F32_LOAD: u8 = 0x2A;
+pub const F64_LOAD: u8 = 0x2B;
 pub const I32_STORE: u8 = 0x36;
 pub const I64_STORE: u8 = 0x37;
+pub const F32_STORE: u8 = 0x38;
+pub const F64_STORE: u8 = 0x39;
 pub const I32_STORE8: u8 = 0x3A;
 pub const I32_STORE16: u8 = 0x3B;
 pub const MEMORY_SIZE: u8 = 0x3F;
@@ -86,6 +94,46 @@ pub const I64_EXTEND_I32_S: u8 = 0xAC;
 pub const I64_EXTEND_I32_U: u8 = 0xAD;
 pub const I32_EXTEND8_S: u8 = 0xC0;
 pub const I32_EXTEND16_S: u8 = 0xC1;
+
+pub const F32_CONST: u8 = 0x43;
+pub const F64_CONST: u8 = 0x44;
+pub const I32_GT_S: u8 = 0x4A;
+pub const I32_GT_U: u8 = 0x4B;
+pub const F32_EQ: u8 = 0x5B;
+pub const F32_NE: u8 = 0x5C;
+pub const F32_LT: u8 = 0x5D;
+pub const F32_GT: u8 = 0x5E;
+pub const F32_LE: u8 = 0x5F;
+pub const F32_GE: u8 = 0x60;
+pub const F64_EQ: u8 = 0x61;
+pub const F64_NE: u8 = 0x62;
+pub const F64_LT: u8 = 0x63;
+pub const F64_GT: u8 = 0x64;
+pub const F64_LE: u8 = 0x65;
+pub const F64_GE: u8 = 0x66;
+pub const F32_NEG: u8 = 0x8C;
+pub const F32_ADD: u8 = 0x92;
+pub const F32_SUB: u8 = 0x93;
+pub const F32_MUL: u8 = 0x94;
+pub const F32_DIV: u8 = 0x95;
+pub const F64_NEG: u8 = 0x9A;
+pub const F64_ADD: u8 = 0xA0;
+pub const F64_SUB: u8 = 0xA1;
+pub const F64_MUL: u8 = 0xA2;
+pub const F64_DIV: u8 = 0xA3;
+pub const F32_CONVERT_I32_S: u8 = 0xB2;
+pub const F32_CONVERT_I32_U: u8 = 0xB3;
+pub const F32_CONVERT_I64_S: u8 = 0xB4;
+pub const F32_CONVERT_I64_U: u8 = 0xB5;
+pub const F32_DEMOTE_F64: u8 = 0xB6;
+pub const F64_CONVERT_I32_S: u8 = 0xB7;
+pub const F64_CONVERT_I32_U: u8 = 0xB8;
+pub const F64_CONVERT_I64_S: u8 = 0xB9;
+pub const F64_CONVERT_I64_U: u8 = 0xBA;
+pub const F64_PROMOTE_F32: u8 = 0xBB;
+/// The prefix of the instructions that truncate a float to an integer and
+/// saturate, which give 0 for a float that is not a number.
+pub const SATURATING: u8 = 0xFC;
 
 /// The type of a block that gives nothing.
 const NO_VALUE: u8 = 0x40;
@@ -156,6 +204,23 @@ impl Code {
     pub fn i64_const(&mut self, n: i64) {
         self.op(I64_CONST);
         signed(&mut self.bytes, n);
+    }
+
+    pub fn f32_const(&mut self, bits: u32) {
+        self.op(F32_CONST);
+        self.bytes.extend_from_slice(&bits.to_le_bytes());
+    }
+
+    pub fn f64_const(&mut self, bits: u64) {
+        self.op(F64_CONST);
+        self.bytes.extend_from_slice(&bits.to_le_bytes());
+    }
+
+    /// A truncation of a float to an integer that saturates: `which` is the
+    /// number of the instruction after the prefix, 0 to 7.
+    pub fn saturating(&mut self, which: u8) {
+        self.op(SATURATING);
+        unsigned(&mut self.bytes, u64::from(which));
     }
 
     pub fn call(&mut self, function: u32) {
