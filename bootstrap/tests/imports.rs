@@ -44,8 +44,28 @@ pub const ONCE: &[Test] = &[
         || a_file_that_imports_the_names_it_uses_builds_what_it_built_without_the_use(1),
     ),
     (
-        "a_name_that_is_imported_and_not_used_is_a_warning_at_its_name_and_changes_nothing",
-        a_name_that_is_imported_and_not_used_is_a_warning_at_its_name_and_changes_nothing,
+        "a_name_that_is_imported_and_not_used_is_a_warning_at_its_name_and_changes_nothing_part_1_of_6",
+        || a_name_that_is_imported_and_not_used_is_a_warning_at_its_name_and_changes_nothing(0),
+    ),
+    (
+        "a_name_that_is_imported_and_not_used_is_a_warning_at_its_name_and_changes_nothing_part_2_of_6",
+        || a_name_that_is_imported_and_not_used_is_a_warning_at_its_name_and_changes_nothing(1),
+    ),
+    (
+        "a_name_that_is_imported_and_not_used_is_a_warning_at_its_name_and_changes_nothing_part_3_of_6",
+        || a_name_that_is_imported_and_not_used_is_a_warning_at_its_name_and_changes_nothing(2),
+    ),
+    (
+        "a_name_that_is_imported_and_not_used_is_a_warning_at_its_name_and_changes_nothing_part_4_of_6",
+        || a_name_that_is_imported_and_not_used_is_a_warning_at_its_name_and_changes_nothing(3),
+    ),
+    (
+        "a_name_that_is_imported_and_not_used_is_a_warning_at_its_name_and_changes_nothing_part_5_of_6",
+        || a_name_that_is_imported_and_not_used_is_a_warning_at_its_name_and_changes_nothing(4),
+    ),
+    (
+        "a_name_that_is_imported_and_not_used_is_a_warning_at_its_name_and_changes_nothing_part_6_of_6",
+        || a_name_that_is_imported_and_not_used_is_a_warning_at_its_name_and_changes_nothing(5),
     ),
     (
         "each_mistake_in_a_use_is_one_error_at_its_place",
@@ -381,9 +401,15 @@ fn a_file_that_imports_the_names_it_uses_builds_what_it_built_without_the_use(pa
 
 /// A name that is listed and not written anywhere else is a warning at the
 /// name, and not an error, and the executable is the one without it.
-fn a_name_that_is_imported_and_not_used_is_a_warning_at_its_name_and_changes_nothing() {
+fn a_name_that_is_imported_and_not_used_is_a_warning_at_its_name_and_changes_nothing(part: usize) {
+    // The names of all the modules, each part taking every sixth.
+    let mut next = 0;
     for module in library() {
         for (name, _) in &module.names {
+            next += 1;
+            if (next - 1) % 6 != part {
+                continue;
+            }
             let bare = if name == "console" || name == "print" {
                 "fn main() {\n}\n"
             } else {
