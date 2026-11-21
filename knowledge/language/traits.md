@@ -9,6 +9,7 @@ built:
   - "`Function`, declared by the prelude and given to every function, of the file that is built or of another module it lists, that has a name and no type parameters and takes no function: `Function.name(f)`, `Function.about(f)` (the comment above it, its lines kept as lines), and `Function.call(f, args)`, which calls it with the fields of its `Args`, a struct made for it that is read from JSON as any struct is, with a field that has a default left out; a type parameter that only a `requires` names, as `A` and `R` of `Function[F, A, R]`, is the type the implementation says; a lambda is refused as having no name; a function is given only when the file that is built writes `Function`"
   - "a function's name written where a type is expected, as in `impl Described[double]`, which is found for that function and for no other of the same parameters and result, and a function given for a type parameter that a trait other than `Copy` and `Discard` bounds, which settles it to that function's type; a function of such a trait names the type in a parameter or its result, as any function of a trait must, so `describe(f: F)` and not `describe()`; and a parameter typed with a function's name, `fn pick(f: one)`, takes that function, `pick(one)`, and no other of the same parameters and result, and is called as the function is, `f(3)`, with every argument written"
   - "a call of a function of a trait that writes the types it is for after the trait, `Tagged[Cat].tag(\"p\")`, which names the impl, and a function of a trait that names no type of the trait in its parameters or its result, which is called only so"
+  - "of two `impl`s that fit a call, the one for fewer types, chosen at the concrete type and not inside a generic function; two that fit with neither for fewer types, or for the same types, are refused"
 ---
 
 # Traits
@@ -60,6 +61,42 @@ fn main() ! console {
 ```
 
 The error is "there is no implementation of `Named` for `Cat`".
+
+## When two impls fit
+
+When the types of a call fit two `impl`s, the one that is for fewer types is used: the types of the other stand for the types of this one, and not the other way round.
+
+```
+use std.console (console, print)
+
+trait Named[T] {
+  fn name_of(x: T) -> str
+}
+
+struct Cat {
+  name: str
+}
+
+impl[T] Named[T] {
+  fn name_of(x: T) -> str { "something" }
+}
+
+impl Named[Cat] {
+  fn name_of(x: Cat) -> str { x.name }
+}
+
+fn main() ! console {
+  print(name_of(Cat(name: "Tom")))
+  print(name_of("Tom"))
+}
+```
+
+This prints `Tom` and then `something`. `Named[Cat]` is for fewer types than `Named[T]`, which is for every type, and `List[Cat]` is for fewer than `List[T]`.
+
+- **It is chosen at the concrete type.** The `impl` is chosen once every type of the call is known, and never inside a generic function: `fn send[T](x: T)` that calls `name_of(x)` uses the `impl` of the type it is called with, so `send(Cat(name: "Tom"))` is `Tom`.
+- **The more specific `impl` is in the module of the trait or of a type it is for,** as every `impl` is, so an import never changes which `impl` a call uses.
+
+When two `impl`s fit and neither is for fewer types than the other, as `Named[(T, Cat)]` and `Named[(Cat, U)]` for `(Cat, Cat)`, or when both are for the same types, the `impl`s are refused: "`Named` is already implemented for `(Cat, U)`", or, when a `requires` lets both fit, "both fit this use".
 
 ## What an impl must write
 

@@ -703,7 +703,7 @@ impl<'a> Defs<'a> {
     ) -> Found {
         let kept = self.kept_at_size(k, types);
         let types = &kept[..];
-        let mut fit: Option<(usize, Vec<Ty>, Vec<Ty>)> = None;
+        let mut found: Vec<(usize, Vec<Ty>, Vec<Ty>)> = Vec::new();
         'impls: for &i in &self.impls_of[k] {
             let Some(info) = &self.impls[i] else {
                 continue;
@@ -732,13 +732,25 @@ impl<'a> Defs<'a> {
                     other => return other,
                 }
             }
-            if let Some((j, ..)) = &fit {
-                return Found::Two(*j, i);
-            }
             let all = info.args.iter().map(|t| t.subst(&sol)).collect();
-            fit = Some((i, all, sol));
+            found.push((i, all, sol));
         }
-        if let Some((i, all, sol)) = fit {
+        if found.len() > 1 {
+            // Of impls that all fit, the one that is for fewer types than
+            // each of the others, and is written in the module of its trait
+            // or of one of its types, is the one that is used.
+            let most = (0..found.len()).find(|&a| {
+                (0..found.len()).all(|b| a == b || self.more_specific(found[a].0, found[b].0))
+            });
+            match most {
+                Some(a) if self.written_with(found[a].0, k) => {
+                    let (i, all, sol) = found.swap_remove(a);
+                    return Found::Yes(all, By::Impl(i, sol));
+                }
+                _ => return Found::Two(found[0].0, found[1].0),
+            }
+        }
+        if let Some((i, all, sol)) = found.pop() {
             return Found::Yes(all, By::Impl(i, sol));
         }
         if k == self.function {
@@ -748,6 +760,45 @@ impl<'a> Defs<'a> {
             Some(parts) => self.given(k, types, &parts, scope, stack),
             None => Found::No,
         }
+    }
+
+    /// Whether impl `a` is for fewer types than impl `b`: the types of `b`
+    /// stand for those of `a`, and those of `a` do not stand for those of
+    /// `b`.
+    pub(super) fn more_specific(&self, a: usize, b: usize) -> bool {
+        let (Some(x), Some(y)) = (&self.impls[a], &self.impls[b]) else {
+            return false;
+        };
+        let stands = |of: &ImplInfo, for_: &ImplInfo| {
+            let mut sol = vec![None; of.scope.names.len()];
+            (of.args.iter().zip(&for_.args))
+                .zip(&self.outs[of.of])
+                .filter(|(_, out)| !**out)
+                .all(|((pattern, given), _)| unify(pattern, given, &mut sol))
+        };
+        stands(y, x) && !stands(x, y)
+    }
+
+    /// Whether impl `i` of trait `k` is written in the module of the trait,
+    /// or of one of the structs or enums it is for, as an import never changes
+    /// which impl a call uses.
+    fn written_with(&self, i: usize, k: usize) -> bool {
+        let here = module_of(self.file.impls[i].pos);
+        if here == module_of(self.file.traits[k].pos) {
+            return true;
+        }
+        let Some(info) = &self.impls[i] else {
+            return false;
+        };
+        let defined_here = |t: &Ty| match t {
+            Ty::Struct(s, _) => module_of(self.file.structs[*s].pos) == here,
+            Ty::Enum(e, _) => module_of(self.file.enums[*e].pos) == here,
+            _ => false,
+        };
+        fn any_part(t: &Ty, f: &dyn Fn(&Ty) -> bool) -> bool {
+            f(t) || t.args().iter().any(|a| any_part(a, f))
+        }
+        info.args.iter().any(|t| any_part(t, &defined_here))
     }
 
     /// The implementation of `Function` given to `types`, whose first is the
