@@ -106,6 +106,9 @@ impl Step {
 #[derive(Clone, Debug, PartialEq)]
 pub struct Proof {
     pub name: String,
+    /// The function's place among the file's functions, which a proof that
+    /// calls it names.
+    pub place: usize,
     pub pos: Pos,
     pub params: Vec<(String, Type)>,
     pub statement: Term,
