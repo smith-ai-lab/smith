@@ -7,6 +7,7 @@ built:
   - "string literals that become `str`, `bool` with `true` and `false`, whole number literals in decimal, hexadecimal, and binary, with a `-` before one, that become `i8` to `i64` and `u8` to `u64`, as a binding's uses decide or `i64` when nothing does, including a literal given for a type parameter, which the place of the call's result decides when it names the parameter, a literal operand taking the type of the other, and a character between single quotes, with the escapes `\'`, `\\`, `\n`, and `\t`, as a whole number, an error as a `u8` when it is not ASCII"
   - "a whole number that ends a block of an `if` or a `match` that gives a value, which takes the type of the other blocks, or of the place the value is used when every block ends in one"
   - "not a whole number as the range that holds it alone"
+  - "a float written out, with a point or an exponent, with a `-` before it, which is the `f32` or `f64` its use decides, an `f64` when nothing does, rounded once to the nearest, ties to even, and refused where it is too large for its type; not a whole number where a float is expected, and not an array of floats written in brackets with no type to say what it is"
 ---
 
 # Literals

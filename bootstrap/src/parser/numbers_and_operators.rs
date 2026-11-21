@@ -48,7 +48,13 @@ pub(super) fn number(text: String, negative: bool, pos: Pos) -> Result<Expr, Err
     let (digits, base) = match (text.strip_prefix("0x"), text.strip_prefix("0b")) {
         (Some(rest), _) => (rest, 16),
         (_, Some(rest)) => (rest, 2),
-        _ if text.contains(['.', 'e', 'E']) => return Err(Error::unsupported(pos, "a float")),
+        _ if text.contains(['.', 'e', 'E']) => {
+            return Ok(Expr::Float {
+                text,
+                negative,
+                pos,
+            });
+        }
         _ => (text.as_str(), 10),
     };
     let mut magnitude = 0u128;
@@ -75,7 +81,7 @@ impl Parser<'_> {
         self.read_past(number(text, false, pos), pos)
     }
 
-    /// The number, or a float, which is not built, in the place of which an
+    /// The number, or an error that is not built, in the place of which an
     /// `Expr::Unbuilt` is kept.
     fn read_past(&mut self, number: Result<Expr, Error>, pos: Pos) -> Result<Expr, Error> {
         match number {

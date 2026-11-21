@@ -649,3 +649,19 @@ impl Bits[u64] {
   fn shift_left(a: u64, by: u8) -> u64 { __shift_left(a, by) }
   fn shift_right(a: u64, by: u8) -> u64 { __shift_right(a, by) }
 }
+
+impl Eq[f32] {
+  fn eq(a: f32, b: f32) -> bool { __equal(a, b) }
+}
+
+impl Ord[f32] {
+  fn compare(a: f32, b: f32) -> Order { __compare(a, b) }
+}
+
+impl Eq[f64] {
+  fn eq(a: f64, b: f64) -> bool { __equal(a, b) }
+}
+
+impl Ord[f64] {
+  fn compare(a: f64, b: f64) -> Order { __compare(a, b) }
+}

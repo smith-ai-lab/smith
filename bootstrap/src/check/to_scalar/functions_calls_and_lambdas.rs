@@ -103,9 +103,11 @@ pub(super) fn stops(body: &[Stmt], breaks: bool, returns: bool) -> bool {
             Expr::Interp { parts, .. } => parts
                 .iter()
                 .any(|p| matches!(p, Part::Expr(e) if one(e, breaks, returns))),
-            Expr::Text { .. } | Expr::Number { .. } | Expr::Name { .. } | Expr::Unbuilt { .. } => {
-                false
-            }
+            Expr::Text { .. }
+            | Expr::Number { .. }
+            | Expr::Float { .. }
+            | Expr::Name { .. }
+            | Expr::Unbuilt { .. } => false,
         }
     }
     values(body).any(|e| one(e, breaks, returns))

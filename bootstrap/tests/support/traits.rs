@@ -1871,8 +1871,8 @@ fn main_statement(b: &mut Builder, m: &Model, sites: &Sites) {
                 ("", "without Add for Rock"),
                 ("", "foreign \"c\" fn kind()"),
                 (
-                    "trait Spare[T] {\n  fn spare_of(x: T, note: str = ",
-                    "1.5) -> str\n}",
+                    "trait Spare[T] {\n  fn spare_of(x: T, note: str = (1)",
+                    "(2)) -> str\n}",
                 ),
                 ("impl ", "Copy[Rock] {}"),
                 ("impl ", "Discard[Rock] {}"),

@@ -419,6 +419,12 @@ pub enum Expr {
         negative: bool,
         pos: Pos,
     },
+    /// A float, as it is written, with a `-` before it if `negative`.
+    Float {
+        text: String,
+        negative: bool,
+        pos: Pos,
+    },
     /// A string literal that holds expressions, as its parts in order.
     Interp {
         pos: Pos,
@@ -676,6 +682,7 @@ impl Expr {
         match self {
             Expr::Text { pos, .. }
             | Expr::Number { pos, .. }
+            | Expr::Float { pos, .. }
             | Expr::Interp { pos, .. }
             | Expr::Name { pos, .. }
             | Expr::Case { pos, .. }

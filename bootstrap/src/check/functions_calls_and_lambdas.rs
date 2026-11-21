@@ -669,6 +669,9 @@ impl<'a> Checker<'a> {
         if let Some(narrowing) = narrowing(defs, call) {
             return self.narrow(body, call, narrowing, want);
         }
+        if is_float_call(defs, call) {
+            return self.float_of(body, call, want);
+        }
         if let Some(provided) = defs.provided_by_name(call.name_pos, name) {
             let print = (provided.signature)();
             if self.effect_in_default(body, call, &print) {
@@ -1044,6 +1047,7 @@ impl<'a> Checker<'a> {
             };
             if let (Some(i), Want::Any) = (param, &wanted)
                 && (matches!(arg.value, Expr::Number { .. })
+                    || float_written(&arg.value)
                     || matches!(&arg.value, Expr::Match(m) if literal_blocks(m)))
             {
                 deferred.push((i, &arg.value));

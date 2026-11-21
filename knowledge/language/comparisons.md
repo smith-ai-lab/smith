@@ -5,6 +5,7 @@ description: == and != through the Eq trait, <, <=, >, and >= through the Ord tr
 status: partial
 built:
   - "An `impl Eq[T]` that a program writes is refused"
+  - "`==`, `!=`, `<`, `<=`, `>`, and `>=` between two floats of one type, which say a float that is not a number equals itself and is above every other, and `-0.0` another value than `0.0` and below it, on every target but wasm"
   - "`==` and `!=` through the `Eq` every `str`, struct, enum, tuple, `bool`, `()`, and integer type is given, and `<`, `<=`, `>`, and `>=` through the `Ord` every `str`, struct, enum, tuple, `bool`, `()`, and integer type is given"
 ---
 
