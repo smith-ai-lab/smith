@@ -224,7 +224,7 @@ pub fn compile_project_files_timed(
     timings: &mut Timings,
 ) -> Result<Built, Vec<diag::Error>> {
     let program = checked_in(source, &project.library(), timings)?.program;
-    Ok(emit(program, target, map, timings))
+    emit(program, target, map, timings)
 }
 
 /// The program a source file describes, in the scalar form, when the modules
@@ -253,10 +253,41 @@ pub fn compile_timed(
     timings: &mut Timings,
 ) -> Result<Vec<u8>, Vec<diag::Error>> {
     let program = lower_timed(source, timings)?;
-    Ok(emit(program, target, false, timings).executable)
+    Ok(emit(program, target, false, timings)?.executable)
 }
 
-fn emit(program: scalar::Program, target: Target, map: bool, timings: &mut Timings) -> Built {
+/// Whether the program asks the system for random bytes, which only the
+/// targets that answer `entropy` can build.
+fn asks_for_entropy(program: &scalar::Program) -> bool {
+    (program.functions.iter())
+        .flat_map(|f| &f.blocks)
+        .flat_map(|b| &b.instructions)
+        .any(|i| {
+            matches!(
+                i.op,
+                scalar::Op::System {
+                    call: scalar::System::Entropy,
+                    ..
+                }
+            )
+        })
+}
+
+fn emit(
+    program: scalar::Program,
+    target: Target,
+    map: bool,
+    timings: &mut Timings,
+) -> Result<Built, Vec<diag::Error>> {
+    if asks_for_entropy(&program) && !target.answers_entropy() {
+        return Err(vec![diag::Error::new(
+            diag::Pos::START,
+            format!(
+                "`entropy` is not built for the target `{}` yet, so a program that asks for it cannot be built for it",
+                target.name()
+            ),
+        )]);
+    }
     // The stage of `inline` is the time of `tail` too, which looks once at each
     // function and changes the few that call themselves last.
     let program = timings.stage("inline", || scalar::inline(scalar::tail(program)));
@@ -265,7 +296,7 @@ fn emit(program: scalar::Program, target: Target, map: bool, timings: &mut Timin
     let program = timings.stage("fold", || scalar::fold(program));
     let program = timings.stage("common", || scalar::common(program));
     let program = timings.stage("remove", || scalar::remove(program));
-    timings.stage("emit", || {
+    Ok(timings.stage("emit", || {
         let (executable, parts) = target.emit_parts(&program);
         let beside = target.beside(&program);
         // The names are kept for the text of the map, which is made where it
@@ -279,7 +310,7 @@ fn emit(program: scalar::Program, target: Target, map: bool, timings: &mut Timin
             beside,
             map,
         }
-    })
+    }))
 }
 
 fn lower_timed(source: &[u8], timings: &mut Timings) -> Result<scalar::Program, Vec<diag::Error>> {
