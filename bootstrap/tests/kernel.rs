@@ -27,6 +27,10 @@ pub const ONCE: &[Test] = &[
         the_kernel_works_out_the_size_an_index_the_bytes_and_a_loop_over_a_text,
     ),
     (
+        "the_kernel_gives_a_push_one_more_and_a_slice_the_difference_of_its_ends_and_no_slice_outside_the_list",
+        the_kernel_gives_a_push_one_more_and_a_slice_the_difference_of_its_ends_and_no_slice_outside_the_list,
+    ),
+    (
         "a_requires_over_arguments_written_out_is_proven_by_working_it_out",
         a_requires_over_arguments_written_out_is_proven_by_working_it_out,
     ),
@@ -412,5 +416,63 @@ fn the_kernel_works_out_the_size_an_index_the_bytes_and_a_loop_over_a_text() {
             },
             "{source}"
         );
+    });
+}
+
+#[derive(Debug)]
+struct Cut {
+    xs: Vec<i128>,
+    x: i128,
+    a: u64,
+    b: u64,
+}
+
+/// A list of up to five bytes, with a push and a range inside it, which may be
+/// empty and may start where it ends.
+fn cut(g: &mut Gen) -> Cut {
+    let xs: Vec<i128> = (0..g.below(6)).map(|_| g.below(200) as i128).collect();
+    let a = g.below(xs.len() + 1);
+    let b = a + g.below(xs.len() + 1 - a);
+    Cut {
+        xs,
+        x: g.below(200) as i128,
+        a: a as u64,
+        b: b as u64,
+    }
+}
+
+/// The laws of a push and a slice, which the proofs use, are what the
+/// evaluator gives for any list: a push has one more element, the last the one
+/// pushed, and a slice has the elements from `a` up to `b`, so `b - a` of them.
+/// A range that is not inside the list is no slice, so no size comes of it.
+fn the_kernel_gives_a_push_one_more_and_a_slice_the_difference_of_its_ends_and_no_slice_outside_the_list()
+{
+    let all = core_terms(crate::proofs::LISTS.as_bytes()).unwrap_or_else(|e| panic!("{e:?}"));
+    generate::check(134, 200, cut, |p| {
+        let term = |name: &str| all.iter().find(|f| f.name == name).expect("a term").place;
+        let mut machine = Machine::new(&all, 1_000_000);
+        let list = |items: &[i128]| Value::Parts(items.iter().map(|x| Value::Int(*x)).collect());
+        let (grown, _) = machine
+            .call(term("grown"), vec![list(&p.xs), Value::Int(p.x)])
+            .expect("worked out");
+        let mut pushed = p.xs.clone();
+        pushed.push(p.x);
+        assert_eq!(grown, list(&pushed));
+        let (a, b) = (p.a as usize, p.b as usize);
+        let (size, _) = machine
+            .call(
+                term("cut"),
+                vec![list(&p.xs), Value::Int(p.a as i128), Value::Int(p.b as i128)],
+            )
+            .expect("worked out");
+        assert_eq!(size, Value::Int((b - a) as i128));
+        // A range that starts after it ends, or ends past the list.
+        for (from, to) in [(p.xs.len() as i128 + 1, 0), (0, p.xs.len() as i128 + 1)] {
+            let refused = machine.call(
+                term("cut"),
+                vec![list(&p.xs), Value::Int(from), Value::Int(to)],
+            );
+            assert!(matches!(refused, Err(Failure::Stuck(_))), "{refused:?}");
+        }
     });
 }

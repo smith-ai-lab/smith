@@ -111,6 +111,8 @@ pub struct Proof {
     pub place: usize,
     pub pos: Pos,
     pub params: Vec<(String, Type)>,
+    /// What the caller owes, which the proof may use: each is a boolean term.
+    pub requires: Vec<Term>,
     pub statement: Term,
     pub written: String,
     pub body: Term,
@@ -135,6 +137,11 @@ pub enum Operator {
     Size,
     /// `t.bytes`, the bytes of a text, as a slice.
     Bytes,
+    /// `xs[a..b]`, the elements of a list or a slice from `a` up to `b`,
+    /// which is made only where `a <= b <= xs.size`.
+    Slice,
+    /// `push(xs, x)`, the list with `x` after the elements of `xs`.
+    Push,
 }
 
 impl Operator {
@@ -152,6 +159,8 @@ impl Operator {
             Operator::Index => "[]",
             Operator::Size => "size",
             Operator::Bytes => "bytes",
+            Operator::Slice => "slice",
+            Operator::Push => "push",
         }
     }
 }
