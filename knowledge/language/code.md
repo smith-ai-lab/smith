@@ -5,7 +5,7 @@ description: A function that receives the checked code of an argument when the p
 status: partial
 built:
   - "the core term as data, in `bootstrap/src/core.rs`: the nodes `lit`, `name`, `call`, `apply`, `lambda`, `bind`, `make`, `field`, and `choose`, each holding its type and its place in the source, with their parts and a one-line printing; `bool` is an enum of the prelude and has no node of its own, and `for` and `loop` are not nodes yet"
-  - "the checker produces the core term of a function of the file that is made of whole numbers and `bool`: a number, a name, `+`, `-`, `*` as calls of operators with the exact range, the six comparisons, `and`, `or`, `not`, `if`, a binding, and a call of a function like it; a function with anything else has none yet"
+  - "the checker produces the core term of a function of the file that is made of whole numbers and `bool`: a number, a name, `+`, `-`, `*` as calls of operators with the exact range, the six comparisons, `and`, `or`, `not`, `if`, a binding, a call of a function like it, a text, a struct or a tuple that is built, a case of an enum with what it holds, a field of a struct or a tuple, and a `match` on any of these by number, text, name, case, and tuple patterns; a function with anything else, such as a list, a lambda, a loop, or a type parameter, has none yet"
 ---
 
 # Functions over code

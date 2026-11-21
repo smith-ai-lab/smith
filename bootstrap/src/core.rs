@@ -153,7 +153,13 @@ pub enum Kind {
     /// is the place of the enum and of the case among its cases.
     Make(Make, Vec<Term>),
     /// A part that is read.
-    Field { of: Box<Term>, name: String },
+    /// A part that is read: the struct's field, or the tuple's, by its name
+    /// and its place among them.
+    Field {
+        of: Box<Term>,
+        name: String,
+        index: usize,
+    },
     /// One block picked by a pattern: `if` and `match`.
     Choose {
         of: Box<Term>,
@@ -244,7 +250,7 @@ impl Term {
                 },
                 args.iter().map(Term::show).collect(),
             ),
-            Kind::Field { of, name } => (format!("field {name}"), vec![of.show()]),
+            Kind::Field { of, name, .. } => (format!("field {name}"), vec![of.show()]),
             Kind::Choose { of, arms } => (
                 "choose".to_string(),
                 std::iter::once(of.show())
