@@ -5,6 +5,7 @@ description: The Repr trait, which writes a value as Smith source, and the Fmt a
 status: partial
 built:
   - "`repr` and the `Repr` of a `str`, and the `Fmt` and `Repr` every struct, enum, tuple, `bool`, `()`, and integer type is given, which `without` takes away"
+  - "the `Fmt` and `Repr` of `f32` and `f64`, which are one text, in a text and in `repr`; not `f16` or `bf16`"
   - "the `Fmt` and `Repr` of a `List` or a `Slice`, written `[1, 2, 3]` with the `Repr` of each element, which is `[]` for none, and which a list has when its element has it"
 ---
 
@@ -39,7 +40,7 @@ fn describe(tom: Cat) ! console, alloc {
 ## What each type writes
 
 - The `Repr` of a `str` is the text in quotes, with its escapes. `repr("a\"b\n")` is `"a\"b\n"`. The `Fmt` of a `str` is the text alone.
-- For an integer and a `bool` the two are the same: `repr(7)` is `7` and `repr(true)` is `true`. A float always shows its point, as in `2.0`.
+- For an integer and a `bool` the two are the same: `repr(7)` is `7` and `repr(true)` is `true`. A float is its shortest text, the fewest digits that read back as exactly that float, and shows its point, as in `2.0`: a float with a whole value ends in `.0`, a float from `10^-5` up to and including `10^16` is written with no exponent, as `0.00001`, `2.5`, and `10000000000000000.0`, and any other is `d.ddde-x`, with no point for one digit, as `1e22` and `1.5e-7`. Every finite float's text is a float literal, so it reads back as exactly that float. The two zeros are `0.0` and `-0.0`, the infinities `inf` and `-inf`, and a float that is not a number `nan`, which, with the infinities, is text only and not a literal. When two shortest texts are as near the float as each other, the one whose last digit is even is written.
 - The `Repr` of a struct is its construction, as in `Cat(name: "tom")`, with the `Repr` of each field.
 - A tuple is `("a", "b")` and the empty tuple is `()`.
 - A case of an enum is `.cat("a")` for a case that holds a value and `.none` for one that does not, with a leading dot as in a pattern.

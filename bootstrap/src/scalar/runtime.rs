@@ -12,7 +12,7 @@ pub(super) const LENGTH: Type = Type::Int(Bits::B64);
 pub(super) const BYTE: Type = Type::Int(Bits::B8);
 const WORD: Type = Type::Int(Bits::B64);
 /// What a text is.
-const TEXT: [Type; 2] = [ADDRESS, LENGTH];
+pub(super) const TEXT: [Type; 2] = [ADDRESS, LENGTH];
 
 /// A function of the runtime.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -44,6 +44,14 @@ pub enum Runtime {
     /// Takes an integer of the size, and gives a new text that is its digits
     /// in decimal, read as a signed number or as an unsigned one.
     Decimal { bits: Bits, signed: bool },
+    /// Takes the bits of a float that is finite and not 0, as 64 bits, and the
+    /// two tables of Ryu, and gives the shortest digits that read back as the
+    /// float as a number, and the power of 10 they are to be multiplied by.
+    Shortest { double: bool },
+    /// Takes the bits of a float, as 64 bits, and the two tables of Ryu, and
+    /// gives a new text that is the float's shortest text, as `knowledge/`
+    /// says of the `Fmt` of a float.
+    FloatText { double: bool },
     /// Takes a list whose elements are the scalars of the types, as the
     /// address of its elements, its size, and how many elements the memory at
     /// that address has room for, then the scalars of the element to add. It
@@ -124,6 +132,8 @@ impl Runtime {
             Runtime::Equal => "<equal>",
             Runtime::Digits => "<digits>",
             Runtime::Decimal { .. } => "<decimal>",
+            Runtime::Shortest { .. } => "<shortest>",
+            Runtime::FloatText { .. } => "<float_text>",
             Runtime::Push(_) => "<push>",
             Runtime::Grow(_) => "<grow>",
             Runtime::Reserve(_) => "<reserve>",
@@ -157,6 +167,10 @@ fn built(kind: Runtime, place: &mut dyn FnMut(Runtime) -> usize) -> Function {
         Runtime::Equal => equal(),
         Runtime::Digits => digits(),
         Runtime::Decimal { bits, signed } => decimal(bits, signed, place(Runtime::Digits)),
+        Runtime::Shortest { double } => super::ryu::shortest(double),
+        Runtime::FloatText { double } => {
+            super::ryu::float_text(double, place(Runtime::Shortest { double }))
+        }
         Runtime::Push(scalars) => {
             let (_, stride) = super::element(&scalars);
             push(&scalars, place(Runtime::Grow(stride)))

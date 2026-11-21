@@ -28,6 +28,18 @@ pub const ONCE: &[Test] = &[
         || answers_are_what_rust_says::<f64>(1),
     ),
     (
+        "the_text_of_an_f32_is_its_shortest_digits_laid_out_as_the_page_says",
+        || texts_are_what_rust_says::<f32>(2),
+    ),
+    (
+        "the_text_of_an_f64_is_its_shortest_digits_laid_out_as_the_page_says",
+        || texts_are_what_rust_says::<f64>(3),
+    ),
+    (
+        "a_tie_between_two_shortest_texts_goes_to_the_even_digit",
+        a_tie_between_two_shortest_texts_goes_to_the_even_digit,
+    ),
+    (
         "a_whole_number_and_a_float_in_one_operator_are_refused",
         a_whole_number_and_a_float_in_one_operator_are_refused,
     ),
@@ -49,6 +61,14 @@ pub const MACHINE: &[Test] = &[
     (
         "every_executable_gives_what_rust_gives_for_every_operator_of_f64",
         || answers_on_every_executable::<f64>(1),
+    ),
+    (
+        "every_executable_writes_the_shortest_text_of_an_f32",
+        || texts_on_every_executable::<f32>(2),
+    ),
+    (
+        "every_executable_writes_the_shortest_text_of_an_f64",
+        || texts_on_every_executable::<f64>(3),
     ),
 ];
 
@@ -72,6 +92,8 @@ trait Float: Copy + PartialOrd + 'static {
     fn div(self, other: Self) -> Self;
     fn of_int(n: i64) -> Self;
     fn bits(self) -> u64;
+    /// The float a text reads as, if it is a number this type holds.
+    fn parsed(text: &str) -> Option<Self>;
     /// The bits, with every float that is not a number one value.
     fn key(self) -> u64;
 }
@@ -81,6 +103,9 @@ macro_rules! float {
         impl Float for $t {
             const NAME: &'static str = $name;
             const SIGN: u64 = 1 << ($bits::BITS - 1);
+            fn parsed(text: &str) -> Option<$t> {
+                text.parse::<$t>().ok().filter(|x| x.is_finite())
+            }
             fn bits(self) -> u64 {
                 u64::from(self.to_bits())
             }
@@ -369,4 +394,161 @@ fn a_float_literal_takes_the_type_its_use_decides_and_is_an_f64_when_nothing_doe
     let lowered = lower(source.as_bytes()).unwrap_or_else(|e| panic!("{e:?} for {source}"));
     let outcome = scalar::run(&scalar::passes(&lowered));
     assert_eq!(String::from_utf8_lossy(&outcome.stdout), "true true\n");
+}
+
+/// The text of a float that the page says: `nan`, `inf`, `-inf`, `0.0` and
+/// `-0.0`, and for any other the shortest digits, which Rust's `{:e}` gives,
+/// with a point and no exponent from `10^-5` to `10^16`, and otherwise as
+/// `d.ddde-x`, with no point for one digit.
+fn spelled<T: Float>(x: T) -> String {
+    if x.is_nan() {
+        return "nan".to_string();
+    }
+    let sign = if x.negative() { "-" } else { "" };
+    if x.is_infinite() {
+        return format!("{sign}inf");
+    }
+    let shown = x.text();
+    let shown = shown.trim_start_matches('-');
+    if shown == "0e0" {
+        return format!("{sign}0.0");
+    }
+    let (mantissa, exponent) = shown.split_once('e').expect("an exponent");
+    let exponent: i32 = exponent.parse().expect("a number");
+    let digits: String = mantissa.chars().filter(|c| *c != '.').collect();
+    let n = digits.len() as i32;
+    let body = if (-5..=16).contains(&exponent) {
+        if exponent >= 0 {
+            let int = exponent + 1;
+            if n <= int {
+                format!("{digits}{}.0", "0".repeat((int - n) as usize))
+            } else {
+                format!("{}.{}", &digits[..int as usize], &digits[int as usize..])
+            }
+        } else {
+            format!("0.{}{digits}", "0".repeat((-exponent - 1) as usize))
+        }
+    } else if n == 1 {
+        format!("{digits}e{exponent}")
+    } else {
+        format!("{}.{}e{exponent}", &digits[..1], &digits[1..])
+    };
+    format!("{sign}{body}")
+}
+
+/// The floats whose text is tried: the edges of the format, powers of 2 and of
+/// 10, a number of each length, and some drawn at random.
+fn texts<T: Float>(g: &mut Gen) -> Vec<T> {
+    let mut values: Vec<T> = T::edges();
+    for k in 0..4 {
+        values.push(T::from_bits(1u64 << (T::SIGN.trailing_zeros() - 1 - k)));
+    }
+    for text in [
+        "1e0", "1e1", "1e5", "1e15", "1e16", "1e17", "1e21", "1e22", "1e23", "1e-4", "1e-5",
+        "1e-6", "1.5e-7", "5e-324", "2.2250738585072014e-308", "123456789e0", "0.3", "1e10",
+        "9.999999e15", "4.35e0", "8.41e21",
+    ] {
+        // Only the numbers the type can hold.
+        if let Some(x) = T::parsed(text) {
+            values.push(x);
+            values.push(neg(x));
+        }
+    }
+    // The powers of 2, and the numbers just above and below them, where the
+    // interval of the numbers that round to a float is not symmetric.
+    let (mantissa, top) = if T::NAME == "f32" { (23, 254) } else { (52, 2046) };
+    for e in (1..top).step_by(if T::NAME == "f32" { 7 } else { 29 }) {
+        let power = (e as u64) << mantissa;
+        values.push(T::from_bits(power));
+        values.push(T::from_bits(power + 1));
+        values.push(T::from_bits(power - 1));
+    }
+    for _ in 0..40 {
+        let bits = (g.below(1 << 30) as u64) << 34 | (g.below(1 << 30) as u64) << 4 | g.below(16) as u64;
+        let x = T::from_bits(bits ^ ((g.below(1 << 20) as u64) << 20));
+        if !x.is_nan() && !x.is_infinite() {
+            values.push(x);
+        }
+    }
+    values
+}
+
+/// The program that prints each float on a line, and what it must print.
+fn text_program<T: Float>(g: &mut Gen) -> (String, String) {
+    let values = texts::<T>(g);
+    let t = T::NAME;
+    let mut source = format!(
+        "fn main() ! console, alloc {{\n  xs: List[{t}] = [{}]\n",
+        values.iter().map(|x| written(*x)).collect::<Vec<_>>().join(", ")
+    );
+    let mut said = String::new();
+    for (i, x) in values.iter().enumerate() {
+        source += &format!("  print(\"{{xs[{i}]}}\")\n");
+        said += &format!("{}\n", spelled(*x));
+        // The text of a number is a float that is written out, which reads back
+        // as the float.
+        if !x.is_nan() && !x.is_infinite() {
+            source += &format!("  print(\"{{xs[{i}] == {}}}\")\n", spelled(*x));
+            said += "true\n";
+        }
+    }
+    source += "}\n";
+    (with_header(source), said)
+}
+
+/// Whether the text is what Rust writes, or the other of two shortest texts
+/// that are equally near the float, which Rust rounds up where Ryu goes to
+/// the even digit: the same number of digits, each a number that reads back as
+/// the float, and the last digit apart by 1.
+fn same_text<T: Float>(ours: &str, theirs: &str) -> bool {
+    if ours == theirs {
+        return true;
+    }
+    let digits = |t: &str| -> Vec<char> {
+        let mantissa = t.split('e').next().unwrap_or(t);
+        mantissa.chars().filter(|c| c.is_ascii_digit()).collect()
+    };
+    let (a, b) = (digits(ours), digits(theirs));
+    let same_shape = ours.len() == theirs.len()
+        && ours.chars().zip(theirs.chars()).filter(|(x, y)| x != y).count() == 1;
+    let (Some(x), Some(y)) = (T::parsed(ours), T::parsed(theirs)) else {
+        return false;
+    };
+    // The two read back as one float, so they are two shortest texts of it.
+    same_shape && a.len() == b.len() && x.bits() == y.bits()
+}
+
+fn texts_are_what_rust_says<T: Float>(seed: u64) {
+    let (source, said) = generate::sample(seed, 0, |g| text_program::<T>(g));
+    let lowered = lower(source.as_bytes()).unwrap_or_else(|e| panic!("{e:?} for {source}"));
+    let outcome = scalar::run(&scalar::passes(&lowered));
+    let got = String::from_utf8_lossy(&outcome.stdout).to_string();
+    let (got, want): (Vec<&str>, Vec<&str>) = (got.lines().collect(), said.lines().collect());
+    assert_eq!(got.len(), want.len(), "for {source}");
+    for (ours, theirs) in got.iter().zip(&want) {
+        assert!(same_text::<T>(ours, theirs), "{ours} is not {theirs} for {source}");
+    }
+}
+
+/// Every executable writes what the evaluator writes, which the other test
+/// holds to what Rust writes.
+fn texts_on_every_executable<T: Float>(seed: u64) {
+    let (source, _) = generate::sample(seed, 0, |g| text_program::<T>(g));
+    let lowered = lower(source.as_bytes()).unwrap_or_else(|e| panic!("{e:?} for {source}"));
+    let outcome = scalar::run(&scalar::passes(&lowered));
+    for target in runnable().into_iter().filter(|t: &Target| t.builds_floats()) {
+        runs_as(source.as_bytes(), target, &outcome);
+    }
+}
+
+/// `2097152.25` is as near `2097152.2` as `2097152.3`, and both read back as
+/// it, so the digit that is even is the one written.
+fn a_tie_between_two_shortest_texts_goes_to_the_even_digit() {
+    let source = with_header(
+        "fn main() ! console, alloc {\n  x: f32 = 2097152.25\n  y: f32 = 2097152.75\n  print(\"{x} {y}\")\n}\n"
+            .to_string(),
+    );
+    let lowered = lower(source.as_bytes()).unwrap_or_else(|e| panic!("{e:?} for {source}"));
+    let outcome = scalar::run(&scalar::passes(&lowered));
+    assert_eq!(String::from_utf8_lossy(&outcome.stdout), "2097152.2 2097152.8\n");
 }

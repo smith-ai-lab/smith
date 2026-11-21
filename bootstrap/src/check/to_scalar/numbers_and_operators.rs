@@ -406,6 +406,9 @@ impl<'a> Lowering<'a> {
             }
             args.push(values[0]);
         }
+        if float && call.callee == "__float_text" {
+            return (typed.type_of(expr, env), self.float_text(out, args[0]));
+        }
         if float {
             let values = self.float_intrinsic(out, &call.callee, &args);
             return (typed.type_of(expr, env), values);
@@ -416,6 +419,68 @@ impl<'a> Lowering<'a> {
             _ => self.intrinsic(out, &call.callee, int, &args),
         };
         (typed.type_of(expr, env), values)
+    }
+
+    /// Lowers the text of a float, the address and the length of the text.
+    fn float_text(&mut self, out: &mut Out<'a>, value: form::Value) -> Vec<form::Value> {
+        let form::Type::Float(size) = out.types[value.0] else {
+            unreachable!("a float")
+        };
+        let double = size == form::FloatBits::F64;
+        let (inverses, powers) = match self.float_tables {
+            Some(at) => at,
+            None => {
+                let (inverses, powers) = form::ryu_tables();
+                self.data.push(inverses);
+                self.data.push(powers);
+                let at = (self.data.len() - 2, self.data.len() - 1);
+                self.float_tables = Some(at);
+                at
+            }
+        };
+        // The bits of the float are what it is as an integer of its size.
+        let eight = out.int(form::Bits::B64, 8);
+        let scratch = out.emit(
+            form::Op::System {
+                call: form::System::Allocate,
+                args: vec![eight],
+            },
+            vec![form::Type::Address],
+        )[0];
+        out.emit(
+            form::Op::Store {
+                ty: form::Type::Float(size),
+                address: scratch,
+                value,
+            },
+            Vec::new(),
+        );
+        let bits = if double {
+            out.emit(
+                form::Op::Load {
+                    ty: form::Type::Int(form::Bits::B64),
+                    address: scratch,
+                },
+                vec![form::Type::Int(form::Bits::B64)],
+            )[0]
+        } else {
+            let narrow = out.emit(
+                form::Op::Load {
+                    ty: form::Type::Int(form::Bits::B32),
+                    address: scratch,
+                },
+                vec![form::Type::Int(form::Bits::B32)],
+            )[0];
+            out.widen(false, narrow)
+        };
+        let inverses = out.constant(form::Constant::Data(inverses), form::Type::Address);
+        let powers = out.constant(form::Constant::Data(powers), form::Type::Address);
+        self.call_runtime(
+            out,
+            Runtime::FloatText { double },
+            vec![bits, inverses, powers],
+            vec![form::Type::Address, form::Type::Int(form::Bits::B64)],
+        )
     }
 
     /// What the function the compiler builds for `==` or `compare` of floats

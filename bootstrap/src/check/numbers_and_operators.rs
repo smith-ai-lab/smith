@@ -1068,8 +1068,8 @@ impl<'a> Checker<'a> {
         match call.callee.as_str() {
             "__equal" => defs.bool_ty(),
             "__compare" => Ty::Enum(defs.order, Vec::new()),
-            "__decimal" => {
-                self.needs(body, "alloc", call.pos, "`__decimal`");
+            "__decimal" | "__float_text" => {
+                self.needs(body, "alloc", call.pos, &format!("`{}`", call.callee));
                 Ty::Text
             }
             name if name.starts_with("__checked_") => Ty::Enum(defs.option, vec![ty]),
