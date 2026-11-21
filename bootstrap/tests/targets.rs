@@ -1025,7 +1025,7 @@ fn no_test_names_a_target() {
 /// The functions of a system library that are thin wrappers over the
 /// kernel, as "Standing alone" in `knowledge/compiler.md` allows, by the
 /// names a Mach-O file gives them.
-const THIN_WRAPPERS: &[&str] = &["_write", "__exit", "___error", "_mmap", "_munmap"];
+const THIN_WRAPPERS: &[&str] = &["_write", "__exit", "___error", "_mmap", "_munmap", "_getentropy"];
 
 /// The same, by the names `KERNEL32.dll` gives them.
 const KERNEL32_THIN_WRAPPERS: &[&str] = &[
@@ -1140,11 +1140,14 @@ const WORDS: &str = "use std.console (console, print)\n\nfn main(args: List[str]
 fn every_executable_uses_only_thin_wrappers_over_the_kernel() {
     const PT_DYNAMIC: usize = 2;
     const PT_INTERP: usize = 3;
-    let programs = [HELLO, JOIN, WORDS];
+    let programs = [HELLO, JOIN, WORDS, crate::entropy::DRAW];
     for (target, source) in buildable()
         .into_iter()
         .filter(|t| t.is_machine_code())
         .flat_map(|t| programs.map(|p| (t, p)))
+        // A target that does not answer `entropy` refuses the program that
+        // asks for it.
+        .filter(|(t, p)| t.answers_entropy() || *p != crate::entropy::DRAW)
     {
         let bytes = compile(source.as_bytes(), target).unwrap();
         let name = target.name();

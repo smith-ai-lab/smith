@@ -4,7 +4,7 @@ title: The effects Smith provides
 description: The six effects the standard library declares, the six the compiler gives, and where an effect that nothing handles ends.
 status: partial
 built:
-  - "`entropy` in a signature, required by `fill`, which the system answers on `linux_x64` and `linux_arm64`, and a handler answers on any target, where a program that asks the system on another target is refused with an error that names it"
+  - "`entropy` in a signature, required by `fill`, which the system answers on `linux_x64`, `linux_arm64`, `macos_x64`, and `macos_arm64`, and a handler answers on any target, where a program that asks the system on another target is refused with an error that names it"
   - "`console`, `alloc`, and `diverge` in a signature, `console` required by `print`, `alloc` by a string that holds an expression, and `diverge` by an open-ended `loop` with no `decreases`"
 ---
 

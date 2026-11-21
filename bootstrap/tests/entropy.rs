@@ -36,7 +36,7 @@ pub const ONCE: &[Test] = &[
 
 /// A program that prints 32 bytes from `entropy` as hex, and what it prints
 /// after them, which a refusal must not reach.
-const DRAW: &str = "use std.console (console, print)\nuse std.entropy (entropy, fill)\nuse std.fmt (hex)\n\n\
+pub const DRAW: &str = "use std.console (console, print)\nuse std.entropy (entropy, fill)\nuse std.fmt (hex)\n\n\
 fn main() ! console, entropy, alloc {\n  \
 bytes: List[Byte] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]\n  \
 var line = \"\"\n  loop b in fill(bytes) { line = \"{line}{hex(b, 2, false)}\" }\n  print(line)\n}\n";
