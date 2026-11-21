@@ -12,19 +12,19 @@ The module `std.fetch` declares the `fetch` [effect](../language/effect-declarat
 ```
 use std.fetch (FetchError, Request, fetch, send)
 
-fn keys_of(issuer: str) -> Result[str, FetchError] ! fetch, alloc {
-  response = try send(Request(url: "{issuer}/.well-known/jwks.json"))
-  if response.status == 200 { .ok(response.body) } else { .err(.failed("status {response.status}")) }
+fn keys_of(issuer: str) -> Result[List[Byte], FetchError] ! fetch, alloc {
+  response = try send(Request(url: "{issuer}/.well-known/jwks.json"), 65536)
+  if response.status == 200 { .ok(response.body.bytes) } else { .err(.failed("status {response.status}")) }
 }
 ```
 
-`keys_of("https://login.example.com")` asks that server for the document at that path and gives its text, or what went wrong.
+`keys_of("https://login.example.com")` asks that server for the document at that path and gives its bytes, which are at most 65536, or what went wrong.
 
 ## The effect
 
 ```
 effect fetch {
-  fn send(request: Request) -> Result[Response, FetchError]
+  fn send(request: Request, limit: Nat) -> Result[Response[limit], FetchError]
 }
 
 struct Request {
@@ -34,10 +34,15 @@ struct Request {
   body: str = ""
 }
 
-struct Response {
+struct Response[most: Nat] {
   status: 100..600
   headers: List[(str, str)]
-  body: str
+  body: Body[most]
+}
+
+struct Body[most: Nat] {
+  bytes: List[Byte]
+  inside: bytes.size <= most
 }
 
 enum Method {
@@ -54,11 +59,13 @@ enum FetchError {
   unreachable: str
   untrusted: str
   failed: str
+  too_big: str
 }
 ```
 
 - `send` gives the response of the server, whatever its status: a 404 is `.ok` of a response whose status is 404. It gives `.err` only when there is no response to give.
 - `address` is a `url` that is not one. `unreachable` is a server that could not be found or did not answer. `untrusted` is a server reached over `https` whose certificate does not show it is the server the address names. `failed` is anything else, with what was said.
+- **The body has a limit.** `send` takes the most bytes of body it will read. It stops reading once the body would pass the limit and gives `.err(.too_big(…))` with words that say so, and no more than the limit is held. The body it gives is a `Body[limit]`: the bytes, with the [proof](../language/proof-fields.md) that there are at most `limit` of them, so a function that needs a body of at most `n` bytes takes a `Body[n]`, or a `Response[n]`, and [`arith`](../language/arith.md) checks every call of it. A body is bytes, which [`std.utf8`](utf8.md) reads as text where it is text.
 - **An address that begins `https` is always checked.** No argument and no setting sends a request to a server whose certificate is not right, so `untrusted` cannot be turned off.
 - A response that sends the program to another address is given as it is, with its status and its `location`, and `send` follows nothing.
 
@@ -74,5 +81,5 @@ What answers `fetch` is the [deployment](../language/deployments.md) and not the
 
 | Written | Is |
 | --- | --- |
-| `send(Request(url: u))` | The response of the server at `u`, or why there is none |
+| `send(Request(url: u), n)` | The response of the server at `u`, with a body of at most `n` bytes, or why there is none |
 | `Request(url: u, method: .post, headers: h, body: b)` | A request with a method, headers, and a body |
