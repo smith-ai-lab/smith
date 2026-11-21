@@ -50,6 +50,9 @@ pub struct File {
     /// not after a `.`, not where an item is named, and not before a `:`.
     /// Where the file binds the name itself is for the checker to find.
     pub idents: Vec<(String, Pos)>,
+    /// Whether the file writes a float: a literal with a point or an exponent,
+    /// or the name `f32` or `f64`.
+    pub floats: bool,
     /// Every name written with the name of an imported module before it, as
     /// in `transaction.begin(db)`.
     pub qualified: Vec<Qualified>,
@@ -932,6 +935,9 @@ fn parse_file(tokens: &[Token], library: bool) -> Result<File, Vec<Error>> {
                 ident_uses(&tokens[after_uses..], None, &mut idents);
                 idents
             },
+            // The prelude's own items, at line 0, are not looked through.
+            floats: tokens.first().is_some_and(|t| t.pos.line != 0)
+                && tokens.iter().any(writes_float),
             uses,
             exports,
             qualified: p.qualified,
@@ -2755,4 +2761,18 @@ impl Parser<'_> {
 /// The items shared, as a `File` holds them.
 fn share<T>(items: Vec<T>) -> Vec<Arc<T>> {
     items.into_iter().map(Arc::new).collect()
+}
+
+/// Whether the token is a float written out, or the name of a float type.
+fn writes_float(token: &Token) -> bool {
+    match &token.tok {
+        Tok::Number(text) => {
+            !text.starts_with(['\'', '0']) && text.contains(['.', 'e', 'E'])
+                || text.starts_with("0.")
+                || text.starts_with("0e")
+                || text.starts_with("0E")
+        }
+        Tok::Ident(name) => name == "f32" || name == "f64",
+        _ => false,
+    }
 }

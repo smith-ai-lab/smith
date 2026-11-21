@@ -329,6 +329,10 @@ impl Prelude<'_> {
         (self.impls.iter().enumerate())
             .filter(|(i, im)| {
                 !loaded.contains(i)
+                    // An `impl` for floats is read for a program that writes one.
+                    && (file.floats
+                        || im.types.is_empty()
+                        || !im.types.iter().all(|t| matches!(*t, "f32" | "f64")))
                     && (traits.contains(im.name) || im.types.iter().any(|t| types.contains(t)))
             })
             .map(|(i, _)| i)
@@ -2022,6 +2026,7 @@ fn check_reading(
         let text = file.text.clone().unwrap_or_else(|| "".into());
         crate::function_args::add(&mut file, &text, 0);
     }
+    file.floats |= read.iter().any(|m| m.file.floats);
     let (mut file, items, mut lazy) = splice(file, read, &mut errors, asks_function);
     lazy.written = written;
     file.modules = module_names(&labels, library);
