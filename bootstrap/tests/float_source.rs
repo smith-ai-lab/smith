@@ -63,6 +63,10 @@ pub const MACHINE: &[Test] = &[
         || answers_on_every_executable::<f64>(1),
     ),
     (
+        "every_executable_prints_2_5_for_half_of_5",
+        every_executable_prints_2_5_for_half_of_5,
+    ),
+    (
         "every_executable_writes_the_shortest_text_of_an_f32",
         || texts_on_every_executable::<f32>(2),
     ),
@@ -551,4 +555,20 @@ fn a_tie_between_two_shortest_texts_goes_to_the_even_digit() {
     let lowered = lower(source.as_bytes()).unwrap_or_else(|e| panic!("{e:?} for {source}"));
     let outcome = scalar::run(&scalar::passes(&lowered));
     assert_eq!(String::from_utf8_lossy(&outcome.stdout), "2097152.2 2097152.8\n");
+}
+
+/// The program of `number-types.md`: `half(5)` is `2.5`, on every target that
+/// builds floats.
+fn every_executable_prints_2_5_for_half_of_5() {
+    let source = with_header(
+        "fn half(n: Int) -> f64 { float(n) / 2.0 }\n\nfn main() ! console, alloc {\n  print(\"{half(5)}\")\n}\n"
+            .to_string(),
+    );
+    let outcome = scalar::Outcome {
+        stdout: b"2.5\n".to_vec(),
+        status: 0,
+    };
+    for target in runnable().into_iter().filter(|t: &Target| t.builds_floats()) {
+        runs_as(source.as_bytes(), target, &outcome);
+    }
 }
