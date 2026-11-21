@@ -3,6 +3,7 @@
 
 mod check;
 mod comments;
+pub mod core;
 pub mod diag;
 mod divide;
 mod function_args;
