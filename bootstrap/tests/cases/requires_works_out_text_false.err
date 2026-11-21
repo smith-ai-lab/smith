@@ -1,0 +1,4 @@
+requires_works_out_text_false.smith:21:38: `lower("Ada")` is false: its last comparison, `65 < 97` at 7:8, was true
+  21 | fn main() ! console, alloc { print("{greet("Ada")}") }
+     |                                      ^
+  fix: check the arguments first with an `if`, or state it in a `requires`

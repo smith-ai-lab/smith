@@ -124,6 +124,7 @@ fn work_out(all: &[Function], t: &Term, env: &mut Vec<(String, Value)>) -> Value
                 Operator::Greater => truth(a > b),
                 Operator::GreaterEqual => truth(a >= b),
                 Operator::Equal => truth(a == b),
+                Operator::Index | Operator::Size | Operator::Bytes => panic!("no text here"),
             }
         }
         Kind::Call {
@@ -295,13 +296,15 @@ fn a_sum_a_difference_and_a_product_are_calls_of_operators_with_the_exact_range(
 
 fn a_function_with_anything_else_in_it_has_no_core_term() {
     let source = with_header(
-        "fn first(xs: List[Byte]) -> u64 { xs.size }\n\nfn plain(a: Byte) -> Byte { a }\n\nfn main() ! console, alloc {\n  print(\"{first([1])}\")\n  print(\"{plain(2)}\")\n}\n"
+        "fn later(a: Byte) -> Byte {\n  var x: Byte = 0\n  if a > 1 {\n    x = 2\n  }\n  x\n}\n\nfn plain(a: Byte) -> Byte { a }\n\nfn main() ! console, alloc {\n  print(\"{later(1)}\")\n  print(\"{plain(2)}\")\n}\n"
             .to_string(),
     );
     let all = core_terms(source.as_bytes()).expect("checks");
     let names: Vec<&str> = all.iter().map(|f| f.name.as_str()).collect();
     assert!(names.contains(&"plain"), "{names:?}");
-    assert!(!names.contains(&"first"), "{names:?}");
+    // An assignment in a branch that does not end in `break` is not a node,
+    // and a term that left it out would say the wrong thing.
+    assert!(!names.contains(&"later"), "{names:?}");
 }
 
 #[derive(Debug)]

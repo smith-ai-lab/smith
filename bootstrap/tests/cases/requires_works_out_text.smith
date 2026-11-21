@@ -1,0 +1,21 @@
+use std.bits (u64)
+use std.console (console, print)
+
+fn lower(t: str) -> bool {
+  var ok = true
+  loop c in t {
+    if c < 97 {
+      ok = false
+      break
+    }
+  }
+  ok
+}
+
+fn greet(name: str) -> u64
+  requires lower(name)
+{
+  name.size
+}
+
+fn main() ! console, alloc { print("{greet("ada")} {greet("grace")}") }

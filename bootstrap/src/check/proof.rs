@@ -1858,6 +1858,10 @@ impl<'a> Checker<'a> {
                 texts.insert(name.clone(), written_expr(&arg.value));
                 continue;
             }
+            if matches!(ty, Ty::Text) {
+                texts.insert(name.clone(), written_expr(&arg.value));
+                continue;
+            }
             if !matches!(ty, Ty::Int(_)) {
                 continue;
             }
