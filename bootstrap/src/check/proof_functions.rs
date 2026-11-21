@@ -42,10 +42,66 @@ impl<'a> Checker<'a> {
                 format!("`{}` is a proof, which carries no effect", def.name),
             ));
         }
-        self.errors.push(Error::unsupported(
-            def.body.first().map_or(def.pos, stmt_pos),
-            "a proof body",
-        ));
+        self.proof_block(&mut body, &def.body, &mut Vec::new());
+    }
+}
+
+impl<'a> Checker<'a> {
+    /// Checks the steps of a proof: `same`, `arith` of the proofs named so far,
+    /// a name given by `unfold` and the steps after it, or an `if` whose blocks
+    /// are steps.
+    fn proof_block(&mut self, body: &mut Body<'a>, stmts: &'a [Stmt], names: &mut Vec<String>) {
+        match stmts {
+            [Stmt::Expr(Expr::Name { name, .. })] if name == "same" => {}
+            [Stmt::Expr(Expr::Call(c))] if c.callee == "arith" && c.qualifier.is_none() => {
+                for arg in &c.args {
+                    match &arg.value {
+                        Expr::Name { name, .. } if names.contains(name) => {}
+                        other => self.errors.push(Error::new(
+                            other.pos(),
+                            "`arith` is handed the names of proofs given before it",
+                        )),
+                    }
+                }
+            }
+            [Stmt::Expr(Expr::Match(m))] if matches!(m.form, Form::If { otherwise: true }) => {
+                self.condition(body, &m.of);
+                for arm in &m.arms {
+                    let mark = names.len();
+                    self.proof_block(body, &arm.body, names);
+                    names.truncate(mark);
+                }
+            }
+            [
+                Stmt::Define {
+                    name,
+                    value: Expr::Call(c),
+                    var: false,
+                    ..
+                },
+                rest @ ..,
+            ] if c.callee == "unfold" && c.qualifier.is_none() => {
+                match c.args.as_slice() {
+                    [arg] if matches!(arg.value, Expr::Call(_)) => {
+                        self.expr(body, &arg.value, &Want::Any);
+                    }
+                    _ => self.errors.push(Error::new(
+                        c.pos,
+                        "`unfold` is of one call of a function, as `unfold(f(x))`",
+                    )),
+                }
+                names.push(name.clone());
+                self.proof_block(body, rest, names);
+            }
+            [first, ..] => self.errors.push(Error::new(
+                stmt_pos(first),
+                "this is not a step of a proof: `same`, `arith`, a name given by `unfold`, or an `if` of steps",
+            )),
+            [] => self.errors.push(Error::new(
+                body.f.map_or(Pos::START, |f| f.pos),
+                "a proof has no step",
+            )),
+        }
     }
 }
 

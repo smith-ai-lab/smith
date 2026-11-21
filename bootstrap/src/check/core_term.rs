@@ -807,3 +807,157 @@ impl<'a> Typed<'a> {
         errors
     }
 }
+
+impl<'a> Typed<'a> {
+    /// The steps of a proof as a term: `same`, or an `if` that splits the
+    /// proof into cases.
+    fn core_proof(&self, stmts: &[Stmt]) -> Option<Term> {
+        match stmts {
+            [Stmt::Expr(Expr::Name { name, pos })] if name == "same" => Some(Term::new(
+                Kind::Call {
+                    callee: Callee::Step(core::Step::Same),
+                    args: Vec::new(),
+                },
+                core::Type::Nothing,
+                *pos,
+            )),
+            [Stmt::Expr(Expr::Call(c))] if c.callee == "arith" && c.qualifier.is_none() => {
+                let args: Option<Vec<Term>> = c
+                    .args
+                    .iter()
+                    .map(|a| match &a.value {
+                        Expr::Name { name, pos } => Some(Term::new(
+                            Kind::Name(name.clone()),
+                            core::Type::Nothing,
+                            *pos,
+                        )),
+                        _ => None,
+                    })
+                    .collect();
+                Some(Term::new(
+                    Kind::Call {
+                        callee: Callee::Step(core::Step::Arith),
+                        args: args?,
+                    },
+                    core::Type::Nothing,
+                    c.pos,
+                ))
+            }
+            [
+                Stmt::Define {
+                    name,
+                    pos,
+                    value: Expr::Call(c),
+                    var: false,
+                    ..
+                },
+                rest @ ..,
+            ] if c.callee == "unfold" && c.qualifier.is_none() => {
+                let [arg] = c.args.as_slice() else {
+                    return None;
+                };
+                let call = self.core_expr(&arg.value)?;
+                let value = Term::new(
+                    Kind::Call {
+                        callee: Callee::Step(core::Step::Unfold),
+                        args: vec![call],
+                    },
+                    core::Type::Nothing,
+                    c.pos,
+                );
+                let rest = self.core_proof(rest)?;
+                Some(Term::new(
+                    Kind::Bind {
+                        name: name.clone(),
+                        value: Box::new(value),
+                        rest: Box::new(rest),
+                    },
+                    core::Type::Nothing,
+                    *pos,
+                ))
+            }
+            [Stmt::Expr(Expr::Match(m))] if matches!(m.form, Form::If { otherwise: true }) => {
+                let of = self.core_expr(&m.of)?;
+                let [then, otherwise] = m.arms.as_slice() else {
+                    return None;
+                };
+                let (then, otherwise) = (
+                    self.core_proof(&then.body)?,
+                    self.core_proof(&otherwise.body)?,
+                );
+                Some(Term::new(
+                    Kind::Choose {
+                        of: Box::new(of),
+                        arms: vec![
+                            (CorePattern::Case(1, None), then),
+                            (CorePattern::Case(0, None), otherwise),
+                        ],
+                    },
+                    core::Type::Nothing,
+                    m.pos,
+                ))
+            }
+            _ => None,
+        }
+    }
+
+    /// Checks every proof function of the file with the kernel, and gives the
+    /// errors of those that do not prove their statement.
+    pub(super) fn prove_proofs(&self) -> Vec<Error> {
+        let proofs: Vec<(usize, &Arc<Function>)> = self
+            .defs
+            .file
+            .functions
+            .iter()
+            .enumerate()
+            .filter(|(_, f)| is_proof(f) && !of_prelude(f.pos))
+            .collect();
+        if proofs.is_empty() {
+            return Vec::new();
+        }
+        let all = self.core_terms();
+        let mut errors = Vec::new();
+        for (place, f) in proofs {
+            let Some(statement_expr) = f.result.as_ref().and_then(|t| t.statement.as_deref())
+            else {
+                continue;
+            };
+            let sig = &self.defs.signatures[place];
+            let params: Option<Vec<(String, core::Type)>> = sig
+                .params
+                .iter()
+                .map(|(n, t)| Some((n.clone(), self.core_type(t)?)))
+                .collect();
+            let (Some(params), Some(statement), Some(body)) = (
+                params,
+                self.core_expr(statement_expr),
+                self.core_proof(&f.body),
+            ) else {
+                errors.push(Error::new(
+                    f.pos,
+                    format!(
+                        "the kernel does not read the statement or the steps of `{}`",
+                        f.name
+                    ),
+                ));
+                continue;
+            };
+            let at = f.body.first().map_or(f.pos, |s| match s {
+                Stmt::Expr(e) => e.pos(),
+                _ => f.pos,
+            });
+            let proof = core::Proof {
+                name: f.name.clone(),
+                pos: at,
+                params,
+                statement,
+                written: proof::written_contract(&|_| None, statement_expr),
+                body,
+            };
+            if let Err(message) = crate::kernel::check_proof(&all, &proof, STEPS) {
+                errors.push(Error::new(at, message));
+            }
+        }
+        errors
+    }
+}

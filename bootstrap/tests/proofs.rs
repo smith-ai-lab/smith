@@ -1,11 +1,13 @@
 //! A function whose result is a statement, a comparison of values written
 //! where a type is, is a proof. It is checked whether or not anything reaches
 //! it, its statement is a `bool` over its parameters, and it carries no
-//! effect. Its body, which the kernel reads, is not built yet.
+//! effect. Its body is steps, which the kernel checks: `same` proves `a == a`,
+//! and a statement with nothing unknown by working it out.
 
 use smith::check;
 
 use crate::Test;
+use crate::generate::{self, Gen};
 use crate::numbers::with_header;
 
 pub const ONCE: &[Test] = &[
@@ -16,6 +18,30 @@ pub const ONCE: &[Test] = &[
     (
         "a_proof_function_is_checked_though_no_code_reaches_it",
         a_proof_function_is_checked_though_no_code_reaches_it,
+    ),
+    (
+        "same_proves_a_statement_with_nothing_unknown_exactly_when_the_evaluator_gives_true",
+        same_proves_a_statement_with_nothing_unknown_exactly_when_the_evaluator_gives_true,
+    ),
+    (
+        "same_proves_a_equal_to_a_and_nothing_else_that_has_a_parameter_in_it",
+        same_proves_a_equal_to_a_and_nothing_else_that_has_a_parameter_in_it,
+    ),
+    (
+        "a_proof_splits_into_cases_with_an_if_and_each_block_proves_the_statement",
+        a_proof_splits_into_cases_with_an_if_and_each_block_proves_the_statement,
+    ),
+    (
+        "arith_proves_what_an_unfolded_body_says_exactly_when_the_numbers_agree",
+        arith_proves_what_an_unfolded_body_says_exactly_when_the_numbers_agree,
+    ),
+    (
+        "arith_proves_an_identity_of_products_and_refuses_one_that_is_not",
+        arith_proves_an_identity_of_products_and_refuses_one_that_is_not,
+    ),
+    (
+        "unfold_takes_the_block_of_the_case_it_is_in_and_asks_for_one_it_is_not",
+        unfold_takes_the_block_of_the_case_it_is_in_and_asks_for_one_it_is_not,
     ),
     (
         "a_result_that_is_a_type_is_read_as_a_type_still",
@@ -32,8 +58,8 @@ fn messages(source: &str) -> Vec<String> {
 
 const MAIN: &str = "fn main() ! console, alloc { print(\"{1}\") }\n";
 
-/// For each way a statement is written, the only thing refused is the body,
-/// which is not built yet: the statement itself is a `bool`.
+/// For each way a statement is written, what is refused is what `same` cannot
+/// prove of it, and nothing about how it is written: the statement is a `bool`.
 fn a_statement_is_read_where_a_result_type_is_written_and_is_checked_over_the_parameters() {
     for statement in [
         "n == 0",
@@ -45,7 +71,7 @@ fn a_statement_is_read_where_a_result_type_is_written_and_is_checked_over_the_pa
     ] {
         let found = messages(&format!("fn p(n: u64) -> {statement} {{ same }}\n\n{MAIN}"));
         assert_eq!(found.len(), 1, "{statement}: {found:?}");
-        assert!(found[0].contains("a proof body"), "{statement}: {found:?}");
+        assert!(found[0].contains("`same` proves"), "{statement}: {found:?}");
     }
     // A name that is no parameter is refused where the statement is written.
     let found = messages(&format!("fn p(n: u64) -> n == m {{ same }}\n\n{MAIN}"));
@@ -54,9 +80,11 @@ fn a_statement_is_read_where_a_result_type_is_written_and_is_checked_over_the_pa
         "{found:?}"
     );
     // A statement is a `bool`: a number is not one.
-    let found = messages(&format!("fn p(n: u64) -> n + 1 == 2 and n {{ same }}\n\n{MAIN}"));
+    let found = messages(&format!(
+        "fn p(n: u64) -> n + 1 == 2 and n {{ same }}\n\n{MAIN}"
+    ));
     assert!(
-        found.iter().any(|m| !m.contains("a proof body")),
+        found.iter().any(|m| !m.contains("`same` proves")),
         "{found:?}"
     );
 }
@@ -79,4 +107,158 @@ fn a_result_that_is_a_type_is_read_as_a_type_still() {
         "fn a(n: u64) -> u64 { n }\n\nfn b(n: u64) -> List[u64] ! alloc { [n] }\n\nfn c(n: u64) -> r: u64 ensures r == n { n }\n\nfn main() ! console, alloc {\n  print(\"{a(1)}\")\n  print(\"{b(1).size}\")\n  print(\"{c(1)}\")\n}\n"
     );
     assert!(found.is_empty(), "{found:?}");
+}
+
+/// A comparison as it is written, and what it says of two numbers.
+type Comparison = (&'static str, fn(i128, i128) -> bool);
+
+const OPERATIONS: [Comparison; 6] = [
+    ("<", |a, b| a < b),
+    ("<=", |a, b| a <= b),
+    (">", |a, b| a > b),
+    (">=", |a, b| a >= b),
+    ("==", |a, b| a == b),
+    ("!=", |a, b| a != b),
+];
+
+#[derive(Debug)]
+struct Closed {
+    source: String,
+    /// How many of its two proofs prove something false.
+    false_ones: usize,
+}
+
+/// Two proofs by `same` of a statement that has no parameter: one over a sum of
+/// two numbers, and one over a call of a function of the file.
+fn closed(g: &mut Gen) -> Closed {
+    let (x, y, z) = (g.below(20) as i128, g.below(20) as i128, g.below(20) as i128);
+    let (op, holds) = OPERATIONS[g.below(6)];
+    // `identity` gives its argument, so the second proof says the same of `x`.
+    Closed {
+        source: format!(
+            "fn identity(n: u64) -> u64 {{ n }}\n\nfn p() -> {x} + {y} {op} {z} {{ same }}\n\nfn q() -> identity({x}) {op} {z} {{ same }}\n\n{MAIN}"
+        ),
+        false_ones: usize::from(!holds(x + y, z)) + usize::from(!holds(x, z)),
+    }
+}
+
+/// `same` proves a statement with nothing unknown in it exactly when the
+/// evaluator gives `true`, and says that it is false where it is not.
+fn same_proves_a_statement_with_nothing_unknown_exactly_when_the_evaluator_gives_true() {
+    generate::check(140, 150, closed, |c| {
+        let found = messages(&c.source);
+        let false_ones = found.iter().filter(|m| m.contains("which is false")).count();
+        assert_eq!(false_ones, c.false_ones, "{found:?}");
+        assert_eq!(found.len(), c.false_ones, "{found:?}");
+    });
+}
+
+/// `a == a` is proven with a parameter in it, whatever `a` is, and a statement
+/// that has a parameter and is not that is refused naming the parameter.
+fn same_proves_a_equal_to_a_and_nothing_else_that_has_a_parameter_in_it() {
+    for same in ["n == n", "n + 1 == n + 1", "n * 2 + 3 == n * 2 + 3"] {
+        let found = messages(&format!("fn p(n: u64) -> {same} {{ same }}\n\n{MAIN}"));
+        assert!(found.is_empty(), "{same}: {found:?}");
+    }
+    for other in ["n == 1 + n - 1", "n + 1 == 1 + n", "n >= n"] {
+        let found = messages(&format!("fn p(n: u64) -> {other} {{ same }}\n\n{MAIN}"));
+        assert_eq!(found.len(), 1, "{other}: {found:?}");
+        assert!(found[0].contains("`n` unknown"), "{other}: {found:?}");
+    }
+}
+
+/// An `if` splits a proof into cases, and each block proves the statement.
+fn a_proof_splits_into_cases_with_an_if_and_each_block_proves_the_statement() {
+    let found = messages(&format!(
+        "fn p(n: u64) -> n == n {{\n  if n == 0 {{ same }} else {{ same }}\n}}\n\n{MAIN}"
+    ));
+    assert!(found.is_empty(), "{found:?}");
+    let found = messages(&format!(
+        "fn p(n: u64) -> n == 0 {{\n  if n == 0 {{ same }} else {{ same }}\n}}\n\n{MAIN}"
+    ));
+    // No block proves it, as the cases do not use what they split on yet, and
+    // the first one that does not is what is said.
+    assert_eq!(found.len(), 1, "{found:?}");
+    assert!(found[0].contains("`n == 0` has `n` unknown"), "{found:?}");
+}
+
+#[derive(Debug)]
+struct Linear {
+    source: String,
+    right: bool,
+}
+
+/// `line(n)` is `a * n + b`, and a proof by `unfold` and `arith` says so, or
+/// says it is `a * n + b + 1`, which is not so.
+fn linear(g: &mut Gen) -> Linear {
+    let (a, b) = (g.below(9), g.below(9));
+    let right = g.one_in(2);
+    let said = if right {
+        format!("{a} * n + {b}")
+    } else {
+        format!("{a} * n + {b} + 1")
+    };
+    Linear {
+        source: format!(
+            "fn line(n: Byte) -> Int {{ {a} * n + {b} }}\n\nfn p(n: Byte) -> line(n) == {said} {{\n  opened = unfold(line(n))\n  arith(opened)\n}}\n\n{MAIN}"
+        ),
+        right,
+    }
+}
+
+/// The body of a function is what `unfold` gives, and `arith` gets a statement
+/// from it exactly when the two sides differ by what it says.
+fn arith_proves_what_an_unfolded_body_says_exactly_when_the_numbers_agree() {
+    generate::check(141, 150, linear, |c| {
+        let found = messages(&c.source);
+        if c.right {
+            assert!(found.is_empty(), "{found:?}");
+        } else {
+            assert_eq!(found.len(), 1, "{found:?}");
+            assert!(found[0].contains("`arith` cannot get `line(n) =="), "{found:?}");
+            assert!(found[0].contains("`opened`"), "{found:?}");
+        }
+    });
+}
+
+/// A product of unknowns is one unknown of its own, and `arith` multiplies out.
+fn arith_proves_an_identity_of_products_and_refuses_one_that_is_not() {
+    for (statement, holds) in [
+        ("(n + 1) * (n + 1) == n * n + 2 * n + 1", true),
+        ("(a + b) * (a + b) == a * a + 2 * a * b + b * b", true),
+        ("a * (b + 1) == a * b + a", true),
+        ("(n + 1) * (n + 1) == n * n + 2 * n + 2", false),
+        ("a * b == b * a + 1", false),
+    ] {
+        let found = messages(&format!(
+            "fn p(n: u64, a: u64, b: u64) -> {statement} {{ arith() }}\n\n{MAIN}"
+        ));
+        assert_eq!(found.is_empty(), holds, "{statement}: {found:?}");
+    }
+}
+
+/// `unfold` takes the block of a case the proof is in, and asks for one when
+/// the proof is not in any.
+fn unfold_takes_the_block_of_the_case_it_is_in_and_asks_for_one_it_is_not() {
+    let body = "fn pick(n: u64) -> u64 {\n  if n == 0 { 0 } else { n }\n}\n\n";
+    let found = messages(&format!(
+        "{body}fn p(n: u64) -> pick(n) == n {{\n  if n == 0 {{\n    same\n  }} else {{\n    opened = unfold(pick(n))\n    arith(opened)\n  }}\n}}\n\n{MAIN}"
+    ));
+    assert!(found.is_empty(), "{found:?}");
+    // Outside the case, which block is taken is not known.
+    let found = messages(&format!(
+        "{body}fn p(n: u64) -> pick(n) == n {{\n  opened = unfold(pick(n))\n  arith(opened)\n}}\n\n{MAIN}"
+    ));
+    assert_eq!(found.len(), 1, "{found:?}");
+    assert!(found[0].contains("`unfold` needs `n == 0`"), "{found:?}");
+    // In the case where `n` is 0, `same` works the statement out for it.
+    let found = messages(&format!(
+        "{body}fn p(n: u64) -> pick(n) == n + 1 {{\n  if n == 0 {{\n    same\n  }} else {{\n    opened = unfold(pick(n))\n    arith(opened)\n  }}\n}}\n\n{MAIN}"
+    ));
+    assert!(found.iter().any(|m| m.contains("which is false")), "{found:?}");
+    // A name that is no proof is not handed to `arith`.
+    let found = messages(&format!(
+        "{body}fn p(n: u64) -> pick(n) == n {{ arith(nothing_here) }}\n\n{MAIN}"
+    ));
+    assert!(found.iter().any(|m| m.contains("names of proofs")), "{found:?}");
 }

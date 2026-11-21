@@ -2449,7 +2449,8 @@ fn check_file(
     if !errors.is_empty() {
         return Err(errors);
     }
-    let errors = typed.prove_by_kernel(&kernel_calls);
+    let mut errors = typed.prove_by_kernel(&kernel_calls);
+    errors.extend(typed.prove_proofs());
     if !errors.is_empty() {
         return Err(errors);
     }
