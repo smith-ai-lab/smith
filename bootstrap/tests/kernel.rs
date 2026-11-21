@@ -9,7 +9,7 @@ use smith::lower;
 use smith::scalar::{self, Outcome};
 
 use crate::Test;
-use crate::core_producer::program;
+use crate::core_producer::{BATCH, Program, batch, batch_source};
 use crate::generate::{self, Gen};
 use crate::numbers::with_header;
 
@@ -51,26 +51,46 @@ fn outcome(source: &str) -> Outcome {
 /// For every function of numbers and `bool` the generator makes, the kernel
 /// gives what the program prints, with no limit that is reached.
 fn the_kernel_works_a_function_out_to_what_the_program_prints() {
-    generate::check(130, 200, program, |p| {
-        let Ok(all) = core_terms(p.source.as_bytes()) else {
-            return;
-        };
-        let f = all.iter().find(|f| f.name == "f").expect("a term for f");
+    generate::check(130, 200 / BATCH as u64, batch, |batch| {
+        // A program `arith` refuses is not what is tested: its cases are then
+        // each tried alone.
+        if !kernel_gives(&batch.cases) {
+            for case in &batch.cases {
+                kernel_gives(std::slice::from_ref(case));
+            }
+        }
+    });
+}
+
+/// Whether the cases are accepted as one program, and if they are, that the
+/// kernel gives the line the program prints for each.
+fn kernel_gives(cases: &[Program]) -> bool {
+    let source = batch_source(cases);
+    let Ok(all) = core_terms(source.as_bytes()) else {
+        return false;
+    };
+    let mut expected = String::new();
+    for case in cases {
+        let name = case.name();
+        let f = all.iter().find(|f| f.name == name).expect("a term for f");
         let mut machine = Machine::new(&all, 1_000_000);
         let (got, _) = machine
-            .call(f.place, vec![Value::Int(p.a), Value::Int(p.b)])
+            .call(f.place, vec![Value::Int(case.a), Value::Int(case.b)])
             .expect("worked out");
         let Value::Int(n) = got else {
             panic!("{got:?} is not a number")
         };
-        assert_eq!(
-            outcome(&p.source),
-            Outcome {
-                stdout: format!("{n}\n").into_bytes(),
-                status: 0
-            }
-        );
-    });
+        expected.push_str(&format!("{n}\n"));
+    }
+    assert_eq!(
+        outcome(&source),
+        Outcome {
+            stdout: expected.into_bytes(),
+            status: 0
+        },
+        "{source}"
+    );
+    true
 }
 
 const COUNT: &str = "fn count(n: u64) -> u64\n  decreases n\n{\n  if n == 0 { 0 } else { count(n - 1) }\n}\n\nfn main() ! console, alloc {\n  print(\"{count(3)}\")\n}\n";
@@ -127,38 +147,66 @@ fn a_false_comparison_is_reported_where_it_is_written_with_the_numbers_it_compar
 
 #[derive(Debug)]
 struct Looped {
-    source: String,
     n: i128,
     k: i128,
     xs: Vec<i128>,
 }
 
-fn looped(g: &mut Gen) -> Looped {
-    let (n, k) = (g.below(8) as i128, g.below(8) as i128);
-    let xs: Vec<i128> = (0..g.below(6)).map(|_| g.below(6) as i128).collect();
-    let list = xs.iter().map(i128::to_string).collect::<Vec<_>>().join(", ");
-    Looped {
-        source: with_header(format!(
-            "fn find(xs: List[i32], k: i32) -> bool {{\n  var found = false\n  var last: i32 = 0\n  loop v in xs {{\n    last = v\n    if v == k {{\n      found = true\n      break\n    }}\n  }}\n  found\n}}\n\n\
-fn first_at(n: u64, k: u64) -> u64 {{\n  var hit: u64 = 0\n  loop i in 0..n {{\n    if i == k {{\n      hit = i + 1\n      break\n    }}\n  }}\n  hit\n}}\n\n\
-fn main() ! console, alloc {{\n  xs: List[i32] = [{list}]\n  print(\"{{find(xs, {k})}} {{first_at({n}, {k})}}\")\n}}\n"
-        )),
-        n,
-        k,
-        xs,
+#[derive(Debug)]
+struct Loopeds(Vec<Looped>);
+
+fn looped(g: &mut Gen) -> Loopeds {
+    Loopeds(
+        (0..BATCH)
+            .map(|_| Looped {
+                n: g.below(8) as i128,
+                k: g.below(8) as i128,
+                xs: (0..g.below(6)).map(|_| g.below(6) as i128).collect(),
+            })
+            .collect(),
+    )
+}
+
+/// The program of cases: `find` and `first_at` once, and a call of each for
+/// every case.
+fn looped_source(cases: &[Looped]) -> String {
+    let mut main = String::new();
+    for (at, c) in cases.iter().enumerate() {
+        let list = c.xs.iter().map(i128::to_string).collect::<Vec<_>>().join(", ");
+        main.push_str(&format!(
+            "  xs{at}: List[i32] = [{list}]\n  print(\"{{find(xs{at}, {})}} {{first_at({}, {})}}\")\n",
+            c.k, c.n, c.k
+        ));
     }
+    with_header(format!(
+        "fn find(xs: List[i32], k: i32) -> bool {{\n  var found = false\n  var last: i32 = 0\n  loop v in xs {{\n    last = v\n    if v == k {{\n      found = true\n      break\n    }}\n  }}\n  found\n}}\n\n\
+fn first_at(n: u64, k: u64) -> u64 {{\n  var hit: u64 = 0\n  loop i in 0..n {{\n    if i == k {{\n      hit = i + 1\n      break\n    }}\n  }}\n  hit\n}}\n\n\
+fn main() ! console, alloc {{\n{main}}}\n"
+    ))
 }
 
 /// For every loop over a list that stops at a `break`, and over a range that
 /// does, the kernel hands the `var`s from round to round and gives what the
 /// program prints.
 fn the_kernel_works_a_loop_out_round_by_round_to_what_the_program_prints() {
-    generate::check(131, 150, looped, |p| {
-        let Ok(all) = core_terms(p.source.as_bytes()) else {
-            return;
-        };
-        let term = |name: &str| all.iter().find(|f| f.name == name).expect("a term").place;
-        let mut machine = Machine::new(&all, 1_000_000);
+    generate::check(131, 150 / BATCH as u64, looped, |p| {
+        if !loops_given(&p.0) {
+            for case in &p.0 {
+                loops_given(std::slice::from_ref(case));
+            }
+        }
+    });
+}
+
+fn loops_given(cases: &[Looped]) -> bool {
+    let source = looped_source(cases);
+    let Ok(all) = core_terms(source.as_bytes()) else {
+        return false;
+    };
+    let term = |name: &str| all.iter().find(|f| f.name == name).expect("a term").place;
+    let mut machine = Machine::new(&all, 1_000_000);
+    let mut expected = String::new();
+    for p in cases {
         let list = Value::Parts(p.xs.iter().map(|x| Value::Int(*x)).collect());
         let (found, _) = machine
             .call(term("find"), vec![list, Value::Int(p.k)])
@@ -172,61 +220,98 @@ fn the_kernel_works_a_loop_out_round_by_round_to_what_the_program_prints() {
         let Value::Int(hit) = hit else {
             panic!("a number")
         };
-        assert_eq!(
-            outcome(&p.source),
-            Outcome {
-                stdout: format!("{} {hit}\n", found == 1).into_bytes(),
-                status: 0
-            }
-        );
-    });
+        expected.push_str(&format!("{} {hit}\n", found == 1));
+    }
+    assert_eq!(
+        outcome(&source),
+        Outcome {
+            stdout: expected.into_bytes(),
+            status: 0
+        },
+        "{source}"
+    );
+    true
 }
 
 #[derive(Debug)]
-struct Needs {
-    source: String,
-    holds: bool,
+struct Need {
+    list: Vec<i128>,
     k: i128,
 }
 
+#[derive(Debug)]
+struct Needs(Vec<Need>);
+
 fn needs(g: &mut Gen) -> Needs {
-    let xs: Vec<i128> = (0..1 + g.below(5)).map(|_| g.below(6) as i128).collect();
-    let k = g.below(6) as i128;
-    let list = xs.iter().map(i128::to_string).collect::<Vec<_>>().join(", ");
-    Needs {
-        source: with_header(format!(
-            "fn has(xs: List[i32], k: i32) -> bool {{\n  var found = false\n  loop v in xs {{\n    if v == k {{\n      found = true\n      break\n    }}\n  }}\n  found\n}}\n\n\
-fn pick(xs: List[i32], k: i32) -> i32\n  requires has(xs, k)\n{{\n  k\n}}\n\n\
-fn main() ! console, alloc {{\n  print(\"{{pick([{list}], {k})}}\")\n}}\n"
-        )),
-        holds: xs.contains(&k),
-        k,
+    Needs(
+        (0..BATCH)
+            .map(|_| Need {
+                list: (0..1 + g.below(5)).map(|_| g.below(6) as i128).collect(),
+                k: g.below(6) as i128,
+            })
+            .collect(),
+    )
+}
+
+impl Need {
+    fn holds(&self) -> bool {
+        self.list.contains(&self.k)
     }
+
+    /// The call, as it is written.
+    fn call(&self) -> String {
+        let list = self.list.iter().map(i128::to_string).collect::<Vec<_>>().join(", ");
+        format!("pick([{list}], {})", self.k)
+    }
+}
+
+/// The program that calls `pick` for each case.
+fn needs_source(cases: &[&Need]) -> String {
+    let prints: String = cases
+        .iter()
+        .map(|c| format!("  print(\"{{{}}}\")\n", c.call()))
+        .collect();
+    with_header(format!(
+        "fn has(xs: List[i32], k: i32) -> bool {{\n  var found = false\n  loop v in xs {{\n    if v == k {{\n      found = true\n      break\n    }}\n  }}\n  found\n}}\n\n\
+fn pick(xs: List[i32], k: i32) -> i32\n  requires has(xs, k)\n{{\n  k\n}}\n\n\
+fn main() ! console, alloc {{\n{prints}}}\n"
+    ))
 }
 
 /// A call whose `requires` is a predicate with a loop, over arguments written
 /// out, compiles exactly when the kernel works the predicate out to `true`,
-/// and prints what the program printed without the contract.
+/// and prints what the program printed without the contract. The cases that
+/// hold are one program, which prints each `k`; the cases that do not are
+/// another, which is refused with an error for each.
 fn a_requires_over_arguments_written_out_is_proven_by_working_it_out() {
-    generate::check(132, 150, needs, |p| match smith::check(p.source.as_bytes()) {
-        Ok(_) => {
-            assert!(p.holds, "accepted, though the predicate is false");
+    generate::check(132, 150 / BATCH as u64, needs, |p| {
+        let (holding, failing): (Vec<&Need>, Vec<&Need>) = p.0.iter().partition(|c| c.holds());
+        if !holding.is_empty() {
+            let source = needs_source(&holding);
+            let built = smith::check(source.as_bytes());
+            assert!(built.is_ok(), "{source}: {:?}", built.err());
             assert_eq!(
-                outcome(&p.source),
+                outcome(&source),
                 Outcome {
-                    stdout: format!("{}\n", p.k).into_bytes(),
+                    stdout: holding.iter().map(|c| format!("{}\n", c.k)).collect::<String>().into_bytes(),
                     status: 0
                 }
             );
         }
-        Err(errors) => {
-            assert!(!p.holds, "refused, though the predicate is true: {errors:?}");
-            assert!(
-                errors
-                    .iter()
-                    .any(|e| e.message.contains("is false") && e.message.contains("`has(")),
-                "{errors:?} does not say the call is false"
-            );
+        if !failing.is_empty() {
+            let source = needs_source(&failing);
+            let errors = smith::check(source.as_bytes()).expect_err("refused");
+            for case in &failing {
+                let call = format!("`has({}", &case.call()["pick(".len()..case.call().rfind(", ").unwrap()]);
+                assert!(
+                    errors
+                        .iter()
+                        .any(|e| e.message.contains("is false") && e.message.contains(&call)),
+                    "{errors:?} does not say the call of {} is false",
+                    case.call()
+                );
+            }
+            assert_eq!(errors.len(), failing.len(), "{errors:?}");
         }
     });
 }
@@ -247,63 +332,85 @@ fn a_predicate_that_does_not_end_within_the_steps_fails_naming_the_call_and_the_
 }
 
 #[derive(Debug)]
-struct Texts {
-    source: String,
+struct Text {
     text: Vec<u8>,
     xs: Vec<i128>,
     k: i128,
     byte: u8,
 }
 
+#[derive(Debug)]
+struct Texts(Vec<Text>);
+
 fn texts(g: &mut Gen) -> Texts {
-    let text: Vec<u8> = (0..g.below(6)).map(|_| b'a' + g.below(4) as u8).collect();
-    let xs: Vec<i128> = (0..g.below(6)).map(|_| g.below(5) as i128).collect();
-    let (k, byte) = (g.below(5) as i128, b'a' + g.below(4) as u8);
-    let list = xs.iter().map(i128::to_string).collect::<Vec<_>>().join(", ");
-    let word = String::from_utf8(text.clone()).expect("ascii");
-    Texts {
-        source: with_header(format!(
-            "fn first_index(xs: List[i32], k: i32) -> u64 {{\n  var hit: u64 = 0\n  loop i in 0..xs.size {{\n    if xs[i] == k {{\n      hit = i\n      break\n    }}\n  }}\n  hit\n}}\n\n\
+    Texts(
+        (0..BATCH)
+            .map(|_| Text {
+                text: (0..g.below(6)).map(|_| b'a' + g.below(4) as u8).collect(),
+                xs: (0..g.below(6)).map(|_| g.below(5) as i128).collect(),
+                k: g.below(5) as i128,
+                byte: b'a' + g.below(4) as u8,
+            })
+            .collect(),
+    )
+}
+
+/// The program of cases: the three functions once, and a call of each for every
+/// case.
+fn texts_source(cases: &[Text]) -> String {
+    let mut main = String::new();
+    for (at, c) in cases.iter().enumerate() {
+        let list = c.xs.iter().map(i128::to_string).collect::<Vec<_>>().join(", ");
+        let word = String::from_utf8(c.text.clone()).expect("ascii");
+        main.push_str(&format!(
+            "  xs{at}: List[i32] = [{list}]\n  word{at} = \"{word}\"\n  print(\"{{first_index(xs{at}, {})}} {{has_byte(word{at}, {})}} {{length(word{at})}}\")\n",
+            c.k, c.byte
+        ));
+    }
+    with_header(format!(
+        "fn first_index(xs: List[i32], k: i32) -> u64 {{\n  var hit: u64 = 0\n  loop i in 0..xs.size {{\n    if xs[i] == k {{\n      hit = i\n      break\n    }}\n  }}\n  hit\n}}\n\n\
 fn has_byte(t: str, b: Byte) -> bool {{\n  var found = false\n  loop c in t {{\n    if c == b {{\n      found = true\n      break\n    }}\n  }}\n  found\n}}\n\n\
 fn length(t: str) -> u64 {{ t.size }}\n\n\
-fn main() ! console, alloc {{\n  xs: List[i32] = [{list}]\n  word = \"{word}\"\n  print(\"{{first_index(xs, {k})}} {{has_byte(word, {byte})}} {{length(word)}}\")\n}}\n"
-        )),
-        text,
-        xs,
-        k,
-        byte,
-    }
+fn main() ! console, alloc {{\n{main}}}\n"
+    ))
 }
 
 /// For every list searched by index, text searched by byte, and text measured,
 /// the kernel gives what the program prints.
 fn the_kernel_works_out_the_size_an_index_the_bytes_and_a_loop_over_a_text() {
-    generate::check(133, 150, texts, |p| {
-        let all = core_terms(p.source.as_bytes()).unwrap_or_else(|e| panic!("{e:?}"));
+    generate::check(133, 150 / BATCH as u64, texts, |p| {
+        let source = texts_source(&p.0);
+        let all = core_terms(source.as_bytes()).unwrap_or_else(|e| panic!("{e:?}"));
         let term = |name: &str| all.iter().find(|f| f.name == name).expect("a term").place;
         let mut machine = Machine::new(&all, 1_000_000);
-        let list = Value::Parts(p.xs.iter().map(|x| Value::Int(*x)).collect());
-        let (hit, _) = machine
-            .call(term("first_index"), vec![list, Value::Int(p.k)])
-            .expect("worked out");
-        let (found, _) = machine
-            .call(
-                term("has_byte"),
-                vec![Value::Text(p.text.clone()), Value::Int(p.byte as i128)],
-            )
-            .expect("worked out");
-        let (len, _) = machine
-            .call(term("length"), vec![Value::Text(p.text.clone())])
-            .expect("worked out");
-        let (Value::Int(hit), Value::Case(found, _), Value::Int(len)) = (hit, found, len) else {
-            panic!("values")
-        };
+        let mut expected = String::new();
+        for c in &p.0 {
+            let list = Value::Parts(c.xs.iter().map(|x| Value::Int(*x)).collect());
+            let (hit, _) = machine
+                .call(term("first_index"), vec![list, Value::Int(c.k)])
+                .expect("worked out");
+            let (found, _) = machine
+                .call(
+                    term("has_byte"),
+                    vec![Value::Text(c.text.clone()), Value::Int(c.byte as i128)],
+                )
+                .expect("worked out");
+            let (len, _) = machine
+                .call(term("length"), vec![Value::Text(c.text.clone())])
+                .expect("worked out");
+            let (Value::Int(hit), Value::Case(found, _), Value::Int(len)) = (hit, found, len)
+            else {
+                panic!("values")
+            };
+            expected.push_str(&format!("{hit} {} {len}\n", found == 1));
+        }
         assert_eq!(
-            outcome(&p.source),
+            outcome(&source),
             Outcome {
-                stdout: format!("{hit} {} {len}\n", found == 1).into_bytes(),
+                stdout: expected.into_bytes(),
                 status: 0
-            }
+            },
+            "{source}"
         );
     });
 }
