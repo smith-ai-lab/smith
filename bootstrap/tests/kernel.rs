@@ -10,13 +10,17 @@ use smith::scalar::{self, Outcome};
 
 use crate::Test;
 use crate::core_producer::program;
-use crate::generate;
+use crate::generate::{self, Gen};
 use crate::numbers::with_header;
 
 pub const ONCE: &[Test] = &[
     (
         "the_kernel_works_a_function_out_to_what_the_program_prints",
         the_kernel_works_a_function_out_to_what_the_program_prints,
+    ),
+    (
+        "the_kernel_works_a_loop_out_round_by_round_to_what_the_program_prints",
+        the_kernel_works_a_loop_out_round_by_round_to_what_the_program_prints,
     ),
     (
         "a_run_past_its_steps_fails_and_the_steps_grow_with_what_it_works_out",
@@ -107,4 +111,61 @@ fn a_false_comparison_is_reported_where_it_is_written_with_the_numbers_it_compar
     let (v, w) = why(source, "neither", vec![1, 2]);
     assert_eq!(v, Value::Case(0, vec![]));
     assert_eq!(w.expect("a reason").text, "`1 < 2` is true");
+}
+
+#[derive(Debug)]
+struct Looped {
+    source: String,
+    n: i128,
+    k: i128,
+    xs: Vec<i128>,
+}
+
+fn looped(g: &mut Gen) -> Looped {
+    let (n, k) = (g.below(8) as i128, g.below(8) as i128);
+    let xs: Vec<i128> = (0..g.below(6)).map(|_| g.below(6) as i128).collect();
+    let list = xs.iter().map(i128::to_string).collect::<Vec<_>>().join(", ");
+    Looped {
+        source: with_header(format!(
+            "fn find(xs: List[i32], k: i32) -> bool {{\n  var found = false\n  var last: i32 = 0\n  loop v in xs {{\n    last = v\n    if v == k {{\n      found = true\n      break\n    }}\n  }}\n  found\n}}\n\n\
+fn first_at(n: u64, k: u64) -> u64 {{\n  var hit: u64 = 0\n  loop i in 0..n {{\n    if i == k {{\n      hit = i + 1\n      break\n    }}\n  }}\n  hit\n}}\n\n\
+fn main() ! console, alloc {{\n  xs: List[i32] = [{list}]\n  print(\"{{find(xs, {k})}} {{first_at({n}, {k})}}\")\n}}\n"
+        )),
+        n,
+        k,
+        xs,
+    }
+}
+
+/// For every loop over a list that stops at a `break`, and over a range that
+/// does, the kernel hands the `var`s from round to round and gives what the
+/// program prints.
+fn the_kernel_works_a_loop_out_round_by_round_to_what_the_program_prints() {
+    generate::check(131, 150, looped, |p| {
+        let Ok(all) = core_terms(p.source.as_bytes()) else {
+            return;
+        };
+        let term = |name: &str| all.iter().find(|f| f.name == name).expect("a term").place;
+        let mut machine = Machine::new(&all, 1_000_000);
+        let list = Value::Parts(p.xs.iter().map(|x| Value::Int(*x)).collect());
+        let (found, _) = machine
+            .call(term("find"), vec![list, Value::Int(p.k)])
+            .expect("worked out");
+        let (hit, _) = machine
+            .call(term("first_at"), vec![Value::Int(p.n), Value::Int(p.k)])
+            .expect("worked out");
+        let Value::Case(found, _) = found else {
+            panic!("a bool")
+        };
+        let Value::Int(hit) = hit else {
+            panic!("a number")
+        };
+        assert_eq!(
+            outcome(&p.source),
+            Outcome {
+                stdout: format!("{} {hit}\n", found == 1).into_bytes(),
+                status: 0
+            }
+        );
+    });
 }

@@ -4,7 +4,7 @@
 //! failure to end within the steps it was given, or in a term that is not a
 //! value it can work out.
 
-use crate::core::{Callee, Function, Kind, Lit, Make, Operator, Pattern, Term};
+use crate::core::{Callee, Function, Kind, Lit, Make, Operator, Pattern, Source, Term};
 use crate::diag::Pos;
 
 /// What a term is worked out to.
@@ -18,6 +18,8 @@ pub enum Value {
     Case(usize, Vec<Value>),
     /// A function written where it is used, with the names it was made among.
     Closure(Vec<String>, Term, Vec<(String, Value)>),
+    /// The end of a round of a loop: whether it goes on, and the state.
+    Round(bool, Vec<Value>),
 }
 
 /// Why a `bool` was what it was: the comparison that decided it, where it is
@@ -158,6 +160,14 @@ impl<'a> Machine<'a> {
                 }
                 self.work(&body, &mut held)
             }
+            Kind::Next(values) => plain(Value::Round(true, self.all(values, env)?)),
+            Kind::Done(values) => plain(Value::Round(false, self.all(values, env)?)),
+            Kind::Loop {
+                source,
+                counter,
+                state,
+                body,
+            } => self.round_loop(source, counter, state, body, env),
             Kind::Choose { of, arms } => {
                 let (v, why) = self.work(of, env)?;
                 for (p, body) in arms {
@@ -176,6 +186,60 @@ impl<'a> Machine<'a> {
                 Err(Failure::Stuck(format!("no arm for {v:?}")))
             }
         }
+    }
+
+    /// A loop, one round at a time.
+    fn round_loop(
+        &mut self,
+        source: &Source,
+        counter: &str,
+        state: &[(String, Term)],
+        body: &Term,
+        env: &mut Env,
+    ) -> Result<Worked, Failure> {
+        let mut held: Vec<Value> = state
+            .iter()
+            .map(|(_, t)| Ok(self.work(t, env)?.0))
+            .collect::<Result<_, Failure>>()?;
+        let items: Option<Vec<Value>> = match source {
+            Source::Range(a, b) => match (self.work(a, env)?.0, self.work(b, env)?.0) {
+                (Value::Int(a), Value::Int(b)) => Some((a..b).map(Value::Int).collect()),
+                other => return Err(Failure::Stuck(format!("a range of {other:?}"))),
+            },
+            Source::Over(of) => match self.work(of, env)?.0 {
+                Value::Parts(items) => Some(items),
+                other => return Err(Failure::Stuck(format!("a loop over {other:?}"))),
+            },
+            Source::Open => None,
+        };
+        let mut next = 0;
+        loop {
+            let item = match &items {
+                Some(items) => match items.get(next) {
+                    Some(item) => item.clone(),
+                    None => break,
+                },
+                None => Value::Int(next as i128),
+            };
+            next += 1;
+            let mark = env.len();
+            env.push((counter.to_string(), item));
+            for ((n, _), v) in state.iter().zip(&held) {
+                env.push((n.clone(), v.clone()));
+            }
+            let round = self.work(body, env);
+            env.truncate(mark);
+            match round?.0 {
+                Value::Round(more, values) => {
+                    held = values;
+                    if !more {
+                        break;
+                    }
+                }
+                other => return Err(Failure::Stuck(format!("a round that gave {other:?}"))),
+            }
+        }
+        Ok((Value::Parts(held), None))
     }
 
     fn all(&mut self, terms: &[Term], env: &mut Env) -> Result<Vec<Value>, Failure> {

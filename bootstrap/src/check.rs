@@ -45,6 +45,7 @@ mod scope;
 mod to_scalar;
 mod traits;
 
+use crate::core;
 use crate::diag::{Error, Pos};
 use crate::hash::{Map, Set};
 use crate::parser::outline::{Kind as PieceKind, Piece, outline};
@@ -2428,6 +2429,7 @@ fn check_file(
         named: checker.named,
         named_calls: checker.named_calls,
         type_args: checker.type_args,
+        core_vars: RefCell::new(Vec::new()),
     };
     let mut errors = Vec::new();
     typed.copies(
@@ -5855,6 +5857,8 @@ struct Typed<'a> {
     /// The types a call of a trait's function writes in brackets after the
     /// trait, by the address of the call.
     type_args: Map<usize, Vec<Ty>>,
+    /// The `var`s in scope while a core term is made, with their types.
+    core_vars: RefCell<Vec<(String, core::Type)>>,
 }
 
 impl<'a> Typed<'a> {

@@ -5,7 +5,7 @@ description: A function that receives the checked code of an argument when the p
 status: partial
 built:
   - "the core term as data, in `bootstrap/src/core.rs`: the nodes `lit`, `name`, `call`, `apply`, `lambda`, `bind`, `make`, `field`, and `choose`, each holding its type and its place in the source, with their parts and a one-line printing; `bool` is an enum of the prelude and has no node of its own, and `for` and `loop` are not nodes yet"
-  - "the checker produces the core term of a function of the file that is made of whole numbers and `bool`: a number, a name, `+`, `-`, `*` as calls of operators with the exact range, the six comparisons, `and`, `or`, `not`, `if`, a binding, a call of a function like it, a text, a struct or a tuple that is built, a case of an enum with what it holds, a field of a struct or a tuple, and a `match` on any of these by number, text, name, case, and tuple patterns; a list that is built, a function written where it is used, and a call of a name that holds a function, as `lambda` and `apply`; a function with anything else, such as a loop, an index, or a type parameter, has none yet"
+  - "the checker produces the core term of a function of the file that is made of whole numbers and `bool`: a number, a name, `+`, `-`, `*` as calls of operators with the exact range, the six comparisons, `and`, `or`, `not`, `if`, a binding, a call of a function like it, a text, a struct or a tuple that is built, a case of an enum with what it holds, a field of a struct or a tuple, and a `match` on any of these by number, text, name, case, and tuple patterns; a list that is built, a function written where it is used, and a call of a name that holds a function, as `lambda` and `apply`; a `loop` over a range or a list, or open-ended, whose round is names given values, `var`s assigned and `if` with no `else` that ends in `break`, with the `var`s it assigns handed from round to round; a function with anything else, such as an assignment in a branch that does not end in `break`, a `return` in a loop, an index, or a type parameter, has none yet"
 ---
 
 # Functions over code
@@ -92,6 +92,8 @@ The core term is what a program is once it has been checked. It is small: everyt
 | `loop` | Rounds in order, each handing values to the next | `loop`, and a `var` that one assigns |
 
 Each node holds its type and the place in the source it came from. There is no node for an assignment: a `var` that a loop assigns is a value the loop hands from one round to the next.
+
+A `loop` holds what it runs over (a range, a list, or nothing when it is open-ended), the name each round gives the next of it, the `var`s it assigns each with what it held when the loop began, and the body of a round. The body gives the values of those `var`s for the next round, or, where it ends in `break`, the values the loop ends with. The loop is the tuple of the values it ended with. A `var` that the loop assigns is, after the loop, bound again to its part of that tuple.
 
 A name in a `call` holds what it names: the signature of the function, and its body as a core term where the source of it is there. A type holds its fields or its cases. So a function over code sees only what it is passed, and what it is passed is enough to follow a call into the function that is called, and to read the fields of a struct. That is how [`grad`](differentiation.md) differentiates through the functions `f` calls, and how `derive` writes an `impl` field by field.
 

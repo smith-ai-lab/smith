@@ -165,6 +165,36 @@ pub enum Kind {
         of: Box<Term>,
         arms: Vec<(Pattern, Term)>,
     },
+    /// Rounds in order, each handing values to the next. Each round binds
+    /// `counter` to the next of `source` and the names of `state` to what
+    /// the last round handed on, which for the first round is what each
+    /// held when the loop began, and works `body` out, which is a `Next` to
+    /// go on or a `Done` to stop. The loop gives the tuple of the values it
+    /// ended with, which is the unit when it has no state. A loop over a
+    /// `source` that has no more ends with what the last round handed on.
+    Loop {
+        source: Source,
+        counter: String,
+        state: Vec<(String, Term)>,
+        body: Box<Term>,
+    },
+    /// The end of a round of a `loop` that goes on, with the values of the
+    /// state for the next, in the order of the loop's state.
+    Next(Vec<Term>),
+    /// The end of a round of a `loop` that stops, with the values of the
+    /// state it ends with.
+    Done(Vec<Term>),
+}
+
+/// What a `loop` takes a value from in each round.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Source {
+    /// The numbers from the first up to, and not including, the second.
+    Range(Box<Term>, Box<Term>),
+    /// The elements of a list, in order.
+    Over(Box<Term>),
+    /// Nothing: the rounds go on until a `Done`.
+    Open,
 }
 
 /// What a `make` builds.
@@ -198,6 +228,22 @@ impl Term {
             Kind::Choose { of, arms } => std::iter::once(&**of)
                 .chain(arms.iter().map(|(_, b)| b))
                 .collect(),
+            Kind::Loop {
+                source,
+                state,
+                body,
+                ..
+            } => {
+                let mut parts: Vec<&Term> = match source {
+                    Source::Range(a, b) => vec![a, b],
+                    Source::Over(of) => vec![of],
+                    Source::Open => Vec::new(),
+                };
+                parts.extend(state.iter().map(|(_, t)| t));
+                parts.push(body);
+                parts
+            }
+            Kind::Next(values) | Kind::Done(values) => values.iter().collect(),
         }
     }
 
@@ -251,6 +297,23 @@ impl Term {
                 args.iter().map(Term::show).collect(),
             ),
             Kind::Field { of, name, .. } => (format!("field {name}"), vec![of.show()]),
+            Kind::Loop {
+                source,
+                counter,
+                state,
+                body,
+            } => {
+                let mut parts = match source {
+                    Source::Range(a, b) => vec![format!("{counter} in {}..{}", a.show(), b.show())],
+                    Source::Over(of) => vec![format!("{counter} in {}", of.show())],
+                    Source::Open => vec!["open".to_string()],
+                };
+                parts.extend(state.iter().map(|(n, t)| format!("{n}={}", t.show())));
+                parts.push(body.show());
+                ("loop".to_string(), parts)
+            }
+            Kind::Next(values) => ("next".to_string(), values.iter().map(Term::show).collect()),
+            Kind::Done(values) => ("done".to_string(), values.iter().map(Term::show).collect()),
             Kind::Choose { of, arms } => (
                 "choose".to_string(),
                 std::iter::once(of.show())
