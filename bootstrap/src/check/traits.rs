@@ -813,6 +813,13 @@ impl<'a> Defs<'a> {
                 && self.holding(*e, args, &types[0]).len() == 1)
                 .then(Vec::new);
         }
+        if self.from_text == Some(k) {
+            return match &types[0] {
+                Ty::Text | Ty::Int(_) => Some(Vec::new()),
+                Ty::Enum(e, _) if *e == self.boolean => Some(Vec::new()),
+                _ => None,
+            };
+        }
         if self.serialize == Some(k) || self.deserialize == Some(k) || self.describe == Some(k) {
             let taken = |d: Def| self.withouts.contains(&(k, d));
             return match &types[0] {

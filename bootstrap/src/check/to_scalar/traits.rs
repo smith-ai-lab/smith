@@ -41,6 +41,9 @@ impl<'a> Lowering<'a> {
         if defs.describe == Some(k) {
             return self.described(&given[0], &given[1]);
         }
+        if defs.from_text == Some(k) {
+            return self.text_reading(fi, &given[0]);
+        }
         let ty = &given[0];
         let mut out = Out::new();
         let types = self.scalars(ty);
@@ -139,6 +142,227 @@ impl<'a> Lowering<'a> {
             cold: false,
             name: String::new(),
         }
+    }
+
+    /// The function `fi` of `FromText` given to `ty`: `parse` reads the text
+    /// as a whole number of the range, `true` or `false`, or the text itself,
+    /// and `expects` says in words what it reads.
+    fn text_reading(&mut self, fi: usize, ty: &Ty) -> form::Function {
+        let mut out = Out::new();
+        let (values, results) = if fi == 1 {
+            let words = match ty {
+                Ty::Int(t) => format!("a whole number from {} to {}", t.min(), t.max()),
+                Ty::Text => "a text".to_string(),
+                _ => "true or false".to_string(),
+            };
+            (
+                self.text(&mut out, words.as_bytes()),
+                self.scalars(&Ty::Text),
+            )
+        } else {
+            let text = out.params(&self.scalars(&Ty::Text));
+            let values = match ty {
+                Ty::Int(t) => self.read_whole(&mut out, *t, &text, ty),
+                Ty::Text => self.some_of(&mut out, ty, text),
+                _ => self.read_truth(&mut out, ty, &text),
+            };
+            let option = Ty::Enum(self.typed.defs.option, vec![ty.clone()]);
+            (values, self.scalars(&option))
+        };
+        out.blocks[out.current].end = form::End::Return(values);
+        form::Function {
+            types: out.types,
+            results,
+            blocks: out.blocks,
+            cold: false,
+            name: String::new(),
+        }
+    }
+
+    /// The `Option` of `ty` that holds `value`, which is the scalars of a value.
+    fn some_of(&mut self, out: &mut Out<'a>, ty: &Ty, value: Vec<form::Value>) -> Vec<form::Value> {
+        let defs = self.typed.defs;
+        let layout = self.layout(defs.option, std::slice::from_ref(ty));
+        let k = defs.case_of(defs.option, "some").expect("a case");
+        let mut places: Vec<Option<form::Value>> = vec![None; layout.places.len()];
+        for (v, &place) in value.iter().zip(&layout.cases[k]) {
+            places[place] = Some(*v);
+        }
+        let case = out.constant(form::Constant::Int(k as u64), BYTE);
+        let mut values = vec![case];
+        for (place, ty) in places.into_iter().zip(&layout.places) {
+            values.push(place.unwrap_or_else(|| out.zero(*ty)));
+        }
+        values
+    }
+
+    /// The `Option` of `ty` that holds nothing.
+    fn none_of(&mut self, out: &mut Out<'a>, ty: &Ty) -> Vec<form::Value> {
+        let defs = self.typed.defs;
+        let layout = self.layout(defs.option, std::slice::from_ref(ty));
+        let k = defs.case_of(defs.option, "none").expect("a case");
+        let case = out.constant(form::Constant::Int(k as u64), BYTE);
+        let mut values = vec![case];
+        for ty in &layout.places {
+            values.push(out.zero(*ty));
+        }
+        values
+    }
+
+    /// `.some(true)` for the text `true`, `.some(false)` for `false`, and
+    /// `.none` for any other.
+    fn read_truth(&mut self, out: &mut Out<'a>, ty: &Ty, text: &[form::Value]) -> Vec<form::Value> {
+        let defs = self.typed.defs;
+        let mut ends = Vec::new();
+        for (word, truth) in [("true", 1), ("false", 0)] {
+            let is = self.text(out, word.as_bytes());
+            let args = [text.to_vec(), is].concat();
+            let same = self.run(out, defs.eq, &Ty::Text, args)[0];
+            let arms = out.switch(same, 2);
+            out.current = arms[1];
+            let held = out.int(form::Bits::B8, truth);
+            let value = self.some_of(out, ty, vec![held]);
+            ends.push((out.current, value));
+            out.current = arms[0];
+        }
+        let none = self.none_of(out, ty);
+        ends.push((out.current, none));
+        let option = Ty::Enum(defs.option, vec![ty.clone()]);
+        out.join(&self.scalars(&option), ends)
+    }
+
+    /// `.some` of the number the text spells in decimal, with a `-` before it
+    /// where the range has numbers below 0, when the number is in the range,
+    /// and `.none` for any other text.
+    fn read_whole(
+        &mut self,
+        out: &mut Out<'a>,
+        t: Int,
+        text: &[form::Value],
+        ty: &Ty,
+    ) -> Vec<form::Value> {
+        let defs = self.typed.defs;
+        let (address, len) = (text[0], text[1]);
+        let mut ends: Vec<(usize, Vec<form::Value>)> = Vec::new();
+        let (zero, one) = (out.int(form::Bits::B64, 0), out.int(form::Bits::B64, 1));
+        let load = |out: &mut Out<'a>, at: form::Value| {
+            out.emit(
+                form::Op::Load {
+                    ty: BYTE,
+                    address: at,
+                },
+                vec![BYTE],
+            )[0]
+        };
+        // Where the digits begin, and whether a `-` came first.
+        let (start, negative) = if t.min() < 0 {
+            let has = out.compare(form::Compare::LessU, zero, len);
+            let arms = out.switch(has, 2);
+            out.current = arms[0];
+            let none = self.none_of(out, ty);
+            ends.push((out.current, none));
+            out.current = arms[1];
+            let first = load(out, address);
+            let dash = out.int(form::Bits::B8, i128::from(b'-'));
+            let minus = out.compare(form::Compare::Equal, first, dash);
+            (out.choose(minus, one, zero), minus)
+        } else {
+            (zero, out.int(form::Bits::B8, 0))
+        };
+        // At least one digit.
+        let some = out.compare(form::Compare::LessU, start, len);
+        let arms = out.switch(some, 2);
+        out.current = arms[0];
+        let none = self.none_of(out, ty);
+        ends.push((out.current, none));
+        out.current = arms[1];
+        let head = out.new_block();
+        let (i, acc) = (
+            out.fresh(form::Type::Int(form::Bits::B64)),
+            out.fresh(form::Type::Int(form::Bits::B64)),
+        );
+        out.blocks[head].params = vec![i, acc];
+        out.blocks[out.current].end = form::End::Jump(form::Jump {
+            block: head,
+            args: vec![start, zero],
+        });
+        out.current = head;
+        let done = out.compare(form::Compare::Equal, i, len);
+        let arms = out.switch(done, 2);
+        let reading = arms[0];
+        // The text ends: the number is in the range, or the text is no number.
+        out.current = arms[1];
+        let signed = t.signed();
+        let below_most = (-t.min()).max(0);
+        let most = t.max().max(0);
+        let (down, up) = (
+            out.int(form::Bits::B64, below_most),
+            out.int(form::Bits::B64, most),
+        );
+        let limit = out.choose(negative, down, up);
+        let over = out.compare(form::Compare::LessU, limit, acc);
+        let arms = out.switch(over, 2);
+        out.current = arms[1];
+        let none = self.none_of(out, ty);
+        ends.push((out.current, none));
+        out.current = arms[0];
+        let flipped = out.binary(form::Binary::Sub, zero, acc);
+        let value = out.choose(negative, flipped, acc);
+        let less = if signed {
+            form::Compare::LessS
+        } else {
+            form::Compare::LessU
+        };
+        let (least, greatest) = (
+            out.int(form::Bits::B64, t.min()),
+            out.int(form::Bits::B64, t.max()),
+        );
+        for (a, b) in [(value, least), (greatest, value)] {
+            let outside = out.compare(less, a, b);
+            let arms = out.switch(outside, 2);
+            out.current = arms[1];
+            let none = self.none_of(out, ty);
+            ends.push((out.current, none));
+            out.current = arms[0];
+        }
+        let bits = bits_of(t);
+        let held = if bits == form::Bits::B64 {
+            value
+        } else {
+            out.narrow(value, bits)
+        };
+        let found = self.some_of(out, ty, vec![held]);
+        ends.push((out.current, found));
+        // Another digit.
+        out.current = reading;
+        let at = out.binary(form::Binary::Add, address, i);
+        let byte = load(out, at);
+        let ascii_zero = out.int(form::Bits::B8, i128::from(b'0'));
+        let digit = out.binary(form::Binary::Sub, byte, ascii_zero);
+        let ten_byte = out.int(form::Bits::B8, 10);
+        let is_digit = out.compare(form::Compare::LessU, digit, ten_byte);
+        let arms = out.switch(is_digit, 2);
+        out.current = arms[0];
+        let none = self.none_of(out, ty);
+        ends.push((out.current, none));
+        out.current = arms[1];
+        let digit = out.widen(false, digit);
+        let ten = out.int(form::Bits::B64, 10);
+        let (times, wrapped) = out.overflows(form::Binary::Mul, false, acc, ten);
+        let (plus, carried) = out.overflows(form::Binary::Add, false, times, digit);
+        let bad = out.binary(form::Binary::Or, wrapped, carried);
+        let arms = out.switch(bad, 2);
+        out.current = arms[1];
+        let none = self.none_of(out, ty);
+        ends.push((out.current, none));
+        out.current = arms[0];
+        let next = out.binary(form::Binary::Add, i, one);
+        out.blocks[out.current].end = form::End::Jump(form::Jump {
+            block: head,
+            args: vec![next, plus],
+        });
+        let option = Ty::Enum(defs.option, vec![ty.clone()]);
+        out.join(&self.scalars(&option), ends)
     }
 
     /// The function that describes the type `ty` to a describer of type `d`,

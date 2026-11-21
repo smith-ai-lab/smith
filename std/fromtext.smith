@@ -1,0 +1,47 @@
+use std.deserialize (Problem, ReadError)
+
+pub trait FromText[T] {
+  fn parse(text: str) -> Option[T]
+  fn expects() -> str
+}
+
+fn whole(text: str) -> bool {
+  var digits = false
+  var only = true
+  loop i in 0..text.size {
+    b = text[i]
+    if b >= '0' and b <= '9' {
+      digits = true
+    } else if not (i == 0 and b == '-') {
+      only = false
+    }
+  }
+  digits and only
+}
+
+fn starts_whole(words: str) -> bool {
+  words.size >= 14 and words[0] == 'a' and words[2] == 'w' and words[3] == 'h'
+}
+
+pub trait ReadText[T] {
+  fn from_text(name: str, text: str) -> Result[T, ReadError]
+}
+
+impl[T] ReadText[T]
+  requires FromText[T]
+{
+  fn from_text(name: str, text: str) -> Result[T, ReadError] {
+    match FromText[T].parse(text) {
+      .some(value) { Result.ok(value) }
+      .none {
+        wanted = FromText[T].expects()
+        problem = if whole(text) and starts_whole(wanted) {
+          Problem.range(wanted)
+        } else {
+          Problem.shape((wanted, "a text"))
+        }
+        Result.err(ReadError(path: name, problem: problem, line: 0, column: 0))
+      }
+    }
+  }
+}
