@@ -35,6 +35,9 @@ struct Imports {
     /// Whether the program writes to a stream: the operation `print` of the
     /// effect `console`.
     print: bool,
+    /// Whether the program asks for random bytes: the operation `fill` of the
+    /// effect `entropy`.
+    entropy: bool,
 }
 
 /// What a module of the program asks of its host, by the effect and the
@@ -43,6 +46,9 @@ pub fn imports(program: &Program) -> Vec<(&'static str, &'static str)> {
     let mut found = Vec::new();
     if imports_of(program).print {
         found.push(("console", "print"));
+    }
+    if imports_of(program).entropy {
+        found.push(("entropy", "fill"));
     }
     found
 }
@@ -58,7 +64,10 @@ fn imports_of(program: &Program) -> Imports {
             }
         )
     });
-    Imports { print }
+    Imports {
+        print,
+        entropy: program.asks_for_entropy(),
+    }
 }
 
 /// Whether an instruction needs the high half of a product of 64 bits.
@@ -91,6 +100,18 @@ pub fn emit(program: &Program) -> (Vec<u8>, Vec<Part>) {
             },
         ));
     }
+    let mut entropy = None;
+    if imports.entropy {
+        // The address and the count, and whether the bytes were filled.
+        entropy = Some(module.import(
+            "entropy",
+            "fill",
+            Signature {
+                params: vec![Kind::I32; 2],
+                results: vec![Kind::I32],
+            },
+        ));
+    }
     let image = image(program);
 
     let needs_high = (program.functions.iter()).any(|f| {
@@ -108,11 +129,12 @@ pub fn emit(program: &Program) -> (Vec<u8>, Vec<Part>) {
     };
     functions.extend(&helpers);
 
-    let first = u32::from(imports.print);
+    let first = u32::from(imports.print) + u32::from(imports.entropy);
     let ends = first + functions.len() as u32;
     let context = Context {
         starts: &image.starts,
         print,
+        entropy,
         high_unsigned: first + program.functions.len() as u32,
         high_signed: first + program.functions.len() as u32 + 1,
         allocate: ends,
@@ -234,6 +256,7 @@ fn image(program: &Program) -> Image {
 struct Context<'a> {
     starts: &'a [u32],
     print: Option<u32>,
+    entropy: Option<u32>,
     high_unsigned: u32,
     high_signed: u32,
     allocate: u32,
@@ -1050,10 +1073,11 @@ impl Lowering<'_> {
                 self.code.call(self.context.allocate);
                 self.set(results[0]);
             }
-            // The host is not asked yet, and `compile` refuses a program that asks for
-            // bytes for this target, so this is not reached.
             System::Entropy => {
-                self.code.i32_const(1);
+                let fill = self.context.entropy.expect("a fill is an import");
+                self.get(args[0]);
+                self.get_wrapped(args[1]);
+                self.code.call(fill);
                 self.set(results[0]);
             }
             System::Exit => {
