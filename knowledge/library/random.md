@@ -2,6 +2,10 @@
 type: specification
 title: Random
 description: Random bits from a key, distributions as ordinary structs with the Sample and LogProb traits, and how a program adds its own.
+status: partial
+built:
+  - "`std.random` with `Key`, `bits`, `split`, `seeded`, and `fresh`, and the generator of [The generator](#the-generator), which a test checks against the vectors Random123 publishes and against a model of it written in Rust"
+  - "not built: `uniform`, `standard_normal`, `Sample`, `LogProb`, and `split_n`, since no float type is built yet"
 ---
 
 # Random
@@ -16,13 +20,34 @@ fn bits(key: take Key) -> u64
 
 ## Where a key comes from
 
-A `Key` made from a fixed seed gives the same bits each run, so a program that starts from one repeats, which a test and a model's training need. A `Key` made from [`entropy`](entropy.md) does not repeat: the function that makes one asks `entropy` for the bytes of a key, so a function that calls it lists `entropy`.
+A `Key` made from a seed gives the same bits each run, so a program that starts from one repeats, which a test and a model's training need. A `Key` made from [`entropy`](entropy.md) does not repeat, so a function that makes one lists `entropy`.
 
 ```
-fn fresh() -> Key ! entropy
+fn seeded(seed: u64) -> Key
+fn fresh() -> Key ! entropy, alloc
+fn split(key: take Key) -> (Key, Key)
 ```
+
+`seeded` makes a `Key` from a number, `fresh` asks `entropy` for the 16 bytes of one, and `split` gives two keys from one, which a program uses to draw from two places that must not give the same bits. A `Key` is used once, so each of these functions that takes one has none left for the caller.
 
 A secret, such as a token or the challenge of a passkey, is taken from `entropy` itself and never from a `Key`. A `Key` is a way to repeat or split randomness, and a secret is what no one can repeat.
+
+## The generator
+
+A `Key` holds two numbers of 64 bits, `(k0, k1)`, and `bits` and `split` are one function of it, Threefry-2x64 with 20 rounds from Salmon, Moraes, Dror, and Shaw, "Parallel random numbers: as easy as 1, 2, 3", which Random123 publishes. `threefry(counter, key)` takes a counter and a key, each two numbers of 64 bits, and gives two numbers of 64 bits. Every number is read as an unsigned number of 64 bits, and `+` wraps.
+
+A third word of the key is `k2 = k0 xor k1 xor 0x1BD11BDAA9FC1A22`. The state starts as `x0 = c0 + k0` and `x1 = c1 + k1`. Round `r`, from 0 to 19, is `x0 = x0 + x1`, then `x1` rotated left by the `r` mod 8 th of 16, 42, 12, 31, 16, 32, 24, 21, then `x1 = x1 xor x0`. After each fourth round, the one numbered `r = 3, 7, 11, 15, 19`, with `s = (r + 1) / 4`, the key is added: `x0 = x0 + ks[s mod 3]` and `x1 = x1 + ks[(s + 1) mod 3] + s`, where `ks` is `(k0, k1, k2)`. The result is `(x0, x1)`.
+
+What a key gives is fixed by the counter that is put in, so the numbers a program draws are these, and no other:
+
+| Function | Is |
+| --- | --- |
+| `seeded(seed)` | The key `threefry((3, 0), (seed, 0))` |
+| `bits(key)` | The first number of `threefry((0, 0), (k0, k1))`, as a `u64` |
+| `split(key)` | The keys `threefry((1, 0), (k0, k1))` and `threefry((2, 0), (k0, k1))`, in that order |
+| `fresh()` | The key whose `k0` is the first 8 bytes `entropy` filled and `k1` the next 8, each read with its first byte the least |
+
+A counter that begins with 0, 1, 2, or 3 never meets another use of the generator, so `bits`, `split`, and `seeded` of one key do not give the same numbers. The numbers of `threefry((0, 0), (0, 0))` are `c2b6e3a8c2c69865` and `6f81ed42f350084d`, as Random123 publishes.
 
 ## Distributions
 
