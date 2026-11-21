@@ -20,6 +20,10 @@ pub const ONCE: &[Test] = &[
         a_call_compiles_exactly_when_its_arguments_satisfy_every_requires,
     ),
     (
+        "a_requires_that_calls_a_predicate_is_owed_exactly_as_the_expression_it_returns_is",
+        a_requires_that_calls_a_predicate_is_owed_exactly_as_the_expression_it_returns_is,
+    ),
+    (
         "inside_a_function_its_requires_are_facts",
         inside_a_function_its_requires_are_facts,
     ),
@@ -160,6 +164,75 @@ fn a_call_compiles_exactly_when_its_arguments_satisfy_every_requires() {
             assert!(
                 !c.holds,
                 "refused, though every `requires` holds: {errors:?}"
+            );
+            assert!(
+                errors.iter().any(|e| e.message.contains("needs")),
+                "{errors:?} does not name the function"
+            );
+        }
+    });
+}
+
+/// The same as `call`, with each statement written once as a function that
+/// returns `bool` and named in the `requires`, some of them through a second
+/// function that calls the first.
+fn predicates(g: &mut Gen) -> Call {
+    let ty = *g.pick(INTS);
+    let arg = near(g, ty);
+    let t = ty.name;
+    let mut holds = true;
+    let mut defs = String::new();
+    let mut lines = String::new();
+    for k in 0..1 + g.below(3) {
+        let (text, f) = statement(g, ty, "i", 2);
+        holds &= f(arg);
+        defs.push_str(&format!("fn p{k}(i: {t}) -> bool {{ {text} }}\n\n"));
+        if g.one_in(2) {
+            defs.push_str(&format!("fn q{k}(j: {t}) -> bool {{ p{k}(j) }}\n\n"));
+            lines.push_str(&format!("  requires q{k}(i)\n"));
+        } else {
+            lines.push_str(&format!("  requires p{k}(i)\n"));
+        }
+    }
+    let passed = if g.one_in(2) {
+        arg.to_string()
+    } else {
+        "x".to_string()
+    };
+    let bind = if passed == "x" {
+        format!("  x: {t} = {arg}\n")
+    } else {
+        String::new()
+    };
+    Call {
+        source: with_header(format!(
+            "{defs}fn needs(i: {t}) -> {t}\n{lines}{{\n  i\n}}\n\nfn main() ! console, alloc {{\n{bind}  print(\"{{needs({passed})}}\")\n}}\n"
+        )),
+        holds,
+        arg,
+    }
+}
+
+/// For every function whose `requires` calls predicates, functions with no
+/// effect that return a comparison, or a call of another, a call compiles
+/// exactly when the comparisons hold of its arguments, as with the
+/// expressions written in place, and the program prints the same.
+fn a_requires_that_calls_a_predicate_is_owed_exactly_as_the_expression_it_returns_is() {
+    generate::check(111, 150, predicates, |c| match check(c.source.as_bytes()) {
+        Ok(_) => {
+            assert!(c.holds, "accepted, though a predicate does not hold");
+            assert_eq!(
+                run(&c.source),
+                Outcome {
+                    stdout: format!("{}\n", c.arg).into_bytes(),
+                    status: 0
+                }
+            );
+        }
+        Err(errors) => {
+            assert!(
+                !c.holds,
+                "refused, though every predicate holds: {errors:?}"
             );
             assert!(
                 errors.iter().any(|e| e.message.contains("needs")),

@@ -7,7 +7,8 @@ built:
   - "`requires` and `ensures` on a function, each a comparison of whole numbers joined with `and`, `or`, and `not` over its parameters and the result's name, which `arith` proves of the arguments at every call and of what the function returns at each place it returns, and takes as facts in the other place"
   - "what `arith` knows of a `var` of a whole number in a function, which a contract and the code around it rely on alike: at each use, the condition of each `if` around it and what it was last given, where no assignment to it lies between that and the use on any path, outside a loop as inside one"
   - "`decreases` on a function, the measure that proves a function that calls itself ends, which is proven as [Termination](termination.md) says and never computed"
-  - "not a predicate in a contract, and not a float"
+  - "a function that returns `bool`, carries no effect, and is one expression of comparisons joined with `and`, `or`, and `not`, or a call of another such function, as a contract: `requires f(args)` and `ensures f(args)` are proven and give facts as that expression with the arguments put in does, and a call that carries an effect is refused"
+  - "not a predicate with a `loop`, a `match`, or a call of itself, and not a float"
 ---
 
 # Contracts

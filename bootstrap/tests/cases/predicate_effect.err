@@ -1,0 +1,8 @@
+predicate_effect.smith:7:12: `settled` needs the `diverge` effect, which `first` does not declare
+  7 |   requires settled(n)
+    |            ^
+  fix: write `fn first(n: u64) -> u64 ! diverge`
+predicate_effect.smith:12:38: cannot prove that `settled(0)`, which `first` requires of its arguments
+  12 | fn main() ! console, alloc { print("{first(0)}") }
+     |                                      ^
+  fix: check the arguments first with an `if`, or state it in a `requires`
