@@ -1,6 +1,9 @@
 use std.bits (u16)
+use std.html (Html)
 use std.int (saturating_add)
+use std.json (to_json)
 use std.list (push)
+use std.serialize (Serialize)
 use std.utf8 (utf8)
 
 pub struct Request {
@@ -143,4 +146,64 @@ pub fn query_parts(query: str) -> List[Part] ! alloc {
     .none { }
   }
   parts
+}
+
+// A text that a function gives to be answered as it is.
+pub struct Text {
+  pub text: str
+}
+
+// A place that a function gives to send the caller to.
+pub struct Redirect {
+  pub to: str
+}
+
+// What a function gives says what the response is.
+pub trait Respond[T] {
+  fn respond(value: T) -> Response ! alloc
+}
+
+impl[T] Respond[T]
+  requires Serialize[T]
+{
+  fn respond(value: T) -> Response ! alloc {
+    Response(status: 200, headers: [("content-type", "application/json")], body: to_json(value))
+  }
+}
+
+impl Respond[Html] {
+  fn respond(value: Html) -> Response ! alloc {
+    Response(status: 200, headers: [("content-type", "text/html; charset=utf-8")], body: "{value}")
+  }
+}
+
+impl Respond[Text] {
+  fn respond(value: Text) -> Response ! alloc {
+    Response(status: 200, headers: [("content-type", "text/plain; charset=utf-8")], body: value.text)
+  }
+}
+
+impl Respond[Redirect] {
+  fn respond(value: Redirect) -> Response ! alloc {
+    Response(status: 302, headers: [("location", value.to)], body: "")
+  }
+}
+
+impl Respond[()] {
+  fn respond(value: ()) -> Response ! alloc {
+    Response(status: 204, headers: [], body: "")
+  }
+}
+
+impl[T, E] Respond[Result[T, E]]
+  requires Respond[T]
+  requires Status[E]
+  requires Serialize[E]
+{
+  fn respond(value: Result[T, E]) -> Response ! alloc {
+    match value {
+      .ok(v) { Respond[T].respond(v) }
+      .err(e) { Response(status: Status[E].status(e), headers: [("content-type", "application/json")], body: to_json(e)) }
+    }
+  }
 }
