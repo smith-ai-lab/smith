@@ -1,0 +1,24 @@
+use std.bits (i32)
+use std.console (console, print)
+
+fn first(a: i32, b: i32) -> i32 {
+  t = if b < 3 { -10 } else { -10 }
+  if b < a { t } else { b }
+}
+
+fn second(a: i32, b: i32) -> i32 {
+  t = if b < 3 { 10 } else { 12 }
+  if b < a { b } else { t }
+}
+
+fn third(a: i32, b: i32) -> i32 {
+  t = match b {
+    0 { 7 }
+    _ { 8 }
+  }
+  if b < a { t } else { a }
+}
+
+fn main() ! console, alloc {
+  print("{first(1, 0)} {first(0, 5)} {second(9, 4)} {second(1, 4)} {third(5, 0)} {third(5, 2)}")
+}
