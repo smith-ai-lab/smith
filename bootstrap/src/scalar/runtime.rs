@@ -17,6 +17,11 @@ const TEXT: [Type; 2] = [ADDRESS, LENGTH];
 /// A function of the runtime.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Runtime {
+    /// Takes the address of bytes and how many there are, and fills them from
+    /// the system. When the system refuses, it says that the system gave no
+    /// random bytes and ends the program with a failing status, so no byte
+    /// that was not filled is ever used. It gives nothing.
+    Entropy,
     /// Takes an address to write to, an address to read from, and a count,
     /// and copies that many bytes, 8 at a time and then the fewer than 8
     /// that are left, one at a time. The two places do not overlap. It gives
@@ -132,6 +137,7 @@ impl Runtime {
             Runtime::Utf8 => "<utf8>",
             Runtime::Valid => "<valid>",
             Runtime::Check => "<check>",
+            Runtime::Entropy => "<entropy>",
         }
     }
 }
@@ -177,6 +183,7 @@ fn built(kind: Runtime, place: &mut dyn FnMut(Runtime) -> usize) -> Function {
         Runtime::Fill => words::fill(),
         Runtime::Utf8 => words::utf8(),
         Runtime::Valid => words::valid(),
+        Runtime::Entropy => words::entropy(),
         Runtime::Check => words::check(
             place(Runtime::Valid),
             place(Runtime::Decimal {

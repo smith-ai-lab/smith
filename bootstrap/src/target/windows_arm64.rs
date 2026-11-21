@@ -91,6 +91,12 @@ impl System for Windows {
         }
     }
 
+    /// The system is not asked yet, so it has given no bytes, and the program
+    /// that asked for them says so and ends.
+    fn entropy(asm: &mut Asm) {
+        asm.mov_w(X0, 1);
+    }
+
     fn end(asm: &mut Asm) {
         asm.call(EXIT_PROCESS);
     }

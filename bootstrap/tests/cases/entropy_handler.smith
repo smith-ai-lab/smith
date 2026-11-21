@@ -1,0 +1,27 @@
+use std.console (console, print)
+use std.entropy (entropy, fill)
+use std.fmt (hex)
+use std.list (push)
+
+fn fixed[T](body: fn() -> T ! entropy) -> T ! alloc {
+  entropy(
+    fill: fn(bytes) {
+      var made: List[Byte] = []
+      loop i in 0..bytes.size { made = push(made, 171) }
+      made
+    },
+    body: body,
+  )
+}
+
+fn draw() -> str ! entropy, alloc {
+  bytes: List[Byte] = [0, 0, 0, 0]
+  var line = ""
+  loop b in fill(bytes) { line = "{line}{hex(b, 2, false)}" }
+  line
+}
+
+fn main() ! console, alloc {
+  with fixed()
+  print(draw())
+}

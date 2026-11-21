@@ -1050,6 +1050,11 @@ impl Lowering<'_> {
                 self.code.call(self.context.allocate);
                 self.set(results[0]);
             }
+            // The host is not asked yet, so it has given no bytes.
+            System::Entropy => {
+                self.code.i32_const(1);
+                self.set(results[0]);
+            }
             System::Exit => {
                 self.get_wrapped(args[0]);
                 self.code.call(self.context.exit);

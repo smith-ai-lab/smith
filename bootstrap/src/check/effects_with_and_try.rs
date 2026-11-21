@@ -27,12 +27,20 @@ pub(super) struct Provided {
 }
 
 /// The operations the target provides, which a handler will replace.
-pub(super) const PROVIDED: &[Provided] = &[Provided {
-    effect: "console",
-    operation: "print",
-    answer: || Callee::Print,
-    signature: Signature::print,
-}];
+pub(super) const PROVIDED: &[Provided] = &[
+    Provided {
+        effect: "console",
+        operation: "print",
+        answer: || Callee::Print,
+        signature: Signature::print,
+    },
+    Provided {
+        effect: "entropy",
+        operation: "fill",
+        answer: || Callee::Fill,
+        signature: Signature::fill,
+    },
+];
 
 /// A name as the program writes it: without the module that a name which is
 /// not listed is written with after it.

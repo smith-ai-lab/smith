@@ -1,15 +1,16 @@
 ---
 type: specification
 title: The effects Smith provides
-description: The five effects the standard library declares, the six the compiler gives, and where an effect that nothing handles ends.
+description: The six effects the standard library declares, the six the compiler gives, and where an effect that nothing handles ends.
 status: partial
 built:
+  - "`entropy` in a signature, required by `fill`, which the system answers on `linux_x64` and `linux_arm64` and a handler answers elsewhere"
   - "`console`, `alloc`, and `diverge` in a signature, `console` required by `print`, `alloc` by a string that holds an expression, and `diverge` by an open-ended `loop` with no `decreases`"
 ---
 
 # The effects Smith provides
 
-Smith provides eleven effects, which a signature lists by name like any other. Five are declared by the standard library, and a program can handle them. Six are given by the compiler.
+Smith provides twelve effects, which a signature lists by name like any other. Six are declared by the standard library, and a program can handle them. Six are given by the compiler.
 
 ```
 use std.console (console, print)
@@ -21,7 +22,7 @@ fn main() ! console {
 
 ## Declared by the standard library
 
-The standard library declares five effects. Each has operations, and a program can handle it. Each is imported by name, as any effect is: none is in [the prelude](prelude.md).
+The standard library declares six effects. Each has operations, and a program can handle it. Each is imported by name, as any effect is: none is in [the prelude](prelude.md).
 
 | Effect | Allows |
 | --- | --- |
@@ -29,6 +30,7 @@ The standard library declares five effects. Each has operations, and a program c
 | [`fs`](../library/fs.md) | Files |
 | `net` | The network |
 | `time` | The clock |
+| [`entropy`](../library/entropy.md) | Bytes nobody can predict |
 | `ui` | Windows and events |
 
 `console` is needed by `print`, and a program imports both with `use std.console (console, print)`. A function that calls it lists `console`, as `main` does above.

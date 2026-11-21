@@ -713,8 +713,12 @@ impl<'a> Lowering<'a> {
         }
         let mut handled: Vec<usize> = effects
             .into_iter()
-            .filter(|e| defs.handled(e))
-            .filter_map(|e| defs.effect_named(e))
+            .filter_map(|e| {
+                // An effect the target answers is handled where a handler is
+                // in force for it, and answered by the target where none is.
+                let at = defs.effect_named(e)?;
+                (defs.handled(e) || out.handlers.iter().any(|h| h.effect == at)).then_some(at)
+            })
             .collect();
         handled.sort_unstable();
         handled.dedup();

@@ -495,6 +495,19 @@ fn function_of(program: &Program, f: &Function) -> Result<(), Why> {
                     used(count, i, Type::Int(Bits::B64))?;
                 }
                 Op::System {
+                    call: System::Entropy,
+                    args,
+                } => {
+                    let ([address, count], [result]) = (&args[..], &instruction.results[..]) else {
+                        return Err(Why::WrongCount);
+                    };
+                    if f.types[result.0] != Type::Int(Bits::B8) {
+                        return Err(Why::WrongType(*result));
+                    }
+                    used(address, i, Type::Address)?;
+                    used(count, i, Type::Int(Bits::B64))?;
+                }
+                Op::System {
                     call: System::Exit,
                     args,
                 } => {

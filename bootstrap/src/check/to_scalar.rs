@@ -1102,6 +1102,27 @@ impl<'a> Lowering<'a> {
                     }
                     (Ty::Nothing, Vec::new())
                 }
+                // A handler in force answers the operation, as it answers any
+                // other, and the system answers it when none is.
+                Callee::Fill
+                    if let Some(f) = defs.function(call.name_pos, &call.callee)
+                        && out
+                            .handlers
+                            .iter()
+                            .any(|h| h.effect == defs.operation_of(f).0) =>
+                {
+                    let instance = Instance {
+                        template: Template::Free(f),
+                        args: Vec::new(),
+                    };
+                    let gives = typed.type_of(expr, env);
+                    self.operation_call(out, call, instance, gives, env)
+                }
+                Callee::Fill => {
+                    let (ty, list) = self.expr(out, &call.args[0].value, env);
+                    self.call_runtime(out, Runtime::Entropy, vec![list[0], list[1]], Vec::new());
+                    (ty, list)
+                }
                 Callee::End => {
                     let (_, status) = self.expr(out, &call.args[0].value, env);
                     out.emit(

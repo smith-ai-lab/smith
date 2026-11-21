@@ -9,6 +9,7 @@ use crate::scalar::{Program, Stream};
 
 const SYS_WRITE: u32 = 1;
 const SYS_MMAP: u32 = 9;
+const SYS_GETRANDOM: u32 = 318;
 const SYS_EXIT_GROUP: u32 = 231;
 const EINTR: i8 = 4;
 const PROT_READ_WRITE: u32 = 0x1 | 0x2;
@@ -50,6 +51,35 @@ impl System for Linux {
         asm.jcc(Z, again);
         asm.jmp(fail);
         asm.bind(done);
+    }
+
+    /// Asks the kernel for the bytes until every one is filled, retrying a
+    /// call that gives fewer or is interrupted. The kernel gives a failure as
+    /// minus its error number.
+    fn entropy(asm: &mut Asm) {
+        let again = asm.label();
+        let filled = asm.label();
+        let refused = asm.label();
+        let end = asm.label();
+        asm.bind(again);
+        asm.test(RSI);
+        asm.jcc(Z, filled);
+        asm.mov32(RAX, SYS_GETRANDOM);
+        asm.mov32(RDX, 0);
+        asm.syscall();
+        asm.test(RAX);
+        asm.jcc(LE, refused);
+        asm.add(RDI, RAX);
+        asm.sub(RSI, RAX);
+        asm.jmp(again);
+        asm.bind(refused);
+        asm.cmp_imm8(RAX, -EINTR);
+        asm.jcc(Z, again);
+        asm.mov32(RAX, 1);
+        asm.jmp(end);
+        asm.bind(filled);
+        asm.mov32(RAX, 0);
+        asm.bind(end);
     }
 
     fn end(asm: &mut Asm) {

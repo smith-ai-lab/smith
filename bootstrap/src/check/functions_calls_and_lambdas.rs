@@ -675,7 +675,7 @@ impl<'a> Checker<'a> {
                 return self.unknown_call(body, call);
             }
             self.arguments(body, call, &print, true, None, None);
-            return Ty::Nothing;
+            return print.gives;
         }
         if let (Some(effect), false) = (
             defs.effect_named(name),
