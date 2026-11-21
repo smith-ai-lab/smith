@@ -1,0 +1,94 @@
+use std.bits (bit_and, bit_or, bit_xor, shift_right, u64)
+use std.entropy (entropy, fill)
+use std.int (wrapping_add, wrapping_shift_left)
+use std.list (push)
+
+pub struct Key {
+  a: u64
+  b: u64
+}
+
+without Copy for Key
+
+pub struct Words {
+  pub first: u64
+  pub second: u64
+}
+
+fn rotate_left(x: u64, by: 1..64) -> u64 {
+  bit_or(wrapping_shift_left(x, by), shift_right(x, 64 - by))
+}
+
+fn mix(x: Words, by: 1..64) -> Words {
+  sum = wrapping_add(x.first, x.second)
+  Words(first: sum, second: bit_xor(rotate_left(x.second, by), sum))
+}
+
+fn inject(x: Words, first: u64, second: u64, step: u64) -> Words {
+  Words(first: wrapping_add(x.first, first), second: wrapping_add(wrapping_add(x.second, second), step))
+}
+
+pub fn threefry(counter: Words, key: Words) -> Words {
+  third = bit_xor(bit_xor(key.first, key.second), 0x1BD11BDAA9FC1A22)
+  var x = Words(first: wrapping_add(counter.first, key.first), second: wrapping_add(counter.second, key.second))
+  x = mix(x, 16)
+  x = mix(x, 42)
+  x = mix(x, 12)
+  x = mix(x, 31)
+  x = inject(x, key.second, third, 1)
+  x = mix(x, 16)
+  x = mix(x, 32)
+  x = mix(x, 24)
+  x = mix(x, 21)
+  x = inject(x, third, key.first, 2)
+  x = mix(x, 16)
+  x = mix(x, 42)
+  x = mix(x, 12)
+  x = mix(x, 31)
+  x = inject(x, key.first, key.second, 3)
+  x = mix(x, 16)
+  x = mix(x, 32)
+  x = mix(x, 24)
+  x = mix(x, 21)
+  x = inject(x, key.second, third, 4)
+  x = mix(x, 16)
+  x = mix(x, 42)
+  x = mix(x, 12)
+  x = mix(x, 31)
+  inject(x, third, key.first, 5)
+}
+
+fn key_of(words: Words) -> Key { Key(a: words.first, b: words.second) }
+
+pub fn seeded(seed: u64) -> Key {
+  key_of(threefry(Words(first: 3, second: 0), Words(first: seed, second: 0)))
+}
+
+pub fn bits(key: take Key) -> u64 {
+  threefry(Words(first: 0, second: 0), Words(first: key.a, second: key.b)).first
+}
+
+pub fn split(key: take Key) -> (Key, Key) {
+  at = Words(first: key.a, second: key.b)
+  (key_of(threefry(Words(first: 1, second: 0), at)), key_of(threefry(Words(first: 2, second: 0), at)))
+}
+
+fn widen(b: Byte) -> u64 { b }
+
+pub fn fresh() -> Key ! entropy, alloc {
+  var zeros: List[Byte] = []
+  loop i in 0..16 { zeros = push(zeros, 0) }
+  var first: u64 = 0
+  var second: u64 = 0
+  var position: u64 = 0
+  loop b in fill(zeros) {
+    shifted = wrapping_shift_left(widen(b), bit_and(position, 7) * 8)
+    if position < 8 {
+      first = bit_or(first, shifted)
+    } else {
+      second = bit_or(second, shifted)
+    }
+    position = wrapping_add(position, 1)
+  }
+  key_of(Words(first: first, second: second))
+}

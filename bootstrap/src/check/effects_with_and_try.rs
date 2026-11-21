@@ -320,8 +320,11 @@ impl<'a> Checker<'a> {
     /// a listed effect with no such name may be it misspelt. A default lists
     /// none, so each thing in it that needs one is reported.
     pub(super) fn needs(&mut self, body: &mut Body, effect: &str, pos: Pos, what: &str) {
+        // A module of the library that lists an effect of another writes it
+        // with that module after it, which is the effect the table names.
         if body.listed.contains(&effect)
-            || body.extra.iter().any(|e| e == effect)
+            || body.listed.iter().any(|l| written_name(l) == effect)
+            || body.extra.iter().any(|e| e == effect || written_name(e) == effect)
             || body.unknown_effect
         {
             return;
