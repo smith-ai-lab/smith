@@ -243,9 +243,18 @@ pub const MACHINE: &[Test] = &[
 
 const HELLO: &str = "use std.console (console, print)\n\nfn main() ! console { print(\"hello world\") }\n";
 
-/// The targets the compiler builds for, in the order of the enum.
+thread_local! {
+    /// The one target a fingerprint is being made for, if it is made for one.
+    static ONLY: std::cell::Cell<Option<Target>> = const { std::cell::Cell::new(None) };
+}
+
+/// The targets the compiler builds for, in the order of the enum, or the one
+/// target `fingerprint_of` is making a fingerprint for.
 pub fn buildable() -> Vec<Target> {
-    Target::ALL.to_vec()
+    match ONLY.get() {
+        Some(target) => vec![target],
+        None => Target::ALL.to_vec(),
+    }
 }
 
 /// A target the compiler can build for, for a test that needs one.
@@ -368,6 +377,19 @@ pub fn fingerprint(tests: &[Test], build: Build) -> Vec<(Target, String)> {
             (target, sha256::hex(own.join("\n").as_bytes()))
         })
         .collect()
+}
+
+/// The hash `fingerprint` gives for `target`, made by running the tests for
+/// that target alone. No target's hash depends on another's, so it is the
+/// same, and the part of a test that needs one target does not pay for the
+/// others.
+pub fn fingerprint_of(target: Target, tests: &[Test], build: Build) -> String {
+    ONLY.set(Some(target));
+    let made = fingerprint(tests, build);
+    ONLY.set(None);
+    assert_eq!(made.len(), 1);
+    assert_eq!(made[0].0, target);
+    made.into_iter().next().unwrap().1
 }
 
 /// Each target this machine does not run, with why.

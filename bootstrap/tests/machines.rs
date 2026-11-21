@@ -5,7 +5,6 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Mutex, OnceLock};
 
 use smith::compile;
@@ -17,10 +16,38 @@ use crate::cli;
 use crate::sha256;
 use crate::targets;
 
+/// The fingerprints are made for one target at a time, so a part of a test
+/// needs the work of one target and not of all.
+const PARTS: usize = 7;
+
 pub const ONCE: &[Test] = &[
     (
-        "a_compiler_that_differs_for_one_target_needs_exactly_the_machines_that_run_it",
-        a_compiler_that_differs_for_one_target_needs_exactly_the_machines_that_run_it,
+        "a_compiler_that_differs_for_one_target_needs_exactly_the_machines_that_run_it_part_1_of_7",
+        || a_compiler_that_differs_for_one_target_needs_exactly_the_machines_that_run_it(0),
+    ),
+    (
+        "a_compiler_that_differs_for_one_target_needs_exactly_the_machines_that_run_it_part_2_of_7",
+        || a_compiler_that_differs_for_one_target_needs_exactly_the_machines_that_run_it(1),
+    ),
+    (
+        "a_compiler_that_differs_for_one_target_needs_exactly_the_machines_that_run_it_part_3_of_7",
+        || a_compiler_that_differs_for_one_target_needs_exactly_the_machines_that_run_it(2),
+    ),
+    (
+        "a_compiler_that_differs_for_one_target_needs_exactly_the_machines_that_run_it_part_4_of_7",
+        || a_compiler_that_differs_for_one_target_needs_exactly_the_machines_that_run_it(3),
+    ),
+    (
+        "a_compiler_that_differs_for_one_target_needs_exactly_the_machines_that_run_it_part_5_of_7",
+        || a_compiler_that_differs_for_one_target_needs_exactly_the_machines_that_run_it(4),
+    ),
+    (
+        "a_compiler_that_differs_for_one_target_needs_exactly_the_machines_that_run_it_part_6_of_7",
+        || a_compiler_that_differs_for_one_target_needs_exactly_the_machines_that_run_it(5),
+    ),
+    (
+        "a_compiler_that_differs_for_one_target_needs_exactly_the_machines_that_run_it_part_7_of_7",
+        || a_compiler_that_differs_for_one_target_needs_exactly_the_machines_that_run_it(6),
     ),
     (
         "the_machines_file_names_every_target_but_one_once",
@@ -39,8 +66,32 @@ pub const ONCE: &[Test] = &[
         the_fingerprint_of_a_test_that_builds_floats_has_a_hash_of_something_only_for_the_targets_that_build_them,
     ),
     (
-        "the_fingerprint_of_a_compiler_is_not_empty_for_any_target_and_is_the_same_twice",
-        the_fingerprint_of_a_compiler_is_not_empty_for_any_target_and_is_the_same_twice,
+        "the_fingerprint_of_a_compiler_is_not_empty_for_a_target_and_is_the_same_twice_part_1_of_7",
+        || the_fingerprint_of_a_compiler_is_not_empty_for_a_target_and_is_the_same_twice(0),
+    ),
+    (
+        "the_fingerprint_of_a_compiler_is_not_empty_for_a_target_and_is_the_same_twice_part_2_of_7",
+        || the_fingerprint_of_a_compiler_is_not_empty_for_a_target_and_is_the_same_twice(1),
+    ),
+    (
+        "the_fingerprint_of_a_compiler_is_not_empty_for_a_target_and_is_the_same_twice_part_3_of_7",
+        || the_fingerprint_of_a_compiler_is_not_empty_for_a_target_and_is_the_same_twice(2),
+    ),
+    (
+        "the_fingerprint_of_a_compiler_is_not_empty_for_a_target_and_is_the_same_twice_part_4_of_7",
+        || the_fingerprint_of_a_compiler_is_not_empty_for_a_target_and_is_the_same_twice(3),
+    ),
+    (
+        "the_fingerprint_of_a_compiler_is_not_empty_for_a_target_and_is_the_same_twice_part_5_of_7",
+        || the_fingerprint_of_a_compiler_is_not_empty_for_a_target_and_is_the_same_twice(4),
+    ),
+    (
+        "the_fingerprint_of_a_compiler_is_not_empty_for_a_target_and_is_the_same_twice_part_6_of_7",
+        || the_fingerprint_of_a_compiler_is_not_empty_for_a_target_and_is_the_same_twice(5),
+    ),
+    (
+        "the_fingerprint_of_a_compiler_is_not_empty_for_a_target_and_is_the_same_twice_part_7_of_7",
+        || the_fingerprint_of_a_compiler_is_not_empty_for_a_target_and_is_the_same_twice(6),
     ),
     (
         "a_fingerprint_that_cannot_be_made_fails_and_says_why_and_one_that_can_is_printed",
@@ -83,6 +134,7 @@ fn the_machines_file_names_every_target_but_one_once() {
     }
     // A module runs under `node`, on the machine of the `linux` job, so it
     // has no machine of its own.
+    assert_eq!(Target::ALL.len(), PARTS, "a target has no part, or a part has no target");
     let chips = Target::ALL.iter().filter(|t| t.is_machine_code()).count();
     assert_eq!(lines.len(), chips - 1);
 }
@@ -105,26 +157,39 @@ fn built(source: &[u8], target: Target) -> Result<Vec<u8>, Vec<Error>> {
     Ok(bytes)
 }
 
-/// The fingerprint of the compiler, which the three tests share: it is the
-/// same for each, and it is most of what each takes.
-fn fingerprint_of_the_compiler() -> &'static [(Target, String)] {
-    static FINGERPRINT: OnceLock<Vec<(Target, String)>> = OnceLock::new();
-    FINGERPRINT.get_or_init(|| fingerprint(built))
+/// The hash of the compiler for the target in place `place`, which a part of
+/// each of two tests shares: it is the same for both, and it is most of what
+/// each takes.
+fn hash_of_the_compiler(place: usize) -> &'static str {
+    static HASHES: OnceLock<Vec<OnceLock<String>>> = OnceLock::new();
+    let hashes = HASHES.get_or_init(|| (0..PARTS).map(|_| OnceLock::new()).collect());
+    hashes[place].get_or_init(|| fingerprint_of(place, built))
 }
 
-/// The fingerprint of a compiler that builds as `build` says. It is made of
-/// the tests of `cli`, which run only an executable of a program that
-/// prints, as it is the script and not the tests that are under test here,
-/// and the work of every test of the machine group is not needed for it.
-fn fingerprint(build: targets::Build) -> Vec<(Target, String)> {
-    targets::fingerprint(cli::MACHINE, build)
+/// The hash of a compiler that builds as `build` says, for the target in
+/// place `place`. It is made of the tests of `cli`, which run only an
+/// executable of a program that prints, as it is the script and not the tests
+/// that are under test here, and the work of every test of the machine group
+/// is not needed for it.
+fn fingerprint_of(place: usize, build: targets::Build) -> String {
+    targets::fingerprint_of(Target::ALL[place], cli::MACHINE, build)
 }
 
-/// The fingerprint of a compiler as the lines a file holds.
-fn lines(fingerprint: &[(Target, String)]) -> String {
-    fingerprint
+/// The lines a file of a fingerprint holds, with `hash` for the target in
+/// place `place` and a hash of the target's name for each of the others, which
+/// are the same for any two compilers.
+fn lines(place: usize, hash: &str) -> String {
+    Target::ALL
         .iter()
-        .map(|(target, hash)| format!("{} {hash}\n", target.name()))
+        .enumerate()
+        .map(|(i, target)| {
+            let own = if i == place {
+                hash.to_string()
+            } else {
+                sha256::hex(target.name().as_bytes())
+            };
+            format!("{} {own}\n", target.name())
+        })
         .collect()
 }
 
@@ -151,30 +216,41 @@ fn needs(base: &str, head: &str) -> Vec<String> {
         .collect()
 }
 
-/// The place among `Target::ALL` of the target the compiler below changes
-/// the code for, or `usize::MAX` for every one.
-static CHANGED: AtomicUsize = AtomicUsize::new(usize::MAX);
+thread_local! {
+    /// The place among `Target::ALL` of the target the compiler below changes
+    /// the code for, or `usize::MAX` for every one.
+    static CHANGED: std::cell::Cell<usize> = const { std::cell::Cell::new(usize::MAX) };
+}
 
 /// The compiler with a byte more in the executables of `CHANGED`.
 fn changed(source: &[u8], target: Target) -> Result<Vec<u8>, Vec<Error>> {
     let mut bytes = built(source, target)?;
-    let place = CHANGED.load(Ordering::Relaxed);
+    let place = CHANGED.get();
     if place == usize::MAX || Target::ALL[place] == target {
         bytes.push(0);
     }
     Ok(bytes)
 }
 
-fn a_compiler_that_differs_for_one_target_needs_exactly_the_machines_that_run_it() {
-    let same = fingerprint_of_the_compiler().to_vec();
-    // The compiler that differs for every target, and the one that differs
-    // for the first only.
-    CHANGED.store(usize::MAX, Ordering::Relaxed);
-    let all = fingerprint(changed);
-    CHANGED.store(0, Ordering::Relaxed);
-    let first = fingerprint(changed);
-    CHANGED.store(usize::MAX, Ordering::Relaxed);
-    assert_eq!(all.len(), same.len());
+/// The hash of the compiler that differs for the target in place `changes`
+/// (or for every one), for the target in place `place`.
+fn hash_of_the_compiler_that_changes(changes: usize, place: usize) -> String {
+    CHANGED.set(changes);
+    let hash = fingerprint_of(place, changed);
+    CHANGED.set(usize::MAX);
+    hash
+}
+
+fn a_compiler_that_differs_for_one_target_needs_exactly_the_machines_that_run_it(place: usize) {
+    let same = hash_of_the_compiler(place);
+    let target = Target::ALL[place];
+    // The compiler that differs for every target.
+    let all = hash_of_the_compiler_that_changes(usize::MAX, place);
+    // The one that differs for the first target alone differs from the
+    // compiler only there.
+    let first = hash_of_the_compiler_that_changes(0, place);
+    assert_ne!(same, all, "{}", target.name());
+    assert_eq!(first == same, place != 0, "{}", target.name());
     let machines = machines();
     let run_by = |target: Target| -> Vec<String> {
         machines
@@ -183,32 +259,29 @@ fn a_compiler_that_differs_for_one_target_needs_exactly_the_machines_that_run_it
             .map(|(_, m)| m.clone())
             .collect()
     };
-    // The one that differs for the first target alone differs from the
-    // compiler only there.
-    assert_eq!(needs(&lines(&same), &lines(&first)), run_by(Target::ALL[0]));
+    assert_eq!(
+        needs(&lines(place, same), &lines(place, &first)),
+        if place == 0 { run_by(target) } else { Vec::new() },
+        "{}",
+        target.name()
+    );
     // A compiler that differs for one target only is the one that differs
     // for every target, with the others' lines as they were.
-    for (place, &target) in Target::ALL.iter().enumerate() {
-        let mut one = same.clone();
-        one[place] = all[place].clone();
-        assert_eq!(one[place].0, target);
-        assert_ne!(same[place].1, one[place].1, "{}", target.name());
-        assert_eq!(
-            needs(&lines(&same), &lines(&one)),
-            run_by(target),
-            "{}",
-            target.name()
-        );
-    }
+    assert_eq!(
+        needs(&lines(place, same), &lines(place, &all)),
+        run_by(target),
+        "{}",
+        target.name()
+    );
 }
 
 fn a_compiler_that_differs_for_nothing_needs_no_machine() {
-    let same = lines(fingerprint_of_the_compiler());
+    let same = lines(0, &sha256::hex(b"a compiler"));
     assert_eq!(needs(&same, &same), Vec::<String>::new());
 }
 
 fn nothing_known_of_a_compiler_needs_every_machine() {
-    let known = lines(fingerprint_of_the_compiler());
+    let known = lines(0, &sha256::hex(b"a compiler"));
     let every: Vec<String> = machines().into_iter().map(|(_, m)| m).collect();
     assert_eq!(needs("", &known), every);
     assert_eq!(needs(&known, ""), every);
@@ -236,16 +309,14 @@ fn the_fingerprint_of_a_test_that_builds_floats_has_a_hash_of_something_only_for
     }
 }
 
-/// The fingerprint of the compiler is not that of nothing for any target, and
-/// is the same when it is made again.
-fn the_fingerprint_of_a_compiler_is_not_empty_for_any_target_and_is_the_same_twice() {
+/// The hash of the compiler is not that of nothing for a target, and is the
+/// same when it is made again.
+fn the_fingerprint_of_a_compiler_is_not_empty_for_a_target_and_is_the_same_twice(place: usize) {
     let nothing = sha256::hex(b"");
-    let once = fingerprint_of_the_compiler();
-    let twice = fingerprint(built);
-    assert_eq!(once, twice.as_slice());
-    for (target, hash) in once {
-        assert_ne!(*hash, nothing, "{}", target.name());
-    }
+    let once = hash_of_the_compiler(place);
+    let twice = fingerprint_of(place, built);
+    assert_eq!(once, twice);
+    assert_ne!(once, nothing, "{}", Target::ALL[place].name());
 }
 
 /// What `fingerprint.sh` does with a `cargo` that does as `script` says, in a
