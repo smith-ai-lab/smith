@@ -1,0 +1,146 @@
+use std.bits (u16)
+use std.int (saturating_add)
+use std.list (push)
+use std.utf8 (utf8)
+
+pub struct Request {
+  pub method: str
+  pub path: str
+  pub query: str
+  pub headers: List[(str, str)]
+  pub body: str
+}
+
+pub struct Response {
+  pub status: u16
+  pub headers: List[(str, str)]
+  pub body: str
+}
+
+pub struct Part {
+  pub name: str
+  pub value: str
+}
+
+pub trait Status[E] {
+  fn status(e: E) -> u16
+}
+
+pub struct NotFound {
+  pub message: str
+}
+
+pub struct BadRequest {
+  pub message: str
+}
+
+pub struct Unauthorized {
+  pub message: str
+}
+
+impl Status[NotFound] {
+  fn status(e: NotFound) -> u16 { 404 }
+}
+
+impl Status[BadRequest] {
+  fn status(e: BadRequest) -> u16 { 400 }
+}
+
+impl Status[Unauthorized] {
+  fn status(e: Unauthorized) -> u16 { 401 }
+}
+
+// The bytes of `s` from `a` up to `b` as a text, which is the empty text where
+// they are no text.
+fn piece(s: str, a: Nat, b: Nat) -> str {
+  if a <= b and b <= s.size {
+    match utf8(s.bytes[a..b]) {
+      .ok(t) { t }
+      .err(e) { "" }
+    }
+  } else {
+    ""
+  }
+}
+
+// The parts of a path between its `/`s, after the first: `/users/7` is `users`
+// and `7`, and `/` has none.
+pub fn segments(path: str) -> List[str] ! alloc {
+  var parts: List[str] = []
+  if path.size > 1 and path[0] == '/' {
+    var from: Nat = 1
+    loop i in 1..path.size {
+      if path[i] == '/' {
+        parts = push(parts, piece(path, from, i))
+        from = saturating_add(i, 1)
+      }
+    }
+    parts = push(parts, piece(path, from, path.size))
+  }
+  parts
+}
+
+// What each part of a path that begins with `:` in the pattern is, by its
+// name, when the path is the pattern: the same number of parts, and each part
+// that does not begin with `:` the same.
+pub fn route_match(pattern: str, path: str) -> Option[List[Part]] ! alloc {
+  ps = segments(pattern)
+  qs = segments(path)
+  var found: List[Part] = []
+  var fits = ps.size == qs.size
+  if fits {
+    loop i in 0..ps.size {
+      if i < qs.size {
+        p = ps[i]
+        q = qs[i]
+        if p.size > 1 and p[0] == ':' {
+          found = push(found, Part(name: piece(p, 1, p.size), value: q))
+        } else if p != q {
+          fits = false
+        }
+      }
+    }
+  }
+  if fits { Option.some(found) } else { Option.none }
+}
+
+// The member of a query that is the bytes from `from` up to `end`: the name
+// before the first `=`, and the value after it, which is empty where there is
+// no `=`. Nothing where the piece is empty.
+fn member(query: str, from: Nat, end: Nat) -> Option[Part] {
+  if from < end and end <= query.size {
+    var equals: Nat = end
+    loop j in from..end {
+      if equals == end and query[j] == '=' {
+        equals = j
+      }
+    }
+    if equals < end {
+      Option.some(Part(name: piece(query, from, equals), value: piece(query, saturating_add(equals, 1), end)))
+    } else {
+      Option.some(Part(name: piece(query, from, end), value: ""))
+    }
+  } else {
+    Option.none
+  }
+}
+
+// The members of a query, `a=1&b=2`, which are the pieces between `&`s.
+pub fn query_parts(query: str) -> List[Part] ! alloc {
+  var parts: List[Part] = []
+  var from: Nat = 0
+  loop i in 0..query.size {
+    if query[i] == '&' {
+      match member(query, from, i) {
+        .some(m) { parts = push(parts, m) }
+        .none { }
+      }
+      from = saturating_add(i, 1)
+    }
+  }
+  match member(query, from, query.size) {
+    .some(m) { parts = push(parts, m) }
+    .none { }
+  }
+  parts
+}
