@@ -2,9 +2,11 @@ use std.bits (u16, u64)
 use std.deserialize (Deserialize, Problem, ReadError, Reader)
 use std.describe (Describe, Describer)
 use std.fromtext (from_text)
+use std.html (Html)
 use std.int (saturating_add, saturating_sub)
-use std.json (In, json_ended, json_in)
+use std.json (In, json_ended, json_in, to_json)
 use std.list (push)
+use std.serialize (Serialize)
 use std.utf8 (utf8)
 
 pub struct Request {
@@ -529,6 +531,70 @@ impl[A] FromRequest[A]
           Result.ok(v)
         }
       }
+    }
+  }
+}
+
+// A text that a function gives to be answered as it is.
+pub struct Text {
+  pub text: str
+}
+
+// A place that a function gives to send the caller to.
+pub struct Redirect {
+  pub to: str
+}
+
+// What a function gives says what the response is.
+pub trait Respond[T] {
+  fn respond(value: T) -> Response ! alloc
+}
+
+fn answer(status: u16, kind: str, body: str) -> Response ! alloc {
+  Response(status: status, headers: [("content-type", kind)], body: body)
+}
+
+impl[T] Respond[T]
+  requires Serialize[T]
+{
+  fn respond(value: T) -> Response ! alloc {
+    answer(200, "application/json", to_json(value))
+  }
+}
+
+impl Respond[Html] {
+  fn respond(value: Html) -> Response ! alloc {
+    answer(200, "text/html; charset=utf-8", "{value}")
+  }
+}
+
+impl Respond[Text] {
+  fn respond(value: Text) -> Response ! alloc {
+    answer(200, "text/plain; charset=utf-8", value.text)
+  }
+}
+
+impl Respond[Redirect] {
+  fn respond(value: Redirect) -> Response ! alloc {
+    Response(status: 302, headers: [("location", value.to)], body: "")
+  }
+}
+
+impl Respond[()] {
+  fn respond(value: ()) -> Response ! alloc {
+    Response(status: 204, headers: [], body: "")
+  }
+}
+
+impl[T, E] Respond[Result[T, E]]
+  requires Respond[T]
+  requires Status[E]
+  requires Serialize[E]
+{
+  fn respond(value: Result[T, E]) -> Response ! alloc {
+    match value {
+      .ok(v) { Respond[T].respond(v) }
+      .err(e) { answer(Status[E].status(e), "application/json", to_json(e)) }
     }
   }
 }
