@@ -324,7 +324,10 @@ impl<'a> Checker<'a> {
         // with that module after it, which is the effect the table names.
         if body.listed.contains(&effect)
             || body.listed.iter().any(|l| written_name(l) == effect)
-            || body.extra.iter().any(|e| e == effect || written_name(e) == effect)
+            || body
+                .extra
+                .iter()
+                .any(|e| e == effect || written_name(e) == effect)
             || body.unknown_effect
         {
             return;
