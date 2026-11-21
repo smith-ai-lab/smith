@@ -89,12 +89,18 @@ pub(super) fn lower(typed: &Typed, start: Instance) -> Result<form::Program, Vec
     // `alloc` are passed, so that the stack is asked for as any memory is.
     // A product of floats that one sum or difference reads is fused with it
     // as the program is made, before any pass, as the rules of floats say.
-    let program = form::fuse(&form::Program {
+    let program = form::Program {
         data: lowering.data,
         functions,
         main: usize::from(takes),
+    };
+    let floats = (program.functions.iter())
+        .any(|f| f.types.iter().any(|t| matches!(t, form::Type::Float(_))));
+    let program = form::tail(if floats {
+        form::fuse(&program)
+    } else {
+        program
     });
-    let program = form::tail(program);
     Ok(form::handler::install(form::recur(program)))
 }
 
