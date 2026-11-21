@@ -6,7 +6,8 @@ status: partial
 built:
   - "`std.http`, with `Request`, `Response`, `Status` and the errors `NotFound`, `BadRequest`, and `Unauthorized` with 404, 400, and 401, and the readers of a request's parts: `segments`, `route_match`, which gives each `:name` part of a path that a pattern fits, and `query_parts`"
   - "`Params`, which a type that is told of the parameters of a function says them in order with each marked as read from the body or not, and `Reading` with `FromRequest`, which reads a struct of those parameters from the parts of the path, the members of the query, and the body, as `Deserialize` reads it: a part as the type of its parameter by [`from_text`](fromtext.md), and a struct, an enum, a list, or a tuple from the body as JSON"
-  - "not `Respond`, `routes`, `get` and the other methods, `at`, a guard, `listen`, or the reading of a percent sign in a part"
+  - "`Respond`, whose function `respond(value)` gives a `Response`: `Serialize` gives it for every type with `Serialize`, as JSON with status 200 and the header `content-type: application/json`, and the library writes `impl`s for `Html` (status 200, `text/html; charset=utf-8`), `Text` (200, `text/plain; charset=utf-8`), `Redirect` (302 with the header `location`), `()` (204, no body), and `Result[T, E]` for a `T` with `Respond` and an `E` with `Status` and `Serialize`, which is the response of the value, or status `status(e)` with `e` as JSON; a type's own `impl` is the one used, as [Traits](../language/traits.md#when-two-impls-fit) says"
+  - "not `routes`, `get` and the other methods, `at`, a guard, `listen`, or the reading of a percent sign in a part"
 ---
 
 # HTTP server
@@ -62,7 +63,7 @@ trait Respond[T] {
 | --- | --- |
 | A struct, an enum, a list, a number, or any type with [`Serialize`](serialize.md) | Status 200, with the value as JSON |
 | An [`Html`](html.md) | Status 200, with the page |
-| `Text("...")` | Status 200, with the text as it is |
+| `Text(text: "...")` | Status 200, with the text as it is |
 | `Redirect(to: "/login")` | A redirect to that place |
 | `()` | Status 204, with no body |
 
