@@ -2,7 +2,10 @@
 type: specification
 title: HTTP server
 description: std.http, with which a program answers HTTP requests with plain functions, each given its parameters from the path, the query, and the body, Respond, by which what a function gives becomes the response, and at, which puts a server of messages at a path.
-status: planned
+status: partial
+built:
+  - "`std.http`, with `Request`, `Response`, `Status` and the errors `NotFound`, `BadRequest`, and `Unauthorized` with 404, 400, and 401, and the readers of a request's parts: `segments`, `route_match`, which gives each `:name` part of a path that a pattern fits, and `query_parts`"
+  - "not `Respond`, `routes`, `get` and the other methods, `at`, a guard, `listen`, or the reading of a percent sign in a part"
 ---
 
 # HTTP server
@@ -163,6 +166,22 @@ fn listen[T](port: Nat, body: fn() -> T ! http) -> T ! net, alloc
 ```
 
 `listen` is the handler of a native executable. It answers `http` for the block it is given by listening on the port, through `net`, and is installed with `with listen(port: 8080)`.
+
+## The parts of a request
+
+A request is the method, the path and the query apart, the headers, and the body.
+
+```
+struct Request {
+  method: str
+  path: str
+  query: str
+  headers: List[(str, str)]
+  body: str
+}
+```
+
+`route_match(pattern, path)` gives `.some` of each part of the path that a `:name` part of the pattern stands at, as a `Part` of the name and the text, when the pattern and the path have the same number of parts and each part that does not begin with `:` is the same, and `.none` when they do not. `route_match("/users/:id", "/users/7")` is one `Part`, `id` with `7`, and `/users` does not fit it. `query_parts("a=1&b=&c")` gives `a` with `1`, `b` with the empty text, and `c` with the empty text: the members are the pieces between `&`, each cut at its first `=`, and a piece with nothing in it is no member. A part is read as the type of its parameter by [`from_text`](fromtext.md).
 
 ## The forms
 
