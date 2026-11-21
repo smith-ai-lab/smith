@@ -406,6 +406,9 @@ impl<'a> Lowering<'a> {
             }
             args.push(values[0]);
         }
+        if float && call.callee == "__sqrt" {
+            return (typed.type_of(expr, env), vec![out.float_sqrt(args[0])]);
+        }
         if float && call.callee == "__float_text" {
             return (typed.type_of(expr, env), self.float_text(out, args[0]));
         }

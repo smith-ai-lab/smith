@@ -451,6 +451,16 @@ pub enum Op {
     /// The float with its sign bit flipped, whatever it is, so that the
     /// negation of zero is zero of the other sign.
     FloatNegate(Value),
+    /// The square root of a float, rounded to the nearest, ties to even, as
+    /// IEEE 754 says: a float below 0 has none, and gives the one float that is
+    /// not a number, and `-0.0` gives itself.
+    FloatSqrt(Value),
+    /// The bits of a float, as an integer of its size, which keeps every bit of
+    /// it, a float that is not a number included.
+    FloatBits(Value),
+    /// The float whose bits are the integer, which has the size of the float,
+    /// with every bit kept.
+    FloatFromBits(Value),
     FloatCompare {
         op: FloatCompare,
         a: Value,
@@ -637,6 +647,9 @@ impl Op {
             | Op::VectorFirstSet(value)
             | Op::VectorExtract { vector: value, .. }
             | Op::FloatNegate(value)
+            | Op::FloatSqrt(value)
+            | Op::FloatBits(value)
+            | Op::FloatFromBits(value)
             | Op::FloatFromInt { value, .. }
             | Op::IntFromFloat { value, .. }
             | Op::FloatResize(value) => some([*value; 3], 1),
@@ -699,6 +712,9 @@ impl Op {
             | Op::VectorFirstSet(value)
             | Op::VectorExtract { vector: value, .. }
             | Op::FloatNegate(value)
+            | Op::FloatSqrt(value)
+            | Op::FloatBits(value)
+            | Op::FloatFromBits(value)
             | Op::FloatFromInt { value, .. }
             | Op::IntFromFloat { value, .. }
             | Op::FloatResize(value) => one(value),

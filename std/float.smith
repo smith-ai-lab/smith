@@ -1,0 +1,3 @@
+pub fn sqrt[T](a: T) -> T {
+  __sqrt(a)
+}

@@ -7,7 +7,7 @@ The modules of the standard library, one file each, named for the module. A modu
 - [list-functions.md](list-functions.md): `std.list`'s functions that search and compare any list, a text among them, and `append`.
 - [text.md](text.md): `std.text`'s `split_once` and `strip_prefix`, which cut a text into pieces that share its memory, and `Text`, a text that grows and becomes a `str` with nothing read again.
 - [int.md](int.md): `std.int`, `narrow` and `clamp`, which take a value into the range expected, and arithmetic that wraps, for the ranges that fill a size.
-- [float.md](float.md): `std.float`, `floor`, `ceil`, `trunc`, and `round`, which round a float to a whole number that is still a float.
+- [float.md](float.md): `std.float`, `sqrt`, `exp`, `ln`, `sin`, and `cos`, each rounded once, and `floor`, `ceil`, `trunc`, and `round`, which round a float to a whole number that is still a float.
 - [bits.md](bits.md): `std.bits`, the names of sizes `u8` to `i64`, the `Bits` trait, and its functions on the bits of a range that fills a size.
 - [ascii.md](ascii.md): `std.ascii`, which says whether a byte is a digit, a hexadecimal digit, a letter, or a space.
 - [utf8.md](utf8.md): `std.utf8`'s `decode` and `encode`, which turn between one character's number and its bytes.

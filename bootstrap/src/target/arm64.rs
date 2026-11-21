@@ -714,6 +714,11 @@ impl Asm {
         self.word(0x1e21_4000 | Self::double(width) | rn << 5 | rd);
     }
 
+    /// `fsqrt fd, fn`.
+    pub fn float_sqrt(&mut self, width: u32, rd: u32, rn: u32) {
+        self.word(0x1e21_c000 | Self::double(width) | rn << 5 | rd);
+    }
+
     /// `fmov fd, fn`.
     pub fn float_mov(&mut self, rd: u32, rn: u32) {
         self.word(0x1e60_4000 | rn << 5 | rd);
@@ -1442,6 +1447,24 @@ impl<S: System> Writer<'_, S> {
                 let r = self.float_read(asm, V30, *value);
                 let t = self.float_target(results[0]);
                 asm.float_negate(self.width(results[0]), t, r);
+                self.float_finish(asm, results[0], t);
+            }
+            Op::FloatSqrt(value) => {
+                let r = self.float_read(asm, V30, *value);
+                let t = self.float_target(results[0]);
+                asm.float_sqrt(self.width(results[0]), t, r);
+                self.float_finish(asm, results[0], t);
+            }
+            Op::FloatBits(value) => {
+                let r = self.float_read(asm, V30, *value);
+                let t = self.target(results[0]);
+                asm.bits_from_float(t, self.width(*value), r);
+                self.finish(asm, results[0], t, true);
+            }
+            Op::FloatFromBits(value) => {
+                self.read_into(asm, X16, *value);
+                let t = self.float_target(results[0]);
+                asm.float_from_bits(t, self.width(results[0]), X16);
                 self.float_finish(asm, results[0], t);
             }
             Op::FloatCompare { op, a, b } => {

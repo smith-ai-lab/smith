@@ -451,6 +451,14 @@ fn float_result_f64(x: f64) -> u64 {
     }
 }
 
+/// The square root of a float of the size, rounded once.
+pub(super) fn float_sqrt(bits: FloatBits, x: u64) -> u64 {
+    match bits {
+        FloatBits::F32 => float_result_f32(f32::from_bits(x as u32).sqrt()),
+        FloatBits::F64 => float_result_f64(f64::from_bits(x).sqrt()),
+    }
+}
+
 /// What `op` gives for two floats of the size, as the bits of a float of that
 /// size.
 pub(super) fn float_binary(op: FloatBinary, bits: FloatBits, x: u64, y: u64) -> u64 {
@@ -705,6 +713,19 @@ impl Machine<'_> {
                             panic!("a negation of what is not a float")
                         };
                         vec![Word::Int(float_negate(bits, x))]
+                    }
+                    Op::FloatSqrt(value) => {
+                        let bits = float_bits_of(f.types[value.0]);
+                        let Word::Int(x) = get(value) else {
+                            panic!("a square root of what is not a float")
+                        };
+                        vec![Word::Int(float_sqrt(bits, x))]
+                    }
+                    Op::FloatBits(value) | Op::FloatFromBits(value) => {
+                        let Word::Int(x) = get(value) else {
+                            panic!("the bits of what is not a float")
+                        };
+                        vec![Word::Int(x)]
                     }
                     Op::FloatCompare { op, a, b } => {
                         let bits = float_bits_of(f.types[a.0]);

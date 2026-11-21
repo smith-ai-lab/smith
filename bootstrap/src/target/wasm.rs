@@ -935,6 +935,32 @@ impl Lowering<'_> {
                 self.code.op(if double { F64_NEG } else { F32_NEG });
                 self.set(results[0]);
             }
+            Op::FloatSqrt(value) => {
+                let double = self.double(*value);
+                self.get(*value);
+                self.code.op(if double { F64_SQRT } else { F32_SQRT });
+                self.set(results[0]);
+            }
+            Op::FloatBits(value) => {
+                let double = self.double(*value);
+                self.get(*value);
+                self.code.op(if double {
+                    I64_REINTERPRET_F64
+                } else {
+                    I32_REINTERPRET_F32
+                });
+                self.set(results[0]);
+            }
+            Op::FloatFromBits(value) => {
+                let double = self.double(results[0]);
+                self.get(*value);
+                self.code.op(if double {
+                    F64_REINTERPRET_I64
+                } else {
+                    F32_REINTERPRET_I32
+                });
+                self.set(results[0]);
+            }
             Op::FloatCompare { op, a, b } => {
                 let double = self.double(*a);
                 self.get(*a);

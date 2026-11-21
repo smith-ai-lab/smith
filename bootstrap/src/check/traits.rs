@@ -35,6 +35,7 @@ pub(super) const PRELUDE_TRAITS: &[&str] = &[
     "Saturating",
     "Checked",
     "Bits",
+    "Float",
     "Convert",
     "Function",
 ];
