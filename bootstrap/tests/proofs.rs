@@ -4,7 +4,7 @@
 //! effect. Its body is steps, which the kernel checks: `same` proves `a == a`,
 //! and a statement with nothing unknown by working it out.
 
-use smith::check;
+use smith::{check, lower};
 
 use crate::Test;
 use crate::generate::{self, Gen};
@@ -42,6 +42,18 @@ pub const ONCE: &[Test] = &[
     (
         "unfold_takes_the_block_of_the_case_it_is_in_and_asks_for_one_it_is_not",
         unfold_takes_the_block_of_the_case_it_is_in_and_asks_for_one_it_is_not,
+    ),
+    (
+        "a_proof_that_calls_itself_on_a_smaller_value_proves_gauss_and_the_sum_of_a_double",
+        a_proof_that_calls_itself_on_a_smaller_value_proves_gauss_and_the_sum_of_a_double,
+    ),
+    (
+        "a_proof_that_changes_a_step_is_refused_and_says_the_statement_owed",
+        a_proof_that_changes_a_step_is_refused_and_says_the_statement_owed,
+    ),
+    (
+        "a_proof_function_is_in_no_executable",
+        a_proof_function_is_in_no_executable,
     ),
     (
         "a_result_that_is_a_type_is_read_as_a_type_still",
@@ -261,4 +273,92 @@ fn unfold_takes_the_block_of_the_case_it_is_in_and_asks_for_one_it_is_not() {
         "{body}fn p(n: u64) -> pick(n) == n {{ arith(nothing_here) }}\n\n{MAIN}"
     ));
     assert!(found.iter().any(|m| m.contains("names of proofs")), "{found:?}");
+}
+
+const INDUCTION: &str = include_str!("cases/proof_induction.smith");
+
+/// `gauss` of `statements.md` and the sum of a double compile, each a proof
+/// function that calls itself on a smaller value with its `decreases`.
+fn a_proof_that_calls_itself_on_a_smaller_value_proves_gauss_and_the_sum_of_a_double() {
+    let found = match check(INDUCTION.as_bytes()) {
+        Ok(_) => Vec::new(),
+        Err(errors) => errors.into_iter().map(|e| e.message).collect(),
+    };
+    assert!(found.is_empty(), "{found:?}");
+}
+
+fn refused(change: impl Fn(&str) -> String) -> Vec<String> {
+    match check(change(INDUCTION).as_bytes()) {
+        Ok(_) => Vec::new(),
+        Err(errors) => errors.into_iter().map(|e| e.message).collect(),
+    }
+}
+
+/// A body with any one step changed to give another statement is refused,
+/// and a call that is not on a smaller value is, as for any function.
+fn a_proof_that_changes_a_step_is_refused_and_says_the_statement_owed() {
+    // The statement is another one: the case of 0 is where it is false.
+    let found = refused(|s| {
+        s.replace(
+            "2 * sum_to(n) == n * (n + 1)\n",
+            "2 * sum_to(n) == n * (n + 1) + 1\n",
+        )
+    });
+    assert!(found.iter().any(|m| m.contains("which is false")), "{found:?}");
+    // `arith` is not handed what the step after needs.
+    let found = refused(|s| s.replace("arith(earlier, opened)", "arith(opened)"));
+    assert!(
+        found
+            .iter()
+            .any(|m| m.contains("`arith` cannot get `(2 * sum_to(n))")),
+        "{found:?}"
+    );
+    // The statement that is unfolded is for another number.
+    let found = refused(|s| s.replace("unfold(sum_to(n))", "unfold(sum_to(n - 1))"));
+    assert!(
+        found.iter().any(|m| m.contains("`unfold` needs `(n - 1) == 0`")),
+        "{found:?}"
+    );
+    // A call of the proof on a value that is not smaller does not end.
+    let found = refused(|s| s.replace("earlier = gauss(n - 1)", "earlier = gauss(n)"));
+    assert!(
+        found.iter().any(|m| m.contains("`n` is smaller at this call")),
+        "{found:?}"
+    );
+    // A proof that calls itself and has no `decreases` is refused.
+    let found = refused(|s| {
+        s.replace(
+            "  requires n >= 0 and n <= 255\n  decreases n\n{\n  if n == 0 {\n    same",
+            "  requires n >= 0 and n <= 255\n{\n  if n == 0 {\n    same",
+        )
+    });
+    assert!(
+        found.iter().any(|m| m.contains("decreases")),
+        "{found:?}"
+    );
+}
+
+/// A proof is erased: the program is the same with the proofs and without.
+fn a_proof_function_is_in_no_executable() {
+    let without: String = INDUCTION
+        .split("\n\n")
+        .filter(|part| !part.starts_with("fn twice_is_sum") && !part.starts_with("fn gauss"))
+        .collect::<Vec<_>>()
+        .join("\n\n");
+    let with = lower(INDUCTION.as_bytes()).expect("builds");
+    let alone = lower(without.as_bytes()).expect("builds");
+    // Where each instruction was written is the one thing that differs, as
+    // the lines of the proofs are not in the program that has none.
+    let unplaced = |text: String| {
+        let mut out = String::new();
+        let mut rest = text.as_str();
+        while let Some(at) = rest.find("Place {") {
+            out.push_str(&rest[..at]);
+            rest = &rest[at..];
+            rest = &rest[rest.find('}').map_or(rest.len(), |end| end + 1)..];
+        }
+        out.push_str(rest);
+        out
+    };
+    assert_eq!(unplaced(format!("{with:?}")), unplaced(format!("{alone:?}")));
 }

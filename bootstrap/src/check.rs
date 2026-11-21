@@ -2411,6 +2411,12 @@ fn check_file(
         }
     }
     checker.recursion(start_at, &mut Set::default(), &mut Set::default());
+    // A proof function is called by no code, so it is where its own walk starts.
+    for (k, f) in file.functions.iter().enumerate() {
+        if is_proof(f) && !of_prelude(f.pos) {
+            checker.recursion(k, &mut Set::default(), &mut Set::default());
+        }
+    }
     if whole {
         return Err(checker.errors);
     }

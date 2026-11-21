@@ -30,7 +30,8 @@ impl<'a> Checker<'a> {
                 ));
                 return;
             }
-            if !tail_positions(own).contains(&call.pos) && !body.contract {
+            // A proof is never run, so what it does last costs nothing.
+            if !tail_positions(own).contains(&call.pos) && !body.contract && !is_proof(own) {
                 self.needs(
                     body,
                     "alloc",
