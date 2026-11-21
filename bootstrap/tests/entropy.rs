@@ -35,10 +35,6 @@ pub const ONCE: &[Test] = &[
         a_list_of_more_than_one_piece_is_filled_to_its_last_byte,
     ),
     (
-        "a_target_that_does_not_answer_entropy_refuses_a_program_that_asks_for_it_and_names_itself",
-        a_target_that_does_not_answer_entropy_refuses_a_program_that_asks_for_it_and_names_itself,
-    ),
-    (
         "a_kernel_that_gives_no_bytes_ends_the_program_and_says_so_before_anything_is_used",
         a_kernel_that_gives_no_bytes_ends_the_program_and_says_so_before_anything_is_used,
     ),
@@ -58,7 +54,7 @@ fn every_executable_for_this_machine_that_asks_for_entropy_prints_64_hex_digits_
 ) {
     for target in targets::runnable()
         .into_iter()
-        .filter(|t| t.is_machine_code() && t.answers_entropy())
+        .filter(|t| t.is_machine_code())
     {
         let bytes = targets::build(DRAW.as_bytes(), target).unwrap_or_else(|e| panic!("{e:?}"));
         let large = targets::build(LARGE.as_bytes(), target).unwrap_or_else(|e| panic!("{e:?}"));
@@ -177,7 +173,7 @@ fn line(ran: &aarch64::Ran) -> String {
 /// do not print the same.
 fn a_program_that_prints_32_bytes_of_entropy_prints_64_hex_digits_and_no_two_runs_print_the_same() {
     let mut run_any = false;
-    for target in Target::ALL.iter().copied().filter(|t| t.answers_entropy()) {
+    for target in Target::ALL.iter().copied() {
         let (Some(first), Some(second)) = (ran(target, Entropy::Fresh), ran(target, Entropy::Fresh))
         else {
             continue;
@@ -192,7 +188,7 @@ fn a_program_that_prints_32_bytes_of_entropy_prints_64_hex_digits_and_no_two_run
 /// hex digit pair that stayed `00` in each of the last four bytes at once is
 /// not one a fill leaves, and the first call here gives 7 bytes.
 fn a_kernel_that_gives_a_few_bytes_a_call_is_asked_again_until_every_byte_is_filled() {
-    for target in Target::ALL.iter().copied().filter(|t| t.answers_entropy()) {
+    for target in Target::ALL.iter().copied() {
         let Some(ran) = ran(target, Entropy::ByPieces(7)) else {
             continue;
         };
@@ -207,7 +203,7 @@ fn a_kernel_that_gives_a_few_bytes_a_call_is_asked_again_until_every_byte_is_fil
 
 /// A call that is interrupted is made again, and the program goes on.
 fn a_call_the_kernel_interrupts_is_asked_again() {
-    for target in Target::ALL.iter().copied().filter(|t| t.answers_entropy()) {
+    for target in Target::ALL.iter().copied() {
         let bytes = compile(DRAW.as_bytes(), target).unwrap();
         if !aarch64::is_executable(&bytes) {
             continue;
@@ -220,7 +216,7 @@ fn a_call_the_kernel_interrupts_is_asked_again() {
 /// With every call refused, the program says that the system gave no random
 /// bytes, prints nothing, and ends with a failing status.
 fn a_kernel_that_gives_no_bytes_ends_the_program_and_says_so_before_anything_is_used() {
-    for target in Target::ALL.iter().copied().filter(|t| t.answers_entropy()) {
+    for target in Target::ALL.iter().copied() {
         let bytes = compile(DRAW.as_bytes(), target).unwrap();
         if !aarch64::is_executable(&bytes) {
             continue;
@@ -237,23 +233,6 @@ fn a_kernel_that_gives_no_bytes_ends_the_program_and_says_so_before_anything_is_
     }
 }
 
-/// A target the compiler does not build `entropy` for refuses the program,
-/// with an error that names the target, rather than build one that goes on
-/// with bytes that were not filled.
-fn a_target_that_does_not_answer_entropy_refuses_a_program_that_asks_for_it_and_names_itself() {
-    for target in Target::ALL.iter().copied().filter(|t| !t.answers_entropy()) {
-        let Err(errors) = compile(DRAW.as_bytes(), target) else {
-            panic!("{} built a program that asks for entropy", target.name());
-        };
-        assert_eq!(errors.len(), 1, "{}", target.name());
-        assert!(
-            errors[0].message.contains(&format!("`{}`", target.name())),
-            "{}: {}",
-            target.name(),
-            errors[0].message
-        );
-    }
-}
 
 /// With the host refusing every call of `getRandomValues`, the module says
 /// that the system gave no random bytes, prints nothing, and ends with a
@@ -302,7 +281,7 @@ fn a_list_of_more_than_one_piece_is_filled_to_its_last_byte() {
     for target in Target::ALL
         .iter()
         .copied()
-        .filter(|t| t.answers_entropy() && !t.is_machine_code())
+        .filter(|t| !t.is_machine_code())
     {
         if let Some(ran) = run_module(target, LARGE, None) {
             large_is_filled(ran, target.name());

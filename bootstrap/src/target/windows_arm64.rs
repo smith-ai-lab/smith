@@ -7,7 +7,8 @@ use super::Part;
 use super::arm64::{self, Asm, LS, Place, System, X0, X1, X2, X3, X4, X19, X20, X21};
 use super::pe::{
     self, EXIT_PROCESS, GET_COMMAND_LINE, GET_STD_HANDLE, MEM_COMMIT_RESERVE, MOST_PER_WRITE,
-    Machine, PAGE_READWRITE, STD_ERROR_HANDLE, STD_OUTPUT_HANDLE, VIRTUAL_ALLOC, WRITE_FILE,
+    Machine, PAGE_READWRITE, PROCESS_PRNG, STD_ERROR_HANDLE, STD_OUTPUT_HANDLE, VIRTUAL_ALLOC,
+    WRITE_FILE,
 };
 use crate::scalar::{Program, Stream};
 
@@ -35,9 +36,13 @@ const SAVED: u32 = 8;
 pub fn emit(program: &Program) -> (Vec<u8>, Vec<Part>) {
     let (asm, data, parts) = arm64::code::<Windows>(program);
     let size = asm.len() + data.iter().map(|(_, d)| d.len()).sum::<usize>();
-    let imports = pe::imports(program.allocates(), program.takes_arguments());
+    let imports = pe::imports(
+        program.allocates(),
+        program.takes_arguments(),
+        program.asks_for_entropy(),
+    );
     let mut at = 0;
-    let executable = pe::executable(&MACHINE, size, imports, |code, iat| {
+    let executable = pe::executable(&MACHINE, size, &imports, |code, iat| {
         at = code;
         asm.finish(&data, code, iat)
     });
@@ -91,10 +96,21 @@ impl System for Windows {
         }
     }
 
-    /// The system is not asked yet, and `compile` refuses a program that asks
-    /// for bytes for this target, so this is not reached.
+    /// Asks `ProcessPrng` for every byte at once, which takes any count and
+    /// gives a `BOOL` that is not 0 when it filled them. The address and the
+    /// count are in x1 and x2.
     fn entropy(asm: &mut Asm) {
+        let refused = asm.label();
+        let end = asm.label();
+        asm.mov(X0, X1);
+        asm.mov(X1, X2);
+        asm.call(PROCESS_PRNG);
+        asm.cbz_w(X0, refused);
+        asm.mov_w(X0, 0);
+        asm.branch(end);
+        asm.bind(refused);
         asm.mov_w(X0, 1);
+        asm.bind(end);
     }
 
     fn end(asm: &mut Asm) {
