@@ -1,0 +1,26 @@
+use std.console (console, print)
+
+fn lt(i: Byte, n: Byte) -> bool { i < n }
+fn roomy(i: Byte, n: Byte) -> bool { lt(i, n) and not (n == 0) }
+fn small(x: Byte) -> bool { x < 10 or x == 100 }
+
+fn pick(x: Byte, n: Byte) -> r: Byte
+  requires roomy(x, n)
+  ensures lt(r, 11) and small(r)
+{
+  if x < 10 { x } else { 9 }
+}
+
+fn room(x: Byte) -> Byte {
+  if roomy(x, 50) { 50 - x } else { 0 }
+}
+
+fn plus(x: Byte) -> Byte
+  requires small(x)
+{
+  x + 100
+}
+
+fn main() ! console, alloc {
+  print("{pick(3, 4)} {room(7)} {lt(1, 2)} {plus(5)}")
+}

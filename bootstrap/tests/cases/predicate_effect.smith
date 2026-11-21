@@ -1,0 +1,12 @@
+use std.console (console, print)
+use std.bits (u64)
+
+fn settled(n: u64) -> bool ! diverge { n == 0 }
+
+fn first(n: u64) -> u64
+  requires settled(n)
+{
+  n
+}
+
+fn main() ! console, alloc { print("{first(0)}") }

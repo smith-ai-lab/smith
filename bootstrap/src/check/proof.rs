@@ -89,6 +89,8 @@ pub(super) struct Facts {
     /// While a function's contract is read at a call, the sum each of its
     /// parameters, and its result, stands for there.
     subst: Option<HashMap<String, Lin>>,
+    /// How many predicates are being read through, one inside another.
+    depth: usize,
     /// The `var`s, by their place among the names, whose value is tracked
     /// through one round of a loop, each with the sum it holds now or none
     /// when it is not known. The newest entry for a place is the one that
@@ -736,8 +738,57 @@ impl<'a> Checker<'a> {
                     Some(Formula::Or(vec![up, down]))
                 }
             }
+            Expr::Call(call) => self.said_predicate(body, facts, call, holds),
             _ => None,
         }
+    }
+
+    /// What a call of a predicate says: what the one expression of its body
+    /// says, with the sums of the arguments put for its parameters. A
+    /// function is a predicate when it returns `bool`, carries no effect, and
+    /// is that expression alone.
+    fn said_predicate(
+        &self,
+        body: &Body<'a>,
+        facts: &mut Facts,
+        call: &Call,
+        holds: bool,
+    ) -> Option<Formula> {
+        // A predicate that calls itself, or others in a circle, is not read.
+        if facts.depth >= 16 || call.qualifier.is_some() {
+            return None;
+        }
+        let f = self.defs.function(call.name_pos, &call.callee)?;
+        let (def, sig) = (&self.defs.file.functions[f], &self.defs.signatures[f]);
+        let [Stmt::Expr(inner)] = def.body.as_slice() else {
+            return None;
+        };
+        let bool_ty = self.defs.bool_ty();
+        if !def.effects.is_empty()
+            || !def.generics.is_empty()
+            || sig.gives != bool_ty
+            || !sig.effects.is_empty()
+        {
+            return None;
+        }
+        let places = params_of(&sig.params, &call.args)?;
+        let mut sums = HashMap::new();
+        for (arg, place) in call.args.iter().zip(places) {
+            let (name, ty) = &sig.params[place];
+            if !matches!(ty, Ty::Int(_)) {
+                continue;
+            }
+            let mut builder = self.builder(body, facts, false);
+            if let Some(sum) = builder.lin(&arg.value).filter(|_| !builder.overflow) {
+                sums.insert(name.clone(), sum);
+            }
+        }
+        let outer = facts.subst.replace(sums);
+        facts.depth += 1;
+        let said = self.said(body, facts, inner, holds);
+        facts.depth -= 1;
+        facts.subst = outer;
+        said
     }
 
     /// The sums of two whole numbers that are compared.
@@ -748,7 +799,13 @@ impl<'a> Checker<'a> {
         a: &Expr,
         b: &Expr,
     ) -> Option<(Lin, Lin)> {
-        let int = |e: &Expr| matches!(self.types.get(&addr(e)), Some(Ty::Int(_)));
+        // The body of a predicate is read where it is called, so what is
+        // known of its types is what its parameters are.
+        let reading = facts.subst.is_some();
+        let int = |e: &Expr| match self.types.get(&addr(e)) {
+            Some(t) => matches!(t, Ty::Int(_)),
+            None => reading,
+        };
         if !int(a) || !int(b) {
             return None;
         }

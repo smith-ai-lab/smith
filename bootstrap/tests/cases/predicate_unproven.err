@@ -1,0 +1,4 @@
+predicate_unproven.smith:11:38: cannot prove that `inside(9, 3)`, which `at` requires of its arguments
+  11 | fn main() ! console, alloc { print("{at(9, 3)}") }
+     |                                      ^
+  fix: check the arguments first with an `if`, or state it in a `requires`

@@ -1,0 +1,11 @@
+use std.console (console, print)
+
+fn inside(i: Byte, n: Byte) -> bool { i < n }
+
+fn at(i: Byte, n: Byte) -> Byte
+  requires inside(i, n)
+{
+  n - i
+}
+
+fn main() ! console, alloc { print("{at(9, 3)}") }

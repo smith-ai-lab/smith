@@ -2,7 +2,9 @@
 type: specification
 title: Proofs as functions
 description: A proof is a value that is passed, returned, and held, a predicate is an ordinary function that returns bool, and arith reads through a call of one.
-status: planned
+status: partial
+built:
+  - "a predicate in a contract: a function that returns `bool`, carries no effect, and is one expression of comparisons of whole numbers joined with `and`, `or`, and `not`, or a call of another such function, which `arith` reads as that expression with the arguments put in"
 ---
 
 # Proofs as functions
