@@ -44,10 +44,6 @@ pub const ONCE: &[Test] = &[
 /// executable that asks the system for bytes is run by the machine it is for,
 /// so a change to how a target does it is tested on that machine.
 pub const MACHINE: &[Test] = &[(
-    "probe_what_each_size_of_fill_does_on_this_machine",
-    probe_what_each_size_of_fill_does_on_this_machine,
-),
-(
     "every_executable_for_this_machine_that_asks_for_entropy_prints_64_hex_digits_and_no_two_runs_print_the_same",
     every_executable_for_this_machine_that_asks_for_entropy_prints_64_hex_digits_and_no_two_runs_print_the_same,
 )];
@@ -290,28 +286,5 @@ fn a_list_of_more_than_one_piece_is_filled_to_its_last_byte() {
         if let Some(ran) = run_module(target, LARGE, None) {
             large_is_filled(ran, target.name());
         }
-    }
-}
-
-/// A probe: the status of a program that fills `n` bytes and prints their count.
-fn probe_what_each_size_of_fill_does_on_this_machine() {
-    let mut said = Vec::new();
-    for n in [0usize, 1, 8, 32] {
-        let zeros = vec!["0"; n].join(", ");
-        let source = format!(
-            "use std.console (console, print)\nuse std.entropy (entropy, fill)\n\nfn main() ! console, entropy, alloc {{\n  bytes: List[Byte] = [{zeros}]\n  filled = fill(bytes)\n  print(\"{{filled.size}}\")\n}}\n"
-        );
-        for target in targets::runnable().into_iter().filter(|t| t.is_machine_code()) {
-            let bytes = targets::build(source.as_bytes(), target).unwrap_or_else(|e| panic!("{e:?}"));
-            targets::record(target, &[&bytes]);
-            if targets::fingerprinting() {
-                continue;
-            }
-            let ran = targets::run(&bytes);
-            said.push(format!("{n} bytes: status {} printed {:?}", ran.status, String::from_utf8_lossy(&ran.stdout)));
-        }
-    }
-    if !targets::fingerprinting() {
-        assert!(said.iter().all(|s| s.contains("status 0")), "{said:#?}");
     }
 }
