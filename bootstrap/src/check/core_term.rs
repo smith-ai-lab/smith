@@ -23,7 +23,7 @@ impl<'a> Typed<'a> {
         let file = self.defs.file;
         let mut found = Vec::new();
         for (place, f) in file.functions.iter().enumerate() {
-            if module_of(f.pos) != 0 || of_prelude(f.pos) || !f.generics.is_empty() {
+            if of_prelude(f.pos) || !f.generics.is_empty() {
                 continue;
             }
             self.core_vars.borrow_mut().clear();
@@ -447,7 +447,7 @@ impl<'a> Typed<'a> {
         }
         let f = self.defs.function(call.name_pos, &call.callee)?;
         let (def, sig) = (&self.defs.file.functions[f], &self.defs.signatures[f]);
-        if module_of(def.pos) != 0 || of_prelude(def.pos) || !def.generics.is_empty() {
+        if of_prelude(def.pos) || !def.generics.is_empty() {
             return None;
         }
         if call.args.len() != sig.params.len() {
@@ -724,4 +724,52 @@ fn assigned_in(stmts: &[Stmt]) -> Vec<String> {
         }
     }
     found
+}
+
+/// How many steps the kernel works out a requirement for.
+const STEPS: u64 = 1_000_000;
+
+impl<'a> Typed<'a> {
+    /// Works out each requirement that `arith` does not read, whose arguments
+    /// are all known, and gives the errors of those that are false, did not
+    /// end, or are not terms the kernel works out.
+    pub(super) fn prove_by_kernel(&self, calls: &[proof::KernelCall]) -> Vec<Error> {
+        if calls.is_empty() {
+            return Vec::new();
+        }
+        let all = self.core_terms();
+        let mut errors = Vec::new();
+        for pending in calls {
+            let mut machine = crate::kernel::Machine::new(&all, STEPS);
+            let message = match machine.call(pending.predicate, pending.args.clone()) {
+                Ok((crate::kernel::Value::Case(1, _), _)) => continue,
+                Ok((_, why)) => match why {
+                    Some(why) => format!(
+                        "`{}` is false: {}, at {}:{}",
+                        pending.written, why.text, why.pos.line, why.pos.col
+                    ),
+                    None => match machine.last_comparison() {
+                        Some(last) => format!(
+                            "`{}` is false, and the last comparison it made was {}, at {}:{}",
+                            pending.written, last.text, last.pos.line, last.pos.col
+                        ),
+                        None => format!("`{}` is false", pending.written),
+                    },
+                },
+                Err(crate::kernel::Failure::Limit(n)) => {
+                    format!("`{}` did not finish within {n} steps", pending.written)
+                }
+                Err(crate::kernel::Failure::Stuck(what)) => format!(
+                    "cannot prove that `{}`: the kernel does not work out {what}",
+                    pending.written
+                ),
+            };
+            errors.push(
+                Error::new(pending.pos, message).with_fix(
+                    "check the arguments first with an `if`, or state it in a `requires`",
+                ),
+            );
+        }
+        errors
+    }
 }

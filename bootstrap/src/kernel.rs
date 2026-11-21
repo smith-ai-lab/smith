@@ -44,6 +44,7 @@ pub struct Machine<'a> {
     functions: &'a [Function],
     steps: u64,
     limit: u64,
+    last: Option<Why>,
 }
 
 type Env = Vec<(String, Value)>;
@@ -57,7 +58,14 @@ impl<'a> Machine<'a> {
             functions,
             steps: 0,
             limit,
+            last: None,
         }
+    }
+
+    /// The last comparison worked out, which is what a `bool` that no
+    /// comparison gave directly, as a `var` a loop handed on, is last owed to.
+    pub fn last_comparison(&self) -> Option<&Why> {
+        self.last.as_ref()
     }
 
     /// How many steps have been taken.
@@ -112,11 +120,12 @@ impl<'a> Machine<'a> {
                     )));
                 };
                 let (x, y) = (*x, *y);
-                let truth = |b: bool| {
+                let mut truth = |b: bool| {
                     let why = Why {
                         pos: t.pos,
                         text: format!("`{x} {} {y}` is {b}", op.symbol()),
                     };
+                    self.last = Some(why.clone());
                     Ok((Value::Case(usize::from(b), Vec::new()), Some(why)))
                 };
                 match op {
@@ -201,27 +210,26 @@ impl<'a> Machine<'a> {
             .iter()
             .map(|(_, t)| Ok(self.work(t, env)?.0))
             .collect::<Result<_, Failure>>()?;
-        let items: Option<Vec<Value>> = match source {
+        let (mut at, end, items): (i128, i128, Option<Vec<Value>>) = match source {
             Source::Range(a, b) => match (self.work(a, env)?.0, self.work(b, env)?.0) {
-                (Value::Int(a), Value::Int(b)) => Some((a..b).map(Value::Int).collect()),
+                (Value::Int(a), Value::Int(b)) => (a, b, None),
                 other => return Err(Failure::Stuck(format!("a range of {other:?}"))),
             },
             Source::Over(of) => match self.work(of, env)?.0 {
-                Value::Parts(items) => Some(items),
+                Value::Parts(items) => (0, items.len() as i128, Some(items)),
                 other => return Err(Failure::Stuck(format!("a loop over {other:?}"))),
             },
-            Source::Open => None,
+            Source::Open => (0, i128::MAX, None),
         };
-        let mut next = 0;
         loop {
+            if at >= end {
+                break;
+            }
             let item = match &items {
-                Some(items) => match items.get(next) {
-                    Some(item) => item.clone(),
-                    None => break,
-                },
-                None => Value::Int(next as i128),
+                Some(items) => items[at as usize].clone(),
+                None => Value::Int(at),
             };
-            next += 1;
+            at += 1;
             let mark = env.len();
             env.push((counter.to_string(), item));
             for ((n, _), v) in state.iter().zip(&held) {

@@ -8,7 +8,8 @@ built:
   - "what `arith` knows of a `var` of a whole number in a function, which a contract and the code around it rely on alike: at each use, the condition of each `if` around it and what it was last given, where no assignment to it lies between that and the use on any path, outside a loop as inside one"
   - "`decreases` on a function, the measure that proves a function that calls itself ends, which is proven as [Termination](termination.md) says and never computed"
   - "a function that returns `bool`, carries no effect, and is one expression of comparisons joined with `and`, `or`, and `not`, or a call of another such function, as a contract: `requires f(args)` and `ensures f(args)` are proven and give facts as that expression with the arguments put in does, and a call that carries an effect is refused"
-  - "not a predicate with a `loop`, a `match`, or a call of itself, and not a float"
+  - "a `requires` that calls a function that returns `bool` and carries no effect but `alloc`, with arguments written out whole (numbers, texts, lists and tuples of them, `true`, `false`) in the call or in a parameter of the function that was, which the kernel works out when the program is built: a call whose `requires` works out to `true` is proven, one that works out to `false` is refused with the call as written, and the comparison that gave `false` with where it is written and the numbers it compared, and one that takes more than 1000000 steps is refused naming the call and the limit; a function that only a `requires` or an `ensures` names is checked"
+  - "not an argument that is a name, a call, or an operation, for the kernel to work out, and not a float"
 ---
 
 # Contracts
@@ -109,6 +110,36 @@ fn room(x: Byte) -> Byte {
 ```
 
 `room(250)` is `200`. `clamp(x, 0, 100)` gave a `c` that is at most 100, so `c + 100` fits. With `clamp(x, 0, 200)` it is refused, as `c + 100` may be above 255.
+
+## A requirement that is worked out
+
+A predicate may be longer than `arith` reads, with a `loop` or a `match`. When every argument of the call is written out, the compiler works the predicate out when the program is built, one step at a time, and the call is proven if it gives `true`.
+
+```
+use std.bits (i32)
+use std.console (console, print)
+
+fn has(xs: List[i32], k: i32) -> bool {
+  var found = false
+  loop v in xs {
+    if v == k {
+      found = true
+      break
+    }
+  }
+  found
+}
+
+fn pick(xs: List[i32], k: i32) -> i32
+  requires has(xs, k)
+{
+  k
+}
+
+fn main() ! console, alloc { print("{pick([1, 2, 3], 2)}") }
+```
+
+`pick([1, 2, 3], 2)` is `2`. With `5` in place of `2` it is refused: "`has([1, 2, 3], 5)` is false, and the last comparison it made was `3 == 5` is false". The message says where the answer came from: the comparison that gave `false` and the numbers it compared. A predicate that does not end within 1000000 steps is refused with the call and the limit named, and is never taken as proven. An argument that is not written out leaves the call to a `check`, as any `requires` that is not proven.
 
 ## A function used as a value
 

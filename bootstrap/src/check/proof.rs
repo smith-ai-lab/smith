@@ -73,6 +73,41 @@ pub(super) struct BitCall {
     pub(super) second: usize,
 }
 
+/// A call whose `requires` calls a predicate that `arith` does not read, with
+/// every argument known when the program is built, which the kernel works out
+/// once the whole program is checked.
+pub(super) struct KernelCall {
+    pub(super) pos: Pos,
+    /// The predicate, by its place among the file's functions.
+    pub(super) predicate: usize,
+    pub(super) args: Vec<crate::kernel::Value>,
+    /// The requirement as it is written, with the arguments put in.
+    pub(super) written: String,
+}
+
+/// The value of an expression that is written out whole, or none.
+fn literal_value(e: &Expr) -> Option<crate::kernel::Value> {
+    use crate::kernel::Value;
+    match e {
+        Expr::Number {
+            magnitude,
+            negative,
+            ..
+        } => {
+            let n = i128::try_from(*magnitude).ok()?;
+            Some(Value::Int(if *negative { -n } else { n }))
+        }
+        Expr::Text { text, .. } => Some(Value::Text(text.clone())),
+        Expr::List { items, .. } | Expr::Tuple { items, .. } => Some(Value::Parts(
+            items.iter().map(literal_value).collect::<Option<_>>()?,
+        )),
+        Expr::Name { name, .. } if name == "true" || name == "false" => {
+            Some(Value::Case(usize::from(name == "true"), Vec::new()))
+        }
+        _ => None,
+    }
+}
+
 /// What `arith` has been told in a body, and the variables it has.
 #[derive(Default)]
 pub(super) struct Facts {
@@ -1786,7 +1821,9 @@ impl<'a> Checker<'a> {
             Expr::Name { name, .. } => name == "true" || name == "false",
             _ => {
                 let mut facts = Facts::default();
-                matches!(e, Expr::Call(_)) && self.said(body, &mut facts, e, true).is_some()
+                matches!(e, Expr::Call(_))
+                    && (self.said(body, &mut facts, e, true).is_some()
+                        || matches!(e, Expr::Call(c) if self.kernel_predicate(c).is_some()))
             }
         }
     }
@@ -1847,6 +1884,13 @@ impl<'a> Checker<'a> {
                 .is_some_and(|g| proves(&background(&facts, std::iter::once(g)), g));
             if !proved {
                 let goal = written_contract(&|n| texts.get(n).cloned(), requirement);
+                if said.is_none()
+                    && let Some(pending) =
+                        self.for_the_kernel(requirement, call, &sig.params, &goal)
+                {
+                    self.kernel_calls.push(pending);
+                    continue;
+                }
                 self.errors.push(
                     Error::new(
                         call.pos,
@@ -1880,6 +1924,56 @@ impl<'a> Checker<'a> {
         }
         facts.subst = None;
         body.facts = facts;
+    }
+
+    /// The function a call is of, when it is one the kernel works out for a
+    /// `requires`: it returns a `bool`, has no type parameter, and carries no
+    /// effect but `alloc`.
+    fn kernel_predicate(&self, r: &Call) -> Option<usize> {
+        if r.qualifier.is_some() {
+            return None;
+        }
+        let f = self.defs.function(r.name_pos, &r.callee)?;
+        let (def, sig) = (&self.defs.file.functions[f], &self.defs.signatures[f]);
+        let fits = sig.gives == self.defs.bool_ty()
+            && def.generics.is_empty()
+            && def.effects.iter().all(|(e, _)| e == "alloc")
+            && r.args.len() == sig.params.len();
+        fits.then_some(f)
+    }
+
+    /// A requirement that is a call of a predicate `arith` does not read,
+    /// whose arguments are written out whole in the call or are the
+    /// parameters of the function that were, is for the kernel to work out.
+    fn for_the_kernel(
+        &self,
+        requirement: &Expr,
+        call: &Call,
+        params: &[(String, Ty)],
+        written: &str,
+    ) -> Option<KernelCall> {
+        let Expr::Call(r) = requirement else {
+            return None;
+        };
+        let f = self.kernel_predicate(r)?;
+        let given = params_of(params, &call.args)?;
+        let args: Option<Vec<crate::kernel::Value>> = r
+            .args
+            .iter()
+            .map(|a| match &a.value {
+                Expr::Name { name, .. } => {
+                    let at = given.iter().position(|&p| &params[p].0 == name)?;
+                    literal_value(&call.args[at].value)
+                }
+                other => literal_value(other),
+            })
+            .collect();
+        Some(KernelCall {
+            pos: call.pos,
+            predicate: f,
+            args: args?,
+            written: written.to_string(),
+        })
     }
 
     /// At the end of a body, where `e` is what it gives: every `ensures`

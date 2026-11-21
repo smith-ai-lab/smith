@@ -1,0 +1,23 @@
+use std.bits (i32)
+use std.console (console, print)
+
+fn has(xs: List[i32], k: i32) -> bool {
+  var found = false
+  loop v in xs {
+    if v == k {
+      found = true
+      break
+    }
+  }
+  found
+}
+
+fn pick(xs: List[i32], k: i32) -> i32
+  requires has(xs, k)
+{
+  k
+}
+
+fn main() ! console, alloc {
+  print("{pick([1, 2, 3], 5)}")
+}

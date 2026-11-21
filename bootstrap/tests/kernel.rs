@@ -23,6 +23,14 @@ pub const ONCE: &[Test] = &[
         the_kernel_works_a_loop_out_round_by_round_to_what_the_program_prints,
     ),
     (
+        "a_requires_over_arguments_written_out_is_proven_by_working_it_out",
+        a_requires_over_arguments_written_out_is_proven_by_working_it_out,
+    ),
+    (
+        "a_predicate_that_does_not_end_within_the_steps_fails_naming_the_call_and_the_limit",
+        a_predicate_that_does_not_end_within_the_steps_fails_naming_the_call_and_the_limit,
+    ),
+    (
         "a_run_past_its_steps_fails_and_the_steps_grow_with_what_it_works_out",
         a_run_past_its_steps_fails_and_the_steps_grow_with_what_it_works_out,
     ),
@@ -168,4 +176,68 @@ fn the_kernel_works_a_loop_out_round_by_round_to_what_the_program_prints() {
             }
         );
     });
+}
+
+#[derive(Debug)]
+struct Needs {
+    source: String,
+    holds: bool,
+    k: i128,
+}
+
+fn needs(g: &mut Gen) -> Needs {
+    let xs: Vec<i128> = (0..1 + g.below(5)).map(|_| g.below(6) as i128).collect();
+    let k = g.below(6) as i128;
+    let list = xs.iter().map(i128::to_string).collect::<Vec<_>>().join(", ");
+    Needs {
+        source: with_header(format!(
+            "fn has(xs: List[i32], k: i32) -> bool {{\n  var found = false\n  loop v in xs {{\n    if v == k {{\n      found = true\n      break\n    }}\n  }}\n  found\n}}\n\n\
+fn pick(xs: List[i32], k: i32) -> i32\n  requires has(xs, k)\n{{\n  k\n}}\n\n\
+fn main() ! console, alloc {{\n  print(\"{{pick([{list}], {k})}}\")\n}}\n"
+        )),
+        holds: xs.contains(&k),
+        k,
+    }
+}
+
+/// A call whose `requires` is a predicate with a loop, over arguments written
+/// out, compiles exactly when the kernel works the predicate out to `true`,
+/// and prints what the program printed without the contract.
+fn a_requires_over_arguments_written_out_is_proven_by_working_it_out() {
+    generate::check(132, 150, needs, |p| match smith::check(p.source.as_bytes()) {
+        Ok(_) => {
+            assert!(p.holds, "accepted, though the predicate is false");
+            assert_eq!(
+                outcome(&p.source),
+                Outcome {
+                    stdout: format!("{}\n", p.k).into_bytes(),
+                    status: 0
+                }
+            );
+        }
+        Err(errors) => {
+            assert!(!p.holds, "refused, though the predicate is true: {errors:?}");
+            assert!(
+                errors
+                    .iter()
+                    .any(|e| e.message.contains("is false") && e.message.contains("`has(")),
+                "{errors:?} does not say the call is false"
+            );
+        }
+    });
+}
+
+/// A predicate that goes on past the steps given fails the build with the call
+/// and the limit named, and never takes it for proven.
+fn a_predicate_that_does_not_end_within_the_steps_fails_naming_the_call_and_the_limit() {
+    let source = with_header(
+        "fn late(n: u64, k: u64) -> bool {\n  var found = false\n  loop i in 0..n {\n    if i == k {\n      found = true\n      break\n    }\n  }\n  found\n}\n\nfn go(n: u64, k: u64) -> u64\n  requires late(n, k)\n{\n  k\n}\n\nfn main() ! console, alloc {\n  print(\"{go(100000000000, 99999999999)}\")\n}\n"
+            .to_string(),
+    );
+    let errors = smith::check(source.as_bytes()).expect_err("refused");
+    let message = &errors[0].message;
+    assert!(
+        message.contains("late(100000000000, 99999999999)") && message.contains("1000000 steps"),
+        "{message}"
+    );
 }
