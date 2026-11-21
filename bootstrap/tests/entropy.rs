@@ -34,6 +34,42 @@ pub const ONCE: &[Test] = &[
     ),
 ];
 
+/// The tests whose result depends on the kind of machine they run on: an
+/// executable that asks the system for bytes is run by the machine it is for,
+/// so a change to how a target does it is tested on that machine.
+pub const MACHINE: &[Test] = &[(
+    "every_executable_for_this_machine_that_asks_for_entropy_prints_64_hex_digits_and_no_two_runs_print_the_same",
+    every_executable_for_this_machine_that_asks_for_entropy_prints_64_hex_digits_and_no_two_runs_print_the_same,
+)];
+
+/// For every target this machine runs that asks the system for bytes, 32 bytes
+/// are 64 hex digits and a line break, and two runs do not print the same.
+fn every_executable_for_this_machine_that_asks_for_entropy_prints_64_hex_digits_and_no_two_runs_print_the_same(
+) {
+    for target in targets::runnable()
+        .into_iter()
+        .filter(|t| t.is_machine_code() && t.answers_entropy())
+    {
+        let bytes = targets::build(DRAW.as_bytes(), target).unwrap_or_else(|e| panic!("{e:?}"));
+        if targets::fingerprinting() {
+            targets::record(target, &[&bytes]);
+            continue;
+        }
+        let lines: Vec<String> = (0..2)
+            .map(|_| {
+                let ran = targets::run(&bytes);
+                line(&aarch64::Ran {
+                    stdout: ran.stdout,
+                    stderr: Vec::new(),
+                    status: ran.status,
+                    steps: 0,
+                })
+            })
+            .collect();
+        assert_ne!(lines[0], lines[1], "{}", target.name());
+    }
+}
+
 /// A program that prints 32 bytes from `entropy` as hex, and what it prints
 /// after them, which a refusal must not reach.
 pub const DRAW: &str = "use std.console (console, print)\nuse std.entropy (entropy, fill)\nuse std.fmt (hex)\n\n\
