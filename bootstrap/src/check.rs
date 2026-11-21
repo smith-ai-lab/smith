@@ -2217,7 +2217,7 @@ fn check_file(
         items: reached,
         unbuilt,
         ..
-    } = reach(&file, (&names, &resolution), &roots, false);
+    } = reach(&file, (&names, &resolution), &roots, true);
     let reached_types: Vec<Def> = (reached.iter())
         .filter_map(|r| match r {
             Item::Struct(s) => Some(Def::Struct(*s)),
@@ -2375,6 +2375,7 @@ fn check_file(
         cross: Vec::new(),
         walking: Vec::new(),
         walked_calls: Vec::new(),
+        kernel_calls: Vec::new(),
         circles: Vec::new(),
     };
     checker.main(main);
@@ -2420,6 +2421,7 @@ fn check_file(
         template: Template::Free(start_at),
         args: Vec::new(),
     };
+    let kernel_calls = std::mem::take(&mut checker.kernel_calls);
     let typed = Typed {
         defs: &defs,
         types: checker.types,
@@ -2439,6 +2441,10 @@ fn check_file(
         &mut Set::default(),
         &mut errors,
     );
+    if !errors.is_empty() {
+        return Err(errors);
+    }
+    let errors = typed.prove_by_kernel(&kernel_calls);
     if !errors.is_empty() {
         return Err(errors);
     }
@@ -6224,6 +6230,9 @@ struct Checker<'a> {
     walked_calls: Vec<Pos>,
     /// The circles of functions already reported, each in order.
     circles: Vec<Vec<usize>>,
+    /// The calls whose `requires` the kernel works out when the program is
+    /// checked whole.
+    kernel_calls: Vec<proof::KernelCall>,
 }
 
 /// What is expected of an expression's value.
