@@ -21,6 +21,10 @@ pub const ONCE: &[Test] = &[
         the_core_term_of_a_function_of_structs_tuples_and_enums_gives_what_the_program_prints,
     ),
     (
+        "the_core_term_of_a_function_with_a_list_a_lambda_and_a_call_of_a_function_value_gives_what_the_program_prints",
+        the_core_term_of_a_function_with_a_list_a_lambda_and_a_call_of_a_function_value_gives_what_the_program_prints,
+    ),
+    (
         "a_sum_a_difference_and_a_product_are_calls_of_operators_with_the_exact_range",
         a_sum_a_difference_and_a_product_are_calls_of_operators_with_the_exact_range,
     ),
@@ -38,6 +42,8 @@ enum Value {
     Text(Vec<u8>),
     Parts(Vec<Value>),
     Case(usize, Vec<Value>),
+    /// A function written where it is used, with the names it was made among.
+    Closure(Vec<String>, Term, Vec<(String, Value)>),
 }
 
 fn int(v: &Value) -> i128 {
@@ -82,7 +88,24 @@ fn work_out(all: &[Function], t: &Term, env: &mut Vec<(String, Value)>) -> Value
         Kind::Make(Make::Struct(_) | Make::Tuple, args) => {
             Value::Parts(args.iter().map(|a| work_out(all, a, env)).collect())
         }
-        Kind::Make(Make::List, _) => panic!("a list"),
+        Kind::Make(Make::List, items) => {
+            Value::Parts(items.iter().map(|a| work_out(all, a, env)).collect())
+        }
+        Kind::Lambda { params, body } => Value::Closure(
+            params.iter().map(|(n, _)| n.clone()).collect(),
+            (**body).clone(),
+            env.clone(),
+        ),
+        Kind::Apply { function, args } => {
+            let Value::Closure(names, body, mut held) = work_out(all, function, env) else {
+                panic!("a function")
+            };
+            for (n, a) in names.iter().zip(args) {
+                let v = work_out(all, a, env);
+                held.push((n.clone(), v));
+            }
+            work_out(all, &body, &mut held)
+        }
         Kind::Field { of, index, .. } => match work_out(all, of, env) {
             Value::Parts(parts) => parts[*index].clone(),
             other => panic!("{other:?} has no fields"),
@@ -323,6 +346,48 @@ fn the_core_term_of_a_function_of_structs_tuples_and_enums_gives_what_the_progra
             ("a".to_string(), Value::Int(p.a)),
             ("b".to_string(), Value::Int(p.b)),
         ];
+        let got = int(&work_out(&all, &f.body, &mut env));
+        assert_eq!(
+            outcome(&p.source),
+            Outcome {
+                stdout: format!("{got}\n").into_bytes(),
+                status: 0
+            }
+        );
+    });
+}
+
+#[derive(Debug)]
+struct Lambdas {
+    source: String,
+    a: i128,
+}
+
+fn lambdas(g: &mut Gen) -> Lambdas {
+    let a = number(g);
+    let (lo, hi) = (number(g), number(g));
+    let (lo, hi) = (lo.min(hi), lo.max(hi));
+    let order = ["<", "<=", ">", ">=", "=="][g.below(5)];
+    let pivot = number(g);
+    Lambdas {
+        source: with_header(format!(
+            "fn twice(f: fn(i32) -> i32, x: i32) -> i32 {{ f(f(x)) }}\n\n\
+fn f(a: i32) -> i32 ! alloc {{\n  xs: List[i32] = [a, {lo}, {hi}]\n  twice(fn(v) {{ if v {order} {pivot} {{ {lo} }} else if v > {hi} {{ {hi} }} else {{ v }} }}, a)\n}}\n\n\
+fn main() ! console, alloc {{\n  print(\"{{f({a})}}\")\n}}\n"
+        )),
+        a,
+    }
+}
+
+/// For every function that holds a list, writes a lambda, and calls a function
+/// that is a value, the term is worked out to what the program prints.
+fn the_core_term_of_a_function_with_a_list_a_lambda_and_a_call_of_a_function_value_gives_what_the_program_prints() {
+    generate::check(122, 150, lambdas, |p| {
+        let Ok(all) = core_terms(p.source.as_bytes()) else {
+            return;
+        };
+        let f = all.iter().find(|f| f.name == "f").expect("a term for f");
+        let mut env = vec![("a".to_string(), Value::Int(p.a))];
         let got = int(&work_out(&all, &f.body, &mut env));
         assert_eq!(
             outcome(&p.source),
