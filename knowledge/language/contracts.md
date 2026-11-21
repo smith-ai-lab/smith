@@ -139,7 +139,7 @@ fn pick(xs: List[i32], k: i32) -> i32
 fn main() ! console, alloc { print("{pick([1, 2, 3], 2)}") }
 ```
 
-`pick([1, 2, 3], 2)` is `2`. With `5` in place of `2` it is refused: "`has([1, 2, 3], 5)` is false, and the last comparison it made was `3 == 5` is false". The message says where the answer came from: the comparison that gave `false` and the numbers it compared. A predicate that does not end within 1000000 steps is refused with the call and the limit named, and is never taken as proven. An argument that is not written out leaves the call to a `check`, as any `requires` that is not proven.
+`pick([1, 2, 3], 2)` is `2`. With `5` in place of `2` it is refused: "`has([1, 2, 3], 5)` is false: its last comparison, `3 == 5` at 7:8, was false". The message says where the answer came from: the comparison that gave `false` and the numbers it compared. A predicate that does not end within 1000000 steps is refused with the call and the limit named, and is never taken as proven. An argument that is not written out leaves the call to a `check`, as any `requires` that is not proven.
 
 ## A function used as a value
 

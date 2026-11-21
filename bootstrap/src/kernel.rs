@@ -27,7 +27,17 @@ pub enum Value {
 #[derive(Clone, Debug, PartialEq)]
 pub struct Why {
     pub pos: Pos,
-    pub text: String,
+    /// The comparison with the numbers it compared, as `9 < 3`.
+    pub comparison: String,
+    /// Whether it held.
+    pub holds: bool,
+}
+
+impl Why {
+    /// What it says: `9 < 3` is false.
+    pub fn text(&self) -> String {
+        format!("`{}` is {}", self.comparison, self.holds)
+    }
 }
 
 /// What stopped a run.
@@ -109,6 +119,38 @@ impl<'a> Machine<'a> {
                 other => Err(Failure::Stuck(format!("{other:?} has no fields"))),
             },
             Kind::Call {
+                callee: Callee::Operator(op @ (Operator::Size | Operator::Bytes)),
+                args,
+            } => {
+                let of = self.work(&args[0], env)?.0;
+                match (op, of) {
+                    (Operator::Size, Value::Text(t)) => plain(Value::Int(t.len() as i128)),
+                    (Operator::Size, Value::Parts(p)) => plain(Value::Int(p.len() as i128)),
+                    (Operator::Bytes, Value::Text(t)) => plain(Value::Parts(
+                        t.iter().map(|b| Value::Int(*b as i128)).collect(),
+                    )),
+                    (op, other) => Err(Failure::Stuck(format!("`{}` of {other:?}", op.symbol()))),
+                }
+            }
+            Kind::Call {
+                callee: Callee::Operator(Operator::Index),
+                args,
+            } => {
+                let (of, at) = (self.work(&args[0], env)?.0, self.work(&args[1], env)?.0);
+                match (of, at) {
+                    (Value::Parts(items), Value::Int(i)) => {
+                        match usize::try_from(i).ok().and_then(|i| items.get(i)) {
+                            Some(item) => plain(item.clone()),
+                            None => Err(Failure::Stuck(format!(
+                                "an index {i} of a list of {}",
+                                items.len()
+                            ))),
+                        }
+                    }
+                    other => Err(Failure::Stuck(format!("an index of {other:?}"))),
+                }
+            }
+            Kind::Call {
                 callee: Callee::Operator(op),
                 args,
             } => {
@@ -123,7 +165,8 @@ impl<'a> Machine<'a> {
                 let mut truth = |b: bool| {
                     let why = Why {
                         pos: t.pos,
-                        text: format!("`{x} {} {y}` is {b}", op.symbol()),
+                        comparison: format!("{x} {} {y}", op.symbol()),
+                        holds: b,
                     };
                     self.last = Some(why.clone());
                     Ok((Value::Case(usize::from(b), Vec::new()), Some(why)))
@@ -137,6 +180,9 @@ impl<'a> Machine<'a> {
                     Operator::Greater => truth(x > y),
                     Operator::GreaterEqual => truth(x >= y),
                     Operator::Equal => truth(x == y),
+                    Operator::Index | Operator::Size | Operator::Bytes => {
+                        unreachable!("worked out above")
+                    }
                 }
             }
             Kind::Call {
@@ -217,6 +263,10 @@ impl<'a> Machine<'a> {
             },
             Source::Over(of) => match self.work(of, env)?.0 {
                 Value::Parts(items) => (0, items.len() as i128, Some(items)),
+                Value::Text(text) => {
+                    let bytes: Vec<Value> = text.iter().map(|b| Value::Int(*b as i128)).collect();
+                    (0, bytes.len() as i128, Some(bytes))
+                }
                 other => return Err(Failure::Stuck(format!("a loop over {other:?}"))),
             },
             Source::Open => (0, i128::MAX, None),

@@ -23,6 +23,10 @@ pub const ONCE: &[Test] = &[
         the_kernel_works_a_loop_out_round_by_round_to_what_the_program_prints,
     ),
     (
+        "the_kernel_works_out_the_size_an_index_the_bytes_and_a_loop_over_a_text",
+        the_kernel_works_out_the_size_an_index_the_bytes_and_a_loop_over_a_text,
+    ),
+    (
         "a_requires_over_arguments_written_out_is_proven_by_working_it_out",
         a_requires_over_arguments_written_out_is_proven_by_working_it_out,
     ),
@@ -106,19 +110,19 @@ fn a_false_comparison_is_reported_where_it_is_written_with_the_numbers_it_compar
     let (v, w) = why(source, "inside", vec![9, 3]);
     assert_eq!(v, Value::Case(0, vec![]));
     let w = w.expect("a reason");
-    assert_eq!(w.text, "`9 < 3` is false");
+    assert_eq!(w.text(), "`9 < 3` is false");
     assert_eq!(w.pos.line, 1 + 3, "the comparison is on the fourth line, after the header");
     // The second side of an `and` is what made it false, with its own numbers.
     let (v, w) = why(source, "both", vec![1, 200]);
     assert_eq!(v, Value::Case(0, vec![]));
-    assert_eq!(w.expect("a reason").text, "`200 < 100` is false");
+    assert_eq!(w.expect("a reason").text(), "`200 < 100` is false");
     // The first side is, when it is.
     let (_, w) = why(source, "both", vec![5, 3]);
-    assert_eq!(w.expect("a reason").text, "`5 < 3` is false");
+    assert_eq!(w.expect("a reason").text(), "`5 < 3` is false");
     // A `not` of a comparison that is true is false because of it.
     let (v, w) = why(source, "neither", vec![1, 2]);
     assert_eq!(v, Value::Case(0, vec![]));
-    assert_eq!(w.expect("a reason").text, "`1 < 2` is true");
+    assert_eq!(w.expect("a reason").text(), "`1 < 2` is true");
 }
 
 #[derive(Debug)]
@@ -240,4 +244,66 @@ fn a_predicate_that_does_not_end_within_the_steps_fails_naming_the_call_and_the_
         message.contains("late(100000000000, 99999999999)") && message.contains("1000000 steps"),
         "{message}"
     );
+}
+
+#[derive(Debug)]
+struct Texts {
+    source: String,
+    text: Vec<u8>,
+    xs: Vec<i128>,
+    k: i128,
+    byte: u8,
+}
+
+fn texts(g: &mut Gen) -> Texts {
+    let text: Vec<u8> = (0..g.below(6)).map(|_| b'a' + g.below(4) as u8).collect();
+    let xs: Vec<i128> = (0..g.below(6)).map(|_| g.below(5) as i128).collect();
+    let (k, byte) = (g.below(5) as i128, b'a' + g.below(4) as u8);
+    let list = xs.iter().map(i128::to_string).collect::<Vec<_>>().join(", ");
+    let word = String::from_utf8(text.clone()).expect("ascii");
+    Texts {
+        source: with_header(format!(
+            "fn first_index(xs: List[i32], k: i32) -> u64 {{\n  var hit: u64 = 0\n  loop i in 0..xs.size {{\n    if xs[i] == k {{\n      hit = i\n      break\n    }}\n  }}\n  hit\n}}\n\n\
+fn has_byte(t: str, b: Byte) -> bool {{\n  var found = false\n  loop c in t {{\n    if c == b {{\n      found = true\n      break\n    }}\n  }}\n  found\n}}\n\n\
+fn length(t: str) -> u64 {{ t.size }}\n\n\
+fn main() ! console, alloc {{\n  xs: List[i32] = [{list}]\n  word = \"{word}\"\n  print(\"{{first_index(xs, {k})}} {{has_byte(word, {byte})}} {{length(word)}}\")\n}}\n"
+        )),
+        text,
+        xs,
+        k,
+        byte,
+    }
+}
+
+/// For every list searched by index, text searched by byte, and text measured,
+/// the kernel gives what the program prints.
+fn the_kernel_works_out_the_size_an_index_the_bytes_and_a_loop_over_a_text() {
+    generate::check(133, 150, texts, |p| {
+        let all = core_terms(p.source.as_bytes()).unwrap_or_else(|e| panic!("{e:?}"));
+        let term = |name: &str| all.iter().find(|f| f.name == name).expect("a term").place;
+        let mut machine = Machine::new(&all, 1_000_000);
+        let list = Value::Parts(p.xs.iter().map(|x| Value::Int(*x)).collect());
+        let (hit, _) = machine
+            .call(term("first_index"), vec![list, Value::Int(p.k)])
+            .expect("worked out");
+        let (found, _) = machine
+            .call(
+                term("has_byte"),
+                vec![Value::Text(p.text.clone()), Value::Int(p.byte as i128)],
+            )
+            .expect("worked out");
+        let (len, _) = machine
+            .call(term("length"), vec![Value::Text(p.text.clone())])
+            .expect("worked out");
+        let (Value::Int(hit), Value::Case(found, _), Value::Int(len)) = (hit, found, len) else {
+            panic!("values")
+        };
+        assert_eq!(
+            outcome(&p.source),
+            Outcome {
+                stdout: format!("{hit} {} {len}\n", found == 1).into_bytes(),
+                status: 0
+            }
+        );
+    });
 }

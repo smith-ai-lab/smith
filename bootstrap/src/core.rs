@@ -86,6 +86,13 @@ pub enum Operator {
     Greater,
     GreaterEqual,
     Equal,
+    /// `xs[i]`, the element of a list or a slice at a place.
+    Index,
+    /// `xs.size`, how many elements a list, a slice, or a text has, which a
+    /// text counts in bytes.
+    Size,
+    /// `t.bytes`, the bytes of a text, as a slice.
+    Bytes,
 }
 
 impl Operator {
@@ -100,6 +107,9 @@ impl Operator {
             Operator::Greater => ">",
             Operator::GreaterEqual => ">=",
             Operator::Equal => "==",
+            Operator::Index => "[]",
+            Operator::Size => "size",
+            Operator::Bytes => "bytes",
         }
     }
 }

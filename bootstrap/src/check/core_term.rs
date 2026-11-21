@@ -396,6 +396,17 @@ impl<'a> Typed<'a> {
                 Some(Term::new(Kind::Make(Make::List, items?), ty, *pos))
             }
             Expr::Lambda(l) => self.core_lambda(l, ty),
+            Expr::Index { of, index, pos } => {
+                let (of, index) = (self.core_expr(of)?, self.core_expr(index)?);
+                Some(Term::new(
+                    Kind::Call {
+                        callee: Callee::Operator(Operator::Index),
+                        args: vec![of, index],
+                    },
+                    ty,
+                    *pos,
+                ))
+            }
             _ => None,
         }
     }
@@ -561,6 +572,25 @@ impl<'a> Typed<'a> {
             return self.core_case(name, pos, None, ty);
         }
         let of_term = self.core_expr(of)?;
+        if matches!(
+            of_term.ty,
+            core::Type::List(_) | core::Type::Slice(_) | core::Type::Text
+        ) && matches!(name, "size" | "bytes")
+        {
+            let op = if name == "size" {
+                Operator::Size
+            } else {
+                Operator::Bytes
+            };
+            return Some(Term::new(
+                Kind::Call {
+                    callee: Callee::Operator(op),
+                    args: vec![of_term],
+                },
+                ty,
+                pos,
+            ));
+        }
         let index = match &of_term.ty {
             core::Type::Struct(s, _) => self.defs.file.structs[*s]
                 .fields
@@ -745,13 +775,17 @@ impl<'a> Typed<'a> {
                 Ok((crate::kernel::Value::Case(1, _), _)) => continue,
                 Ok((_, why)) => match why {
                     Some(why) => format!(
-                        "`{}` is false: {}, at {}:{}",
-                        pending.written, why.text, why.pos.line, why.pos.col
+                        "`{}` is false: `{}` at {}:{} was {}",
+                        pending.written, why.comparison, why.pos.line, why.pos.col, why.holds
                     ),
                     None => match machine.last_comparison() {
                         Some(last) => format!(
-                            "`{}` is false, and the last comparison it made was {}, at {}:{}",
-                            pending.written, last.text, last.pos.line, last.pos.col
+                            "`{}` is false: its last comparison, `{}` at {}:{}, was {}",
+                            pending.written,
+                            last.comparison,
+                            last.pos.line,
+                            last.pos.col,
+                            last.holds
                         ),
                         None => format!("`{}` is false", pending.written),
                     },

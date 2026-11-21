@@ -1,4 +1,4 @@
-requires_works_out_false.smith:22:11: `has([1, 2, 3], 5)` is false, and the last comparison it made was `3 == 5` is false, at 7:8
+requires_works_out_false.smith:22:11: `has([1, 2, 3], 5)` is false: its last comparison, `3 == 5` at 7:8, was false
   22 |   print("{pick([1, 2, 3], 5)}")
      |           ^
   fix: check the arguments first with an `if`, or state it in a `requires`
