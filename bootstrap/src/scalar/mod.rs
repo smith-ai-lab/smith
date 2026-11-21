@@ -30,6 +30,7 @@ mod sink;
 mod tail;
 mod thread;
 mod trim;
+mod unfuse;
 mod vector;
 mod wellformed;
 mod words;
@@ -50,6 +51,7 @@ pub use ryu::tables as ryu_tables;
 pub use tail::tail;
 pub use thread::thread;
 pub use trim::trim;
+pub use unfuse::unfuse;
 pub use wellformed::{Malformed, Why, check};
 
 /// The passes over a program in the scalar form, in the order they run:
