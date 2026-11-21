@@ -14,6 +14,7 @@ use smith::target::Target;
 
 use crate::Test;
 use crate::cli;
+use crate::sha256;
 use crate::targets;
 
 pub const ONCE: &[Test] = &[
@@ -32,6 +33,18 @@ pub const ONCE: &[Test] = &[
     (
         "nothing_known_of_a_compiler_needs_every_machine",
         nothing_known_of_a_compiler_needs_every_machine,
+    ),
+    (
+        "the_fingerprint_of_a_test_that_builds_floats_has_a_hash_of_something_only_for_the_targets_that_build_them",
+        the_fingerprint_of_a_test_that_builds_floats_has_a_hash_of_something_only_for_the_targets_that_build_them,
+    ),
+    (
+        "the_fingerprint_of_a_compiler_is_not_empty_for_any_target_and_is_the_same_twice",
+        the_fingerprint_of_a_compiler_is_not_empty_for_any_target_and_is_the_same_twice,
+    ),
+    (
+        "a_fingerprint_that_cannot_be_made_fails_and_says_why_and_one_that_can_is_printed",
+        a_fingerprint_that_cannot_be_made_fails_and_says_why_and_one_that_can_is_printed,
     ),
 ];
 
@@ -200,4 +213,92 @@ fn nothing_known_of_a_compiler_needs_every_machine() {
     assert_eq!(needs("", &known), every);
     assert_eq!(needs(&known, ""), every);
     assert_eq!(needs("", ""), every);
+}
+
+/// The test of floats that was fingerprinted for a target that does not build
+/// them. The fingerprint of the whole group takes half a minute, and a test of
+/// it would not be one.
+fn the_fingerprint_of_a_test_that_builds_floats_has_a_hash_of_something_only_for_the_targets_that_build_them()
+{
+    let nothing = sha256::hex(b"");
+    let fingerprint = targets::fingerprint(crate::float_fused::MACHINE, built);
+    assert_eq!(fingerprint.len(), Target::ALL.len());
+    for (target, hash) in &fingerprint {
+        // A target that builds floats has something fingerprinted. One that
+        // does not build them has nothing from this test, and its hash is that
+        // of nothing, and the test did not stop for it.
+        assert_eq!(
+            *hash == nothing,
+            !target.builds_floats(),
+            "{}: {hash}",
+            target.name()
+        );
+    }
+}
+
+/// The fingerprint of the compiler is not that of nothing for any target, and
+/// is the same when it is made again.
+fn the_fingerprint_of_a_compiler_is_not_empty_for_any_target_and_is_the_same_twice() {
+    let nothing = sha256::hex(b"");
+    let once = fingerprint_of_the_compiler();
+    let twice = fingerprint(built);
+    assert_eq!(once, twice.as_slice());
+    for (target, hash) in once {
+        assert_ne!(*hash, nothing, "{}", target.name());
+    }
+}
+
+/// What `fingerprint.sh` does with a `cargo` that does as `script` says, in a
+/// folder that has a `bootstrap` in it: whether it succeeded, what it printed,
+/// and what it said.
+fn fingerprint_script(script: &str) -> (bool, String, String) {
+    let dir = crate::scratch::path("fingerprint");
+    std::fs::create_dir_all(dir.join("bootstrap")).unwrap();
+    std::fs::create_dir_all(dir.join("bin")).unwrap();
+    std::fs::write(dir.join("bin/cargo"), format!("#!/bin/sh\n{script}\n")).unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let cargo = dir.join("bin/cargo");
+        std::fs::set_permissions(&cargo, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    let path = format!(
+        "{}:{}",
+        dir.join("bin").display(),
+        std::env::var("PATH").unwrap_or_default()
+    );
+    let output = crate::clock::output_within(
+        Command::new("sh")
+            .arg(github().join("fingerprint.sh"))
+            .arg(&dir)
+            .env("PATH", path),
+        true,
+    )
+    .unwrap();
+    std::fs::remove_dir_all(&dir).unwrap();
+    (
+        output.status.success(),
+        String::from_utf8(output.stdout).unwrap(),
+        String::from_utf8(output.stderr).unwrap(),
+    )
+}
+
+fn a_fingerprint_that_cannot_be_made_fails_and_says_why_and_one_that_can_is_printed() {
+    // A script that is a file to run is a thing of the machines that have `sh`.
+    if !cfg!(unix) {
+        return;
+    }
+    let line = format!("{} {}", Target::ALL[0].name(), "ab".repeat(32));
+    let (ok, out, err) = fingerprint_script(&format!("echo '{line}'"));
+    assert!((ok, out.as_str()) == (true, format!("{line}\n").as_str()), "{err}");
+    // A run that ends in failure, as one that panics does.
+    let (ok, out, err) = fingerprint_script("echo 'the property fails for the program' >&2\nexit 101");
+    assert!(!ok && out.is_empty(), "{out}");
+    assert!(err.contains("cannot be made"), "{err}");
+    assert!(err.contains("the property fails for the program"), "{err}");
+    // A run that ends well and gives no line of a fingerprint.
+    let (ok, _, err) = fingerprint_script("echo 'nothing of the kind'");
+    assert!(!ok);
+    assert!(err.contains("gave no line of a fingerprint"), "{err}");
+    assert!(err.contains("nothing of the kind"), "{err}");
 }
