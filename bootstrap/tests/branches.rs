@@ -17,8 +17,36 @@ pub const ONCE: &[Test] = &[
         a_comparison_that_only_a_branch_reads_is_one_compare_and_one_branch,
     ),
     (
-        "a_choice_of_a_block_more_than_1_mb_away_goes_there",
-        a_choice_of_a_block_more_than_1_mb_away_goes_there,
+        "a_choice_of_a_block_more_than_1_mb_away_goes_there_part_1_of_7",
+        || a_choice_of_a_block_more_than_1_mb_away_goes_there(Target::ALL[0]),
+    ),
+    (
+        "a_choice_of_a_block_more_than_1_mb_away_goes_there_part_2_of_7",
+        || a_choice_of_a_block_more_than_1_mb_away_goes_there(Target::ALL[1]),
+    ),
+    (
+        "a_choice_of_a_block_more_than_1_mb_away_goes_there_part_3_of_7",
+        || a_choice_of_a_block_more_than_1_mb_away_goes_there(Target::ALL[2]),
+    ),
+    (
+        "a_choice_of_a_block_more_than_1_mb_away_goes_there_part_4_of_7",
+        || a_choice_of_a_block_more_than_1_mb_away_goes_there(Target::ALL[3]),
+    ),
+    (
+        "a_choice_of_a_block_more_than_1_mb_away_goes_there_part_5_of_7",
+        || a_choice_of_a_block_more_than_1_mb_away_goes_there(Target::ALL[4]),
+    ),
+    (
+        "a_choice_of_a_block_more_than_1_mb_away_goes_there_part_6_of_7",
+        || a_choice_of_a_block_more_than_1_mb_away_goes_there(Target::ALL[5]),
+    ),
+    (
+        "a_choice_of_a_block_more_than_1_mb_away_goes_there_part_7_of_7",
+        || a_choice_of_a_block_more_than_1_mb_away_goes_there(Target::ALL[6]),
+    ),
+    (
+        "every_target_has_a_part_of_the_choice_more_than_1_mb_away",
+        every_target_has_a_part_of_the_choice_more_than_1_mb_away,
     ),
     (
         "a_push_that_has_room_is_20_instructions_or_fewer_in_a_loop_on_x86_64",
@@ -128,50 +156,69 @@ fn a_push_that_has_room_is_20_instructions_or_fewer_in_a_loop_on_x86_64() {
 /// after it, which asks for memory, so that the branch to the last block is longer than the 1 MB a
 /// conditional branch of arm64 reaches. It ends with the status of the block
 /// the choice went to.
-fn a_choice_of_a_block_more_than_1_mb_away_goes_there() {
+fn far_choice() -> scalar::Program {
     let long = Type::Int(Bits::B64);
-    {
-        let mut b = Builder::new();
-        let (padding, _) = b.block(&[]);
-        let (end, _) = b.block(&[]);
-        let seven = b.int(Bits::B64, 7);
-        let said = b.int(Bits::B64, 7);
-        let same = b.compare(Compare::Equal, seven, said);
-        b.switch(same, vec![(padding, vec![]), (end, vec![])]);
-        b.at(padding);
-        let mut v = b.emit(Op::Constant(smith::scalar::Constant::Int(1)), &[long])[0];
-        for _ in 0..60_000 {
-            let n = b.int(Bits::B64, 0x1234_5678_9abc_def0);
-            v = b.binary(smith::scalar::Binary::Add, v, n);
-        }
-        let status = b.int(Bits::B8, 4);
-        b.exit(status);
-        b.ret(vec![]);
-        b.at(end);
-        // A request for memory branches back to the code that ends the
-        // program when it is refused, which is more than 1 MB behind.
-        let eight = b.int(Bits::B64, 8);
-        b.allocate(eight);
-        let status = b.int(Bits::B8, 3);
-        b.exit(status);
-        b.ret(vec![]);
-        let program = scalar::Program {
-            data: Vec::new(),
-            functions: vec![b.finish(&[])],
-            main: 0,
-        };
-        assert_eq!(scalar::check(&program), Ok(()));
-        let said = scalar::run(&program);
-        assert_eq!(said.status, 3);
-        let mut ran = 0;
-        for target in Target::ALL {
-            let bytes = target.emit(&program);
-            if aarch64::is_executable(&bytes) {
-                ran += 1;
-                assert!(bytes.len() > 1 << 20, "the choice is closer than 1 MB");
-                assert_eq!(aarch64::run(&bytes).status, said.status);
-            }
-        }
-        assert!(ran > 0, "no target is built for arm64");
+    let mut b = Builder::new();
+    let (padding, _) = b.block(&[]);
+    let (end, _) = b.block(&[]);
+    let seven = b.int(Bits::B64, 7);
+    let said = b.int(Bits::B64, 7);
+    let same = b.compare(Compare::Equal, seven, said);
+    b.switch(same, vec![(padding, vec![]), (end, vec![])]);
+    b.at(padding);
+    let mut v = b.emit(Op::Constant(smith::scalar::Constant::Int(1)), &[long])[0];
+    for _ in 0..60_000 {
+        let n = b.int(Bits::B64, 0x1234_5678_9abc_def0);
+        v = b.binary(smith::scalar::Binary::Add, v, n);
     }
+    let status = b.int(Bits::B8, 4);
+    b.exit(status);
+    b.ret(vec![]);
+    b.at(end);
+    // A request for memory branches back to the code that ends the
+    // program when it is refused, which is more than 1 MB behind.
+    let eight = b.int(Bits::B64, 8);
+    b.allocate(eight);
+    let status = b.int(Bits::B8, 3);
+    b.exit(status);
+    b.ret(vec![]);
+    let program = scalar::Program {
+        data: Vec::new(),
+        functions: vec![b.finish(&[])],
+        main: 0,
+    };
+    assert_eq!(scalar::check(&program), Ok(()));
+    program
+}
+
+/// What one target writes for the far choice: where it is an executable for
+/// arm64, it is more than 1 MB long and ends with the status of the block the
+/// choice went to.
+/// Whether the target writes an executable for arm64.
+fn far_choice_on(target: Target) -> bool {
+    let program = far_choice();
+    let said = scalar::run(&program);
+    assert_eq!(said.status, 3);
+    let bytes = target.emit(&program);
+    let arm64 = aarch64::is_executable(&bytes);
+    if arm64 {
+        assert!(bytes.len() > 1 << 20, "the choice is closer than 1 MB");
+        assert_eq!(aarch64::run(&bytes).status, said.status);
+    }
+    arm64
+}
+
+fn a_choice_of_a_block_more_than_1_mb_away_goes_there(target: Target) {
+    far_choice_on(target);
+}
+
+/// A target that is added has a part of the far choice of its own, as the
+/// parts are one for each target.
+fn every_target_has_a_part_of_the_choice_more_than_1_mb_away() {
+    assert_eq!(Target::ALL.len(), 7, "a target has no part, or a part has no target");
+    // One target is an executable for arm64 that can be run here.
+    assert!(
+        Target::ALL.iter().copied().any(far_choice_on),
+        "no target is built for arm64"
+    );
 }

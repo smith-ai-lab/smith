@@ -14,37 +14,117 @@ use crate::generate::{self, Gen};
 use crate::scalar::every_function;
 
 pub const ONCE: &[Test] = &[
-    (
-        "no_two_values_alive_together_share_a_home",
-        no_two_values_alive_together_share_a_home,
+        (
+        "no_two_values_alive_together_share_a_home_part_1_of_4",
+        || no_two_values_alive_together_share_a_home(0),
     ),
     (
-        "no_value_alive_across_a_call_is_in_a_register_the_call_may_change",
-        no_value_alive_across_a_call_is_in_a_register_the_call_may_change,
+        "no_two_values_alive_together_share_a_home_part_2_of_4",
+        || no_two_values_alive_together_share_a_home(1),
     ),
     (
-        "a_function_that_calls_nothing_and_fits_the_registers_keeps_everything_in_them",
-        a_function_that_calls_nothing_and_fits_the_registers_keeps_everything_in_them,
+        "no_two_values_alive_together_share_a_home_part_3_of_4",
+        || no_two_values_alive_together_share_a_home(2),
     ),
     (
-        "a_function_that_calls_nothing_and_has_a_loop_keeps_everything_in_registers_when_the_chip_has_enough",
-        a_function_that_calls_nothing_and_has_a_loop_keeps_everything_in_registers_when_the_chip_has_enough,
+        "no_two_values_alive_together_share_a_home_part_4_of_4",
+        || no_two_values_alive_together_share_a_home(3),
+    ),
+        (
+        "no_value_alive_across_a_call_is_in_a_register_the_call_may_change_part_1_of_4",
+        || no_value_alive_across_a_call_is_in_a_register_the_call_may_change(0),
     ),
     (
-        "a_function_saves_the_registers_a_call_does_not_change_that_it_uses_and_no_others",
-        a_function_saves_the_registers_a_call_does_not_change_that_it_uses_and_no_others,
+        "no_value_alive_across_a_call_is_in_a_register_the_call_may_change_part_2_of_4",
+        || no_value_alive_across_a_call_is_in_a_register_the_call_may_change(1),
     ),
     (
-        "a_parameter_that_arrives_in_a_register_stays_there_when_it_may",
-        a_parameter_that_arrives_in_a_register_stays_there_when_it_may,
+        "no_value_alive_across_a_call_is_in_a_register_the_call_may_change_part_3_of_4",
+        || no_value_alive_across_a_call_is_in_a_register_the_call_may_change(2),
     ),
     (
-        "allocating_twice_gives_the_same_homes_part_1_of_2",
+        "no_value_alive_across_a_call_is_in_a_register_the_call_may_change_part_4_of_4",
+        || no_value_alive_across_a_call_is_in_a_register_the_call_may_change(3),
+    ),
+        (
+        "a_function_that_calls_nothing_and_fits_the_registers_keeps_everything_in_them_part_1_of_4",
+        || a_function_that_calls_nothing_and_fits_the_registers_keeps_everything_in_them(0),
+    ),
+    (
+        "a_function_that_calls_nothing_and_fits_the_registers_keeps_everything_in_them_part_2_of_4",
+        || a_function_that_calls_nothing_and_fits_the_registers_keeps_everything_in_them(1),
+    ),
+    (
+        "a_function_that_calls_nothing_and_fits_the_registers_keeps_everything_in_them_part_3_of_4",
+        || a_function_that_calls_nothing_and_fits_the_registers_keeps_everything_in_them(2),
+    ),
+    (
+        "a_function_that_calls_nothing_and_fits_the_registers_keeps_everything_in_them_part_4_of_4",
+        || a_function_that_calls_nothing_and_fits_the_registers_keeps_everything_in_them(3),
+    ),
+        (
+        "a_function_that_calls_nothing_and_has_a_loop_keeps_everything_in_registers_when_the_chip_has_enough_part_1_of_4",
+        || a_function_that_calls_nothing_and_has_a_loop_keeps_everything_in_registers_when_the_chip_has_enough(0),
+    ),
+    (
+        "a_function_that_calls_nothing_and_has_a_loop_keeps_everything_in_registers_when_the_chip_has_enough_part_2_of_4",
+        || a_function_that_calls_nothing_and_has_a_loop_keeps_everything_in_registers_when_the_chip_has_enough(1),
+    ),
+    (
+        "a_function_that_calls_nothing_and_has_a_loop_keeps_everything_in_registers_when_the_chip_has_enough_part_3_of_4",
+        || a_function_that_calls_nothing_and_has_a_loop_keeps_everything_in_registers_when_the_chip_has_enough(2),
+    ),
+    (
+        "a_function_that_calls_nothing_and_has_a_loop_keeps_everything_in_registers_when_the_chip_has_enough_part_4_of_4",
+        || a_function_that_calls_nothing_and_has_a_loop_keeps_everything_in_registers_when_the_chip_has_enough(3),
+    ),
+        (
+        "a_function_saves_the_registers_a_call_does_not_change_that_it_uses_and_no_others_part_1_of_4",
+        || a_function_saves_the_registers_a_call_does_not_change_that_it_uses_and_no_others(0),
+    ),
+    (
+        "a_function_saves_the_registers_a_call_does_not_change_that_it_uses_and_no_others_part_2_of_4",
+        || a_function_saves_the_registers_a_call_does_not_change_that_it_uses_and_no_others(1),
+    ),
+    (
+        "a_function_saves_the_registers_a_call_does_not_change_that_it_uses_and_no_others_part_3_of_4",
+        || a_function_saves_the_registers_a_call_does_not_change_that_it_uses_and_no_others(2),
+    ),
+    (
+        "a_function_saves_the_registers_a_call_does_not_change_that_it_uses_and_no_others_part_4_of_4",
+        || a_function_saves_the_registers_a_call_does_not_change_that_it_uses_and_no_others(3),
+    ),
+        (
+        "a_parameter_that_arrives_in_a_register_stays_there_when_it_may_part_1_of_4",
+        || a_parameter_that_arrives_in_a_register_stays_there_when_it_may(0),
+    ),
+    (
+        "a_parameter_that_arrives_in_a_register_stays_there_when_it_may_part_2_of_4",
+        || a_parameter_that_arrives_in_a_register_stays_there_when_it_may(1),
+    ),
+    (
+        "a_parameter_that_arrives_in_a_register_stays_there_when_it_may_part_3_of_4",
+        || a_parameter_that_arrives_in_a_register_stays_there_when_it_may(2),
+    ),
+    (
+        "a_parameter_that_arrives_in_a_register_stays_there_when_it_may_part_4_of_4",
+        || a_parameter_that_arrives_in_a_register_stays_there_when_it_may(3),
+    ),
+    (
+        "allocating_twice_gives_the_same_homes_part_1_of_4",
         || allocating_twice_gives_the_same_homes(0),
     ),
     (
-        "allocating_twice_gives_the_same_homes_part_2_of_2",
+        "allocating_twice_gives_the_same_homes_part_2_of_4",
         || allocating_twice_gives_the_same_homes(1),
+    ),
+    (
+        "allocating_twice_gives_the_same_homes_part_3_of_4",
+        || allocating_twice_gives_the_same_homes(2),
+    ),
+    (
+        "allocating_twice_gives_the_same_homes_part_4_of_4",
+        || allocating_twice_gives_the_same_homes(3),
     ),
     (
         "copying_as_if_all_at_once_leaves_every_place_with_what_it_was_to_get",
@@ -215,15 +295,29 @@ struct Case {
     allocation: Allocation,
 }
 
-/// Every function of every generated program and every function built,
-/// with every set of registers offered, allocated once for all the tests.
-fn cases() -> &'static [Case] {
-    static CASES: OnceLock<Vec<Case>> = OnceLock::new();
-    CASES.get_or_init(|| {
+/// How many parts the functions are in, which the names of the tests say: a
+/// part is the functions that many places from its own, so that every function
+/// is in one part, and the work of allocating them is shared by the parts and
+/// not paid by the one that is run first.
+const PARTS: usize = 4;
+
+/// Every function of every generated program and every function built.
+fn functions() -> &'static [Function] {
+    static FUNCTIONS: OnceLock<Vec<Function>> = OnceLock::new();
+    FUNCTIONS.get_or_init(|| {
         let mut functions: Vec<Function> = every_function().into_iter().cloned().collect();
         functions.extend(generated_functions());
+        functions
+    })
+}
+
+/// The functions of a part, with every set of registers offered, allocated
+/// once for all the tests of the part.
+fn cases(part: usize) -> &'static [Case] {
+    static CASES: [OnceLock<Vec<Case>>; PARTS] = [const { OnceLock::new() }; PARTS];
+    CASES[part].get_or_init(|| {
         let mut cases = Vec::new();
-        for f in functions {
+        for f in functions().iter().skip(part).step_by(PARTS).cloned() {
             let facts = facts(&f);
             for registers in offers(most_together(&facts)) {
                 let allocation = allocate(&f, registers, &vec![false; f.types.len()]);
@@ -241,14 +335,14 @@ fn cases() -> &'static [Case] {
 
 /// A property of an allocation, for every function and every set of
 /// registers offered.
-fn for_every_allocation(check: impl Fn(&Function, &Facts, Registers, &Allocation)) {
-    for case in cases() {
+fn for_every_allocation(part: usize, check: impl Fn(&Function, &Facts, Registers, &Allocation)) {
+    for case in cases(part) {
         check(&case.f, &case.facts, case.registers, &case.allocation);
     }
 }
 
-fn no_two_values_alive_together_share_a_home() {
-    for_every_allocation(|f, facts, registers, a| {
+fn no_two_values_alive_together_share_a_home(part: usize) {
+    for_every_allocation(part, |f, facts, registers, a| {
         assert_eq!(a.homes.len(), f.types.len());
         for (v, home) in a.homes.iter().enumerate() {
             match home {
@@ -294,8 +388,8 @@ fn no_two_values_alive_together_share_a_home() {
     });
 }
 
-fn no_value_alive_across_a_call_is_in_a_register_the_call_may_change() {
-    for_every_allocation(|_, facts, registers, a| {
+fn no_value_alive_across_a_call_is_in_a_register_the_call_may_change(part: usize) {
+    for_every_allocation(part, |_, facts, registers, a| {
         for set in &facts.across {
             for v in set {
                 if let Home::Register(r) = a.homes[v.0] {
@@ -355,8 +449,8 @@ fn has_a_loop(f: &Function) -> bool {
     })
 }
 
-fn a_function_that_calls_nothing_and_fits_the_registers_keeps_everything_in_them() {
-    for_every_allocation(|f, facts, registers, a| {
+fn a_function_that_calls_nothing_and_fits_the_registers_keeps_everything_in_them(part: usize) {
+    for_every_allocation(part, |f, facts, registers, a| {
         // A block that nothing reaches may read what no path leads to, so
         // what is alive there is not what any run holds.
         if !facts.calls && most_together(facts) <= registers.changed && all_reachable(f) {
@@ -368,9 +462,9 @@ fn a_function_that_calls_nothing_and_fits_the_registers_keeps_everything_in_them
     });
 }
 
-fn a_function_that_calls_nothing_and_has_a_loop_keeps_everything_in_registers_when_the_chip_has_enough()
+fn a_function_that_calls_nothing_and_has_a_loop_keeps_everything_in_registers_when_the_chip_has_enough(part: usize)
 {
-    for_every_allocation(|f, facts, registers, a| {
+    for_every_allocation(part, |f, facts, registers, a| {
         if !facts.calls
             && has_a_loop(f)
             && most_together(facts) <= registers.count()
@@ -381,8 +475,8 @@ fn a_function_that_calls_nothing_and_has_a_loop_keeps_everything_in_registers_wh
     });
 }
 
-fn a_function_saves_the_registers_a_call_does_not_change_that_it_uses_and_no_others() {
-    for_every_allocation(|f, facts, registers, a| {
+fn a_function_saves_the_registers_a_call_does_not_change_that_it_uses_and_no_others(part: usize) {
+    for_every_allocation(part, |f, facts, registers, a| {
         let mut used: Vec<usize> = a
             .homes
             .iter()
@@ -414,8 +508,8 @@ fn a_function_saves_the_registers_a_call_does_not_change_that_it_uses_and_no_oth
 /// keeps in a register, is in the one it arrives in, so that the function
 /// copies nothing. A function that calls nothing and fits the registers
 /// keeps every parameter that arrives in one where it arrives.
-fn a_parameter_that_arrives_in_a_register_stays_there_when_it_may() {
-    for_every_allocation(|f, facts, registers, a| {
+fn a_parameter_that_arrives_in_a_register_stays_there_when_it_may(part: usize) {
+    for_every_allocation(part, |f, facts, registers, a| {
         for (i, p) in f.blocks[0].params.iter().enumerate().take(registers.passed) {
             match a.homes[p.0] {
                 Home::Register(r) if !registers.is_preserved(r) => {
@@ -430,8 +524,8 @@ fn a_parameter_that_arrives_in_a_register_stays_there_when_it_may() {
     });
 }
 
-fn allocating_twice_gives_the_same_homes(part: u64) {
-    for case in cases().iter().skip(part as usize).step_by(2) {
+fn allocating_twice_gives_the_same_homes(part: usize) {
+    for case in cases(part) {
         let (f, registers, a) = (&case.f, case.registers, &case.allocation);
         assert_eq!(*a, allocate(f, registers, &vec![false; f.types.len()]));
     }

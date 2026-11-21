@@ -21,16 +21,36 @@ pub const ONCE: &[Test] = &[
         each_name_of_the_library_used_with_no_import_is_one_error_at_its_first_use_naming_its_module,
     ),
     (
-        "each_name_of_the_library_that_the_file_imports_is_not_refused_part_1_of_3",
+        "each_name_of_the_library_that_the_file_imports_is_not_refused_part_1_of_8",
         || each_name_of_the_library_that_the_file_imports_is_not_refused(0),
     ),
     (
-        "each_name_of_the_library_that_the_file_imports_is_not_refused_part_2_of_3",
+        "each_name_of_the_library_that_the_file_imports_is_not_refused_part_2_of_8",
         || each_name_of_the_library_that_the_file_imports_is_not_refused(1),
     ),
     (
-        "each_name_of_the_library_that_the_file_imports_is_not_refused_part_3_of_3",
+        "each_name_of_the_library_that_the_file_imports_is_not_refused_part_3_of_8",
         || each_name_of_the_library_that_the_file_imports_is_not_refused(2),
+    ),
+    (
+        "each_name_of_the_library_that_the_file_imports_is_not_refused_part_4_of_8",
+        || each_name_of_the_library_that_the_file_imports_is_not_refused(3),
+    ),
+    (
+        "each_name_of_the_library_that_the_file_imports_is_not_refused_part_5_of_8",
+        || each_name_of_the_library_that_the_file_imports_is_not_refused(4),
+    ),
+    (
+        "each_name_of_the_library_that_the_file_imports_is_not_refused_part_6_of_8",
+        || each_name_of_the_library_that_the_file_imports_is_not_refused(5),
+    ),
+    (
+        "each_name_of_the_library_that_the_file_imports_is_not_refused_part_7_of_8",
+        || each_name_of_the_library_that_the_file_imports_is_not_refused(6),
+    ),
+    (
+        "each_name_of_the_library_that_the_file_imports_is_not_refused_part_8_of_8",
+        || each_name_of_the_library_that_the_file_imports_is_not_refused(7),
     ),
     (
         "importing_an_effect_brings_its_name_alone",
@@ -179,9 +199,13 @@ fn each_name_of_the_library_used_with_no_import_is_one_error_at_its_first_use_na
     }
 }
 
-/// The same programs with the name imported are not refused for it.
+/// How many parts the names are in, which the names of the tests say.
+const PARTS: usize = 8;
+
+/// The same programs with the name imported are not refused for it. The part
+/// is the names that many places from its own, so that every name is in one.
 fn each_name_of_the_library_that_the_file_imports_is_not_refused(part: usize) {
-    for (name, module) in names().iter().skip(part).step_by(3) {
+    for (name, module) in names().iter().skip(part).step_by(PARTS) {
         let program = SHAPES[0].program.replace("NAME", name);
         let source = format!("use std.{module} ({name})\n\n{program}");
         let said: Vec<Error> = missing(&source);
