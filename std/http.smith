@@ -1,5 +1,9 @@
-use std.bits (u16)
-use std.int (saturating_add)
+use std.bits (u16, u64)
+use std.deserialize (Deserialize, Problem, ReadError, Reader)
+use std.describe (Describe, Describer)
+use std.fromtext (from_text)
+use std.int (saturating_add, saturating_sub)
+use std.json (In, json_ended, json_in)
 use std.list (push)
 use std.utf8 (utf8)
 
@@ -143,4 +147,388 @@ pub fn query_parts(query: str) -> List[Part] ! alloc {
     .none { }
   }
   parts
+}
+
+// A parameter of a function that a route calls, by its name, and whether it
+// is read from the body: a struct, an enum, a list, or a tuple is, and so is
+// an `Option` of one, and every other is read from a part of the path or the
+// query.
+pub struct Param {
+  pub name: str
+  pub body: bool
+}
+
+// What a type that is told of the fields of a struct says of each: the
+// parameters of the function, in order. `depth` is how many shapes are open,
+// and `asked` is whether the last field named at depth 1 has not yet been
+// told what it holds.
+pub struct Params {
+  params: List[Param]
+  depth: Nat
+  asked: bool
+  named: str
+}
+
+pub fn no_params() -> Params {
+  Params(params: [], depth: 0, asked: false, named: "")
+}
+
+pub fn params_of(p: take Params) -> List[Param] { p.params }
+
+fn kind(d: take Params, body: bool) -> Params ! alloc {
+  var w = d
+  if w.depth == 1 and w.asked {
+    w.params = push(w.params, Param(name: w.named, body: body))
+    w.asked = false
+  }
+  w
+}
+
+fn opened(d: take Params) -> Params ! alloc {
+  var w = kind(d, true)
+  w.depth = saturating_add(w.depth, 1)
+  w
+}
+
+fn closed(d: take Params) -> Params ! alloc {
+  var w = d
+  w.depth = saturating_sub(w.depth, 1)
+  w
+}
+
+impl Describer[Params] {
+  fn boolean(d: take Params) -> Params ! alloc { kind(d, false) }
+  fn signed(d: take Params, least: Int, greatest: Int) -> Params ! alloc { kind(d, false) }
+  fn unsigned(d: take Params, least: u64, greatest: u64) -> Params ! alloc { kind(d, false) }
+  fn text(d: take Params) -> Params ! alloc { kind(d, false) }
+  fn nothing(d: take Params) -> Params ! alloc { kind(d, false) }
+  fn optional(d: take Params) -> Params ! alloc { d }
+  fn end_optional(d: take Params) -> Params ! alloc { d }
+  fn sequence(d: take Params) -> Params ! alloc { opened(d) }
+  fn end_sequence(d: take Params) -> Params ! alloc { closed(d) }
+  fn tuple(d: take Params, size: Nat) -> Params ! alloc { opened(d) }
+  fn end_tuple(d: take Params) -> Params ! alloc { closed(d) }
+  fn structure(d: take Params, name: str, about: str, fields: Nat) -> Params ! alloc { opened(d) }
+  fn field(d: take Params, name: str, about: str, optional: bool) -> Params ! alloc {
+    var w = d
+    if w.depth == 1 {
+      w.asked = true
+      w.named = name
+    }
+    w
+  }
+  fn end_structure(d: take Params) -> Params ! alloc { closed(d) }
+  fn enumeration(d: take Params, name: str, about: str, cases: Nat) -> Params ! alloc { opened(d) }
+  fn case(d: take Params, name: str, about: str, holds: bool) -> Params ! alloc { d }
+  fn end_case(d: take Params) -> Params ! alloc { d }
+  fn end_enumeration(d: take Params) -> Params ! alloc { closed(d) }
+  fn map(d: take Params) -> Params ! alloc { kind(d, true) }
+}
+
+// The text of the part with the name, which is the empty text where there is
+// none.
+fn find(parts: List[Part], name: str) -> Option[str] {
+  var found: Option[str] = Option.none
+  loop i in 0..parts.size {
+    p = parts[i]
+    if p.name == name {
+      match found {
+        .some(t) { }
+        .none { found = Option.some(p.value) }
+      }
+    }
+  }
+  found
+}
+
+fn has(t: Option[str]) -> bool {
+  match t {
+    .some(v) { true }
+    .none { false }
+  }
+}
+
+fn text_or_empty(t: Option[str]) -> str {
+  match t {
+    .some(v) { v }
+    .none { "" }
+  }
+}
+
+// What a function that a route calls is read from: the parts of the path
+// that its pattern names, the members of the query, and the body, which is
+// read as JSON by the reader of `std.json`.
+//
+// Each parameter in order is offered as a field of a struct, when the
+// request has it: a parameter of the path or the query is read as the text of
+// a part, and a parameter of the body as what the body holds. A parameter the
+// request has no part for is not offered, so the type that reads it gives
+// `.none` for an `Option`, the default of a parameter that has one, and
+// otherwise says it is missing.
+pub struct Reading {
+  params: List[Param]
+  at: Nat
+  name: str
+  body: bool
+  depth: Nat
+  top: bool
+  path: List[Part]
+  query: List[Part]
+  has_body: bool
+  json: In
+}
+
+pub fn reading(params: take List[Param], path: take List[Part], query: take List[Part], body: str) -> Reading {
+  Reading(params: params, at: 0, name: "", body: false, depth: 0, top: false, path: path, query: query, has_body: body.size > 0, json: json_in(body))
+}
+
+fn current(r: Reading) -> str {
+  match find(r.path, r.name) {
+    .some(t) { t }
+    .none { text_or_empty(find(r.query, r.name)) }
+  }
+}
+
+// The next parameter, from `at`, that the request has a part for, which
+// is a field the reader offers, or `.none` when there is no other.
+fn next_param(r: take Reading) -> (Reading, Option[str]) {
+  var w = r
+  var found = false
+  loop i in 0..w.params.size {
+    if not found and i >= w.at and i < w.params.size {
+      p = w.params[i]
+      here = if p.body {
+        w.has_body
+      } else {
+        has(find(w.path, p.name)) or has(find(w.query, p.name))
+      }
+      if here {
+        found = true
+        w.at = saturating_add(i, 1)
+        w.name = p.name
+        w.body = p.body
+      }
+    }
+  }
+  if found {
+    name = w.name
+    (w, Option.some(name))
+  } else {
+    w.at = w.params.size
+    (w, Option.none)
+  }
+}
+
+fn is_missing(p: Problem) -> bool {
+  match p {
+    .missing(m) { true }
+    .malformed { false }
+    .shape(s) { false }
+    .range(n) { false }
+    .case(c) { false }
+    .unknown(u) { false }
+    .twice(t) { false }
+  }
+}
+
+fn deeper(r: take Reading) -> Reading {
+  var w = r
+  w.depth = saturating_add(w.depth, 1)
+  w
+}
+
+fn shallower(r: take Reading) -> Reading {
+  var w = r
+  w.depth = saturating_sub(w.depth, 1)
+  w
+}
+
+impl Reader[Reading] {
+  fn boolean(r: take Reading) -> (Reading, Result[bool, ReadError]) ! alloc {
+    if r.body {
+      var w = r
+      (j, got) = Reader.boolean(w.json)
+      w.json = j
+      (w, got)
+    } else {
+      got: Result[bool, ReadError] = from_text(r.name, current(r))
+      (r, got)
+    }
+  }
+  fn signed(r: take Reading) -> (Reading, Result[Int, ReadError]) ! alloc {
+    if r.body {
+      var w = r
+      (j, got) = Reader.signed(w.json)
+      w.json = j
+      (w, got)
+    } else {
+      got: Result[Int, ReadError] = from_text(r.name, current(r))
+      (r, got)
+    }
+  }
+  fn unsigned(r: take Reading) -> (Reading, Result[u64, ReadError]) ! alloc {
+    if r.body {
+      var w = r
+      (j, got) = Reader.unsigned(w.json)
+      w.json = j
+      (w, got)
+    } else {
+      got: Result[u64, ReadError] = from_text(r.name, current(r))
+      (r, got)
+    }
+  }
+  fn text(r: take Reading) -> (Reading, Result[str, ReadError]) ! alloc {
+    if r.body {
+      var w = r
+      (j, got) = Reader.text(w.json)
+      w.json = j
+      (w, got)
+    } else {
+      t = current(r)
+      (r, Result.ok(t))
+    }
+  }
+  fn nothing(r: take Reading) -> (Reading, Result[(), ReadError]) ! alloc {
+    if r.body {
+      var w = r
+      (j, got) = Reader.nothing(w.json)
+      w.json = j
+      (w, got)
+    } else {
+      (r, Result.ok(()))
+    }
+  }
+  fn present(r: take Reading) -> (Reading, Result[bool, ReadError]) ! alloc {
+    if r.body {
+      var w = r
+      (j, got) = Reader.present(w.json)
+      w.json = j
+      (w, got)
+    } else {
+      (r, Result.ok(true))
+    }
+  }
+  fn sequence(r: take Reading) -> (Reading, Result[(), ReadError]) ! alloc {
+    var w = deeper(r)
+    (j, got) = Reader.sequence(w.json)
+    w.json = j
+    (w, got)
+  }
+  fn more(r: take Reading) -> (Reading, Result[bool, ReadError]) ! alloc {
+    var w = r
+    (j, got) = Reader.more(w.json)
+    w.json = j
+    match got {
+      .ok(again) {
+        if again { (w, got) } else { (shallower(w), got) }
+      }
+      .err(e) { (w, got) }
+    }
+  }
+  fn tuple(r: take Reading, size: Nat) -> (Reading, Result[(), ReadError]) ! alloc {
+    var w = deeper(r)
+    (j, got) = Reader.tuple(w.json, size)
+    w.json = j
+    (w, got)
+  }
+  fn end_tuple(r: take Reading) -> (Reading, Result[(), ReadError]) ! alloc {
+    var w = shallower(r)
+    (j, got) = Reader.end_tuple(w.json)
+    w.json = j
+    (w, got)
+  }
+  fn structure(r: take Reading, name: str) -> (Reading, Result[(), ReadError]) ! alloc {
+    if r.top {
+      var w = deeper(r)
+      (j, got) = Reader.structure(w.json, name)
+      w.json = j
+      (w, got)
+    } else {
+      var w = r
+      w.top = true
+      (w, Result.ok(()))
+    }
+  }
+  fn field(r: take Reading) -> (Reading, Result[Option[str], ReadError]) ! alloc {
+    if r.depth > 0 {
+      var w = r
+      (j, got) = Reader.field(w.json)
+      w.json = j
+      match got {
+        .ok(named) {
+          match named {
+            .some(n) { (w, got) }
+            .none { (shallower(w), got) }
+          }
+        }
+        .err(e) { (w, got) }
+      }
+    } else {
+      (w, named) = next_param(r)
+      (w, Result.ok(named))
+    }
+  }
+  fn unknown(r: take Reading, name: str) -> (Reading, Result[(), ReadError]) ! alloc {
+    var w = r
+    (j, got) = Reader.unknown(w.json, name)
+    w.json = j
+    (w, got)
+  }
+  fn case(r: take Reading, of: str) -> (Reading, Result[str, ReadError]) ! alloc {
+    var w = deeper(r)
+    (j, got) = Reader.case(w.json, of)
+    w.json = j
+    (w, got)
+  }
+  fn end_case(r: take Reading) -> (Reading, Result[(), ReadError]) ! alloc {
+    var w = shallower(r)
+    (j, got) = Reader.end_case(w.json)
+    w.json = j
+    (w, got)
+  }
+  fn raw(r: take Reading, of: str) -> (Reading, Result[Slice[Byte], ReadError]) ! alloc {
+    var w = r
+    (j, got) = Reader.raw(w.json, of)
+    w.json = j
+    (w, got)
+  }
+  fn fail(r: take Reading, problem: Problem) -> (Reading, ReadError) ! alloc {
+    if r.depth > 0 or r.body {
+      var w = r
+      (j, e) = Reader.fail(w.json, problem)
+      w.json = j
+      (w, e)
+    } else {
+      name = if is_missing(problem) { "" } else { r.name }
+      (r, ReadError(path: name, problem: problem, line: 0, column: 0))
+    }
+  }
+}
+
+// The value of a type that a function takes as its parameters, read from the
+// request, or what is wrong with it. A body that is not all read is wrong.
+pub trait FromRequest[A] {
+  fn from_request(r: take Reading) -> Result[A, ReadError] ! alloc
+}
+
+impl[A] FromRequest[A]
+  requires Deserialize[A]
+  requires Discard[A]
+{
+  fn from_request(r: take Reading) -> Result[A, ReadError] ! alloc {
+    (w, got): (Reading, Result[A, ReadError]) = Deserialize.read(r)
+    match got {
+      .err(e) { Result.err(e) }
+      .ok(v) {
+        if w.has_body {
+          match json_ended(w.json) {
+            .ok(done) { Result.ok(v) }
+            .err(e) { Result.err(e) }
+          }
+        } else {
+          Result.ok(v)
+        }
+      }
+    }
+  }
 }

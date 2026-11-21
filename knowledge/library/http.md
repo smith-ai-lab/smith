@@ -5,6 +5,7 @@ description: std.http, with which a program answers HTTP requests with plain fun
 status: partial
 built:
   - "`std.http`, with `Request`, `Response`, `Status` and the errors `NotFound`, `BadRequest`, and `Unauthorized` with 404, 400, and 401, and the readers of a request's parts: `segments`, `route_match`, which gives each `:name` part of a path that a pattern fits, and `query_parts`"
+  - "`Params`, which a type that is told of the parameters of a function says them in order with each marked as read from the body or not, and `Reading` with `FromRequest`, which reads a struct of those parameters from the parts of the path, the members of the query, and the body, as `Deserialize` reads it: a part as the type of its parameter by [`from_text`](fromtext.md), and a struct, an enum, a list, or a tuple from the body as JSON"
   - "not `Respond`, `routes`, `get` and the other methods, `at`, a guard, `listen`, or the reading of a percent sign in a part"
 ---
 
@@ -182,6 +183,8 @@ struct Request {
 ```
 
 `route_match(pattern, path)` gives `.some` of each part of the path that a `:name` part of the pattern stands at, as a `Part` of the name and the text, when the pattern and the path have the same number of parts and each part that does not begin with `:` is the same, and `.none` when they do not. `route_match("/users/:id", "/users/7")` is one `Part`, `id` with `7`, and `/users` does not fit it. `query_parts("a=1&b=&c")` gives `a` with `1`, `b` with the empty text, and `c` with the empty text: the members are the pieces between `&`, each cut at its first `=`, and a piece with nothing in it is no member. A part is read as the type of its parameter by [`from_text`](fromtext.md).
+
+`Params` is what `Describe` is told of the struct of a function's parameters: `Describe[Args].describe(no_params())` has each parameter by its name, in order, with `body` true for a struct, an enum, a list, or a tuple, or an `Option` of one, and false for every other. `reading(params, path, query, body)` is a `Reader` of the request, and `FromRequest[Args].from_request(reading(...))` is `Args` read from it: the parameters are offered in order as the fields of a struct, each that the request has a part for, in the path before the query, and the one of the body with the whole body, so that a parameter the request has no part for is `.none` for an `Option`, its default, or `missing` with its name. A part that is not read as its type is the error of `from_text`, with the name of the parameter as the path, and a body that is not JSON of the type, or has more after it, is the error of the JSON reader.
 
 ## The forms
 
