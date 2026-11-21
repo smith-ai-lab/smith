@@ -870,6 +870,8 @@ impl<'a> Lowering<'a> {
             "deserialize"
         } else if defs.describe == Some(k) {
             "describe"
+        } else if defs.from_text == Some(k) {
+            "from_text"
         } else if k == defs.convert() {
             "convert"
         } else if k == defs.fmt {
