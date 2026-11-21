@@ -1050,7 +1050,8 @@ impl Lowering<'_> {
                 self.code.call(self.context.allocate);
                 self.set(results[0]);
             }
-            // The host is not asked yet, so it has given no bytes.
+            // The host is not asked yet, and `compile` refuses a program that asks for
+            // bytes for this target, so this is not reached.
             System::Entropy => {
                 self.code.i32_const(1);
                 self.set(results[0]);

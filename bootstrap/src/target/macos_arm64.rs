@@ -76,8 +76,8 @@ impl System for Macos {
         asm.load(X20, 8, false, Place::Frame(8));
     }
 
-    /// The system is not asked yet, so it has given no bytes, and the program
-    /// that asked for them says so and ends.
+    /// The system is not asked yet, and `compile` refuses a program that asks
+    /// for bytes for this target, so this is not reached.
     fn entropy(asm: &mut Asm) {
         asm.mov_w(X0, 1);
     }

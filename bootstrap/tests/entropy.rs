@@ -25,6 +25,10 @@ pub const ONCE: &[Test] = &[
         a_call_the_kernel_interrupts_is_asked_again,
     ),
     (
+        "a_target_that_does_not_answer_entropy_refuses_a_program_that_asks_for_it_and_names_itself",
+        a_target_that_does_not_answer_entropy_refuses_a_program_that_asks_for_it_and_names_itself,
+    ),
+    (
         "a_kernel_that_gives_no_bytes_ends_the_program_and_says_so_before_anything_is_used",
         a_kernel_that_gives_no_bytes_ends_the_program_and_says_so_before_anything_is_used,
     ),
@@ -129,6 +133,24 @@ fn a_kernel_that_gives_no_bytes_ends_the_program_and_says_so_before_anything_is_
             "the system gave no random bytes\n",
             "{}",
             target.name()
+        );
+    }
+}
+
+/// A target the compiler does not build `entropy` for refuses the program,
+/// with an error that names the target, rather than build one that goes on
+/// with bytes that were not filled.
+fn a_target_that_does_not_answer_entropy_refuses_a_program_that_asks_for_it_and_names_itself() {
+    for target in Target::ALL.iter().copied().filter(|t| !t.answers_entropy()) {
+        let Err(errors) = compile(DRAW.as_bytes(), target) else {
+            panic!("{} built a program that asks for entropy", target.name());
+        };
+        assert_eq!(errors.len(), 1, "{}", target.name());
+        assert!(
+            errors[0].message.contains(&format!("`{}`", target.name())),
+            "{}: {}",
+            target.name(),
+            errors[0].message
         );
     }
 }
