@@ -20,6 +20,7 @@ use crate::Test;
 use crate::cli::{folder, smith, stderr};
 use crate::generate::{self, Gen};
 use crate::targets::{case_files, updating};
+use crate::float_form::{self as ff, canonical_program};
 use crate::{choices, enums, lambdas, numbers, programs, repeat, text, tuples};
 
 pub const ONCE: &[Test] = &[
@@ -58,6 +59,22 @@ pub const ONCE: &[Test] = &[
     (
         "a_module_of_generated_programs_with_enums_and_tuples_prints_what_the_evaluator_prints",
         a_module_of_generated_programs_with_enums_and_tuples_prints_what_the_evaluator_prints,
+    ),
+    (
+        "every_module_gives_what_the_evaluator_gives_for_each_instruction_of_floats",
+        every_module_gives_what_the_evaluator_gives_for_each_instruction_of_floats,
+    ),
+    (
+        "every_module_of_a_function_of_floats_and_whole_numbers_does_what_the_evaluator_says",
+        every_module_of_a_function_of_floats_and_whole_numbers_does_what_the_evaluator_says,
+    ),
+    (
+        "every_module_runs_the_programs_of_floats_written_in_smith_as_the_evaluator_does",
+        every_module_runs_the_programs_of_floats_written_in_smith_as_the_evaluator_does,
+    ),
+    (
+        "every_module_of_a_fused_product_gives_what_the_evaluator_gives",
+        every_module_of_a_fused_product_gives_what_the_evaluator_gives,
     ),
     (
         "every_integer_operation_gives_what_the_evaluator_gives",
@@ -687,4 +704,66 @@ fn a_function_with_a_loop_that_has_two_ways_in_runs_as_the_evaluator_says() {
     assert!(!written_as_loops(&program));
     assert!(!scalar::run(&program).stdout.is_empty());
     agree(&program);
+}
+
+/// The form as it is made: a product that one sum uses is fused with it.
+fn made(program: &Program) -> Program {
+    scalar::fuse(program)
+}
+
+fn every_module_gives_what_the_evaluator_gives_for_each_instruction_of_floats() {
+    if !node() {
+        return;
+    }
+    for program in ff::instruction_programs() {
+        let program = made(&program);
+        agree(&program);
+        agree(&scalar::passes(&program));
+    }
+}
+
+fn every_module_of_a_function_of_floats_and_whole_numbers_does_what_the_evaluator_says() {
+    if !node() {
+        return;
+    }
+    generate::check(6132, 25, canonical_program, |program| {
+        let program = made(program);
+        agree(&program);
+        agree(&scalar::passes(&program));
+    });
+}
+
+/// A product and a sum of three floats at the edges, which the form fuses.
+fn every_module_of_a_fused_product_gives_what_the_evaluator_gives() {
+    if !node() {
+        return;
+    }
+    use scalar::{FloatBinary, FloatBits};
+    for bits in [FloatBits::F32, FloatBits::F64] {
+        let ty = Type::Float(bits);
+        let edges = ff::edges(bits);
+        for op in [FloatBinary::Add, FloatBinary::Sub] {
+            for first in [true, false] {
+                for k in 0..6 {
+                    let args: Vec<(Type, u64)> = (0..3)
+                        .map(|i| (ty, edges[(k * 7 + i * 5) % edges.len()]))
+                        .collect();
+                    let b = crate::float_fused::shape(ty, op, first);
+                    let program = ff::observed_canonically(vec![b.finish(&[ty])], 0, &args, true);
+                    agree(&made(&program));
+                }
+            }
+        }
+    }
+}
+
+/// Every operator and comparison of floats, and the text of one, written in
+/// Smith, for a module: what it prints is what the evaluator prints.
+fn every_module_runs_the_programs_of_floats_written_in_smith_as_the_evaluator_does() {
+    if !node() {
+        return;
+    }
+    for source in crate::float_source::sources() {
+        agree(&after_the_pass(source.as_bytes()));
+    }
 }

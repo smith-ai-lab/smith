@@ -14,8 +14,8 @@ use super::wasm_module::{Body, Export, Global, Module, Signature};
 use super::wasm_structure::{self as structure, Shape};
 use super::{Named, Part};
 use crate::scalar::{
-    Binary, Bits, Builder, Compare, Constant, End, Function, Instruction, Jump, Op, Place, Program,
-    Stream, System, Type, Value,
+    Binary, Bits, Builder, Compare, Constant, End, FloatBinary, FloatBits, FloatCompare, Function,
+    Instruction, Jump, Op, Place, Program, Stream, System, Type, Value,
 };
 
 /// Where the first of the program's texts is. Nothing is below it, so no text
@@ -268,6 +268,8 @@ struct Context<'a> {
 fn kind(ty: Type) -> Kind {
     match ty {
         Type::Int(Bits::B64) => Kind::I64,
+        Type::Float(FloatBits::F32) => Kind::F32,
+        Type::Float(FloatBits::F64) => Kind::F64,
         _ => Kind::I32,
     }
 }
@@ -484,7 +486,7 @@ fn lower(f: &Function, context: &Context) -> (Signature, Body) {
     let pc = next;
     let numbered = shape.is_none() && f.blocks.len() > 1;
     let mut locals = Vec::new();
-    for here in [Kind::I32, Kind::I64] {
+    for here in [Kind::I32, Kind::I64, Kind::F32, Kind::F64] {
         let before = next;
         if here == Kind::I32 && numbered {
             next += 1;
@@ -833,10 +835,18 @@ impl Lowering<'_> {
         kind(self.f.types[v.0])
     }
 
+    /// Whether the value is a float of 64 bits, and not one of 32.
+    fn double(&self, v: Value) -> bool {
+        match self.f.types[v.0] {
+            Type::Float(bits) => bits == FloatBits::F64,
+            _ => panic!("an integer where a float is needed"),
+        }
+    }
+
     fn bits(&self, v: Value) -> Bits {
         match self.f.types[v.0] {
             Type::Int(bits) => bits,
-            Type::Float(_) => unreachable!("wasm does not build floats yet"),
+            Type::Float(_) => panic!("a float where an integer is needed"),
             Type::Vector(_) => unreachable!("Target::emit refuses a function with a vector"),
             Type::Address => panic!("an address where an integer is needed"),
         }
@@ -900,13 +910,135 @@ impl Lowering<'_> {
         let f = self.f;
         let results = &instruction.results;
         match &instruction.op {
-            Op::FloatBinary { .. }
-            | Op::FloatFused { .. }
-            | Op::FloatNegate(_)
-            | Op::FloatCompare { .. }
-            | Op::FloatFromInt { .. }
-            | Op::IntFromFloat { .. }
-            | Op::FloatResize(_) => unreachable!("wasm does not build floats yet"),
+            Op::FloatFused { .. } => {
+                unreachable!("Target::emit gives a fused product as a call")
+            }
+            Op::FloatBinary { op, a, b } => {
+                let double = self.double(*a);
+                self.get(*a);
+                self.get(*b);
+                self.code.op(match (op, double) {
+                    (FloatBinary::Add, false) => F32_ADD,
+                    (FloatBinary::Sub, false) => F32_SUB,
+                    (FloatBinary::Mul, false) => F32_MUL,
+                    (FloatBinary::Div, false) => F32_DIV,
+                    (FloatBinary::Add, true) => F64_ADD,
+                    (FloatBinary::Sub, true) => F64_SUB,
+                    (FloatBinary::Mul, true) => F64_MUL,
+                    (FloatBinary::Div, true) => F64_DIV,
+                });
+                self.set(results[0]);
+            }
+            Op::FloatNegate(value) => {
+                let double = self.double(*value);
+                self.get(*value);
+                self.code.op(if double { F64_NEG } else { F32_NEG });
+                self.set(results[0]);
+            }
+            Op::FloatCompare { op, a, b } => {
+                let double = self.double(*a);
+                self.get(*a);
+                self.get(*b);
+                self.code.op(match (op, double) {
+                    (FloatCompare::Equal, false) => F32_EQ,
+                    (FloatCompare::NotEqual, false) => F32_NE,
+                    (FloatCompare::Less, false) => F32_LT,
+                    (FloatCompare::LessEqual, false) => F32_LE,
+                    (FloatCompare::Greater, false) => F32_GT,
+                    (FloatCompare::GreaterEqual, false) => F32_GE,
+                    (FloatCompare::Equal, true) => F64_EQ,
+                    (FloatCompare::NotEqual, true) => F64_NE,
+                    (FloatCompare::Less, true) => F64_LT,
+                    (FloatCompare::LessEqual, true) => F64_LE,
+                    (FloatCompare::Greater, true) => F64_GT,
+                    (FloatCompare::GreaterEqual, true) => F64_GE,
+                });
+                self.set(results[0]);
+            }
+            Op::FloatFromInt { signed, value } => {
+                let double = self.double(results[0]);
+                let from = self.bits(*value);
+                self.get(*value);
+                let op = match (from, signed, double) {
+                    (Bits::B64, true, false) => F32_CONVERT_I64_S,
+                    (Bits::B64, false, false) => F32_CONVERT_I64_U,
+                    (Bits::B64, true, true) => F64_CONVERT_I64_S,
+                    (Bits::B64, false, true) => F64_CONVERT_I64_U,
+                    (_, true, false) => {
+                        self.sign_extend(from);
+                        F32_CONVERT_I32_S
+                    }
+                    (_, false, false) => F32_CONVERT_I32_U,
+                    (_, true, true) => {
+                        self.sign_extend(from);
+                        F64_CONVERT_I32_S
+                    }
+                    (_, false, true) => F64_CONVERT_I32_U,
+                };
+                self.code.op(op);
+                self.set(results[0]);
+            }
+            Op::IntFromFloat { signed, value } => {
+                let double = self.double(*value);
+                let to = self.bits(results[0]);
+                self.get(*value);
+                // The truncation that saturates, and gives 0 for a float that
+                // is not a number: `i32.trunc_sat_f32_s` is 0, `_u` 1, the
+                // same of an `f64` 2 and 3, and of an `i64` 4 to 7.
+                let which = match (to == Bits::B64, double, signed) {
+                    (false, false, true) => 0,
+                    (false, false, false) => 1,
+                    (false, true, true) => 2,
+                    (false, true, false) => 3,
+                    (true, false, true) => 4,
+                    (true, false, false) => 5,
+                    (true, true, true) => 6,
+                    (true, true, false) => 7,
+                };
+                self.code.saturating(which);
+                self.set(results[0]);
+                // A size below 32 bits is held to the least and the greatest
+                // number it has.
+                if matches!(to, Bits::B8 | Bits::B16) {
+                    let result = results[0];
+                    let bits = to.count();
+                    let (low, high) = if *signed {
+                        (-(1i32 << (bits - 1)), (1i32 << (bits - 1)) - 1)
+                    } else {
+                        (0, (1i32 << bits) - 1)
+                    };
+                    if *signed {
+                        self.code.i32_const(low);
+                        self.get(result);
+                        self.get(result);
+                        self.code.i32_const(low);
+                        self.code.op(I32_LT_S);
+                        self.code.op(SELECT);
+                        self.set(result);
+                    }
+                    self.code.i32_const(high);
+                    self.get(result);
+                    self.get(result);
+                    self.code.i32_const(high);
+                    self.code.op(if *signed { I32_GT_S } else { I32_GT_U });
+                    self.code.op(SELECT);
+                    self.set(result);
+                    self.get(result);
+                    self.clear_above(to);
+                    self.set(result);
+                }
+            }
+            Op::FloatResize(value) => {
+                let from = self.double(*value);
+                let to = self.double(results[0]);
+                self.get(*value);
+                if from && !to {
+                    self.code.op(F32_DEMOTE_F64);
+                } else if !from && to {
+                    self.code.op(F64_PROMOTE_F32);
+                }
+                self.set(results[0]);
+            }
             Op::VectorBinary { .. }
             | Op::VectorFloatBinary { .. }
             | Op::VectorFloatFused { .. }
@@ -923,9 +1055,13 @@ impl Lowering<'_> {
             Op::Constant(constant) => {
                 let ty = f.types[results[0].0];
                 match (constant, ty) {
-                    (Constant::Float(_), _) | (Constant::Int(_), Type::Float(_)) => {
-                        unreachable!("wasm does not build floats yet")
+                    (Constant::Float(n) | Constant::Int(n), Type::Float(FloatBits::F32)) => {
+                        self.code.f32_const(*n as u32)
                     }
+                    (Constant::Float(n) | Constant::Int(n), Type::Float(FloatBits::F64)) => {
+                        self.code.f64_const(*n)
+                    }
+                    (Constant::Float(_), _) => unreachable!("a float of a type that is not one"),
                     (Constant::Vector(..), _) | (_, Type::Vector(_)) => {
                         unreachable!("Target::emit refuses a function with a vector")
                     }
@@ -949,7 +1085,7 @@ impl Lowering<'_> {
             }
             Op::Binary { op, a, b } => {
                 match f.types[results[0].0] {
-                    Type::Float(_) => unreachable!("wasm does not build floats yet"),
+                    Type::Float(_) => unreachable!("an integer instruction gives an integer"),
                     Type::Vector(_) => {
                         unreachable!("Target::emit refuses a function with a vector")
                     }
@@ -1014,7 +1150,8 @@ impl Lowering<'_> {
                     Type::Int(Bits::B16) => self.code.memory(I32_LOAD16_U),
                     Type::Int(Bits::B32) => self.code.memory(I32_LOAD),
                     Type::Int(Bits::B64) => self.code.memory(I64_LOAD),
-                    Type::Float(_) => unreachable!("wasm does not build floats yet"),
+                    Type::Float(FloatBits::F32) => self.code.memory(F32_LOAD),
+                    Type::Float(FloatBits::F64) => self.code.memory(F64_LOAD),
                     Type::Vector(_) => {
                         unreachable!("Target::emit refuses a function with a vector")
                     }
@@ -1033,7 +1170,8 @@ impl Lowering<'_> {
                     Type::Int(Bits::B16) => self.code.memory(I32_STORE16),
                     Type::Int(Bits::B32) => self.code.memory(I32_STORE),
                     Type::Int(Bits::B64) => self.code.memory(I64_STORE),
-                    Type::Float(_) => unreachable!("wasm does not build floats yet"),
+                    Type::Float(FloatBits::F32) => self.code.memory(F32_STORE),
+                    Type::Float(FloatBits::F64) => self.code.memory(F64_STORE),
                     Type::Vector(_) => {
                         unreachable!("Target::emit refuses a function with a vector")
                     }

@@ -44,7 +44,12 @@ fn check(program: &Program) {
     let said = scalar::run(program);
     let passed = scalar::passes(program);
     let mut ran = 0;
-    for target in Target::ALL.iter().filter(|t| t.builds_floats()) {
+    let vectors = (program.functions.iter())
+        .any(|f| f.types.iter().any(|t| matches!(t, smith::scalar::Type::Vector(_))));
+    for target in Target::ALL
+        .iter()
+        .filter(|t| t.builds_floats() && (!vectors || t.builds_vectors()))
+    {
         for p in [program, &passed] {
             let bytes = target.emit(p);
             if aarch64::is_executable(&bytes) {

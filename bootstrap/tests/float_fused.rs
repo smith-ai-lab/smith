@@ -348,7 +348,9 @@ fn every_executable_of_a_fused_product_gives_what_the_evaluator_gives() {
         assert_eq!(scalar::check(&made), Ok(()));
         let said = scalar::run(&made);
         let passed = scalar::passes(&made);
-        for target in building() {
+        // A target that builds no vector is not given a function that has one.
+        let vectors = matches!(ty, Type::Vector(_));
+        for target in building().into_iter().filter(|t| !vectors || t.builds_vectors()) {
             scalar_runs_as(&made, target, &said);
             scalar_runs_as(&passed, target, &said);
         }

@@ -290,6 +290,13 @@ impl Target {
     /// The executable for the program, and the parts of its code, which the
     /// map of the executable is made of.
     pub fn emit_parts(self, program: &Program) -> (Vec<u8>, Vec<Part>) {
+        // A target with no instruction for a fused product is given a call.
+        let unfused = if self == Target::Wasm {
+            crate::scalar::unfuse(program)
+        } else {
+            None
+        };
+        let program = unfused.as_ref().unwrap_or(program);
         if !self.builds_vectors()
             && let Some(function) = (program.functions.iter())
                 .position(|f| f.types.iter().any(|ty| matches!(ty, Type::Vector(_))))
@@ -318,8 +325,8 @@ impl Target {
             | Target::WindowsX64
             | Target::MacosArm64
             | Target::LinuxArm64
-            | Target::WindowsArm64 => true,
-            Target::Wasm => false,
+            | Target::WindowsArm64
+            | Target::Wasm => true,
         }
     }
 
