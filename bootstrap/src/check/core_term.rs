@@ -5,7 +5,7 @@
 //! parameter, has no core term yet.
 
 use super::*;
-use crate::core::{self, Callee, Kind, Lit, Make, Operator, Pattern as CorePattern, Term};
+use crate::core::{self, Callee, Kind, Lit, Make, Operator, Pattern as CorePattern, Source, Term};
 
 /// The case of the prelude's `bool` that `name` is.
 fn case_of(name: &str) -> Option<usize> {
@@ -26,6 +26,7 @@ impl<'a> Typed<'a> {
             if module_of(f.pos) != 0 || of_prelude(f.pos) || !f.generics.is_empty() {
                 continue;
             }
+            self.core_vars.borrow_mut().clear();
             let sig = &self.defs.signatures[place];
             let params: Option<Vec<(String, core::Type)>> = sig
                 .params
@@ -87,22 +88,84 @@ impl<'a> Typed<'a> {
     }
 
     /// The statements of a block: names given values, and then the value it
-    /// gives.
+    /// gives. A name that is a `var` of a block around this one is not
+    /// given a value here, as no node assigns.
     fn core_block(&self, stmts: &[Stmt]) -> Option<Term> {
+        let mark = self.core_vars.borrow().len();
+        let term = self.core_stmts(stmts, &mut Vec::new());
+        self.core_vars.borrow_mut().truncate(mark);
+        term
+    }
+
+    /// The statements of a block, where `own` are the `var`s it may give a
+    /// value to again, as a name is bound again.
+    fn core_stmts(&self, stmts: &[Stmt], own: &mut Vec<String>) -> Option<Term> {
         match stmts {
             [Stmt::Expr(e)] => self.core_expr(e),
+            [Stmt::Expr(Expr::Loop(l)), rest @ ..] if !rest.is_empty() => {
+                let (looped, names) = self.core_loop(l)?;
+                // The loop gives the values the `var`s it assigns end with.
+                let rest = self.core_stmts(rest, own)?;
+                let ty = rest.ty.clone();
+                let pos = looped.pos;
+                let held = "loop state".to_string();
+                let mut term = rest;
+                for (index, (name, var_ty)) in names.iter().enumerate().rev() {
+                    let field = Term::new(
+                        Kind::Field {
+                            of: Box::new(Term::new(
+                                Kind::Name(held.clone()),
+                                looped.ty.clone(),
+                                pos,
+                            )),
+                            name: index.to_string(),
+                            index,
+                        },
+                        var_ty.clone(),
+                        pos,
+                    );
+                    term = Term::new(
+                        Kind::Bind {
+                            name: name.clone(),
+                            value: Box::new(field),
+                            rest: Box::new(term),
+                        },
+                        ty.clone(),
+                        pos,
+                    );
+                }
+                Some(Term::new(
+                    Kind::Bind {
+                        name: held,
+                        value: Box::new(looped),
+                        rest: Box::new(term),
+                    },
+                    ty,
+                    pos,
+                ))
+            }
             [
                 Stmt::Define {
                     name,
                     pos,
-                    var: false,
+                    var,
                     value,
-                    ..
+                    ty: _,
                 },
                 rest @ ..,
             ] => {
+                let known = self.core_vars.borrow().iter().any(|(n, _)| n == name);
+                if !var && known && !own.contains(name) {
+                    return None;
+                }
                 let value = self.core_expr(value)?;
-                let rest = self.core_block(rest)?;
+                if *var {
+                    own.push(name.clone());
+                    self.core_vars
+                        .borrow_mut()
+                        .push((name.clone(), value.ty.clone()));
+                }
+                let rest = self.core_stmts(rest, own)?;
                 let ty = rest.ty.clone();
                 Some(Term::new(
                     Kind::Bind {
@@ -112,6 +175,130 @@ impl<'a> Typed<'a> {
                     },
                     ty,
                     *pos,
+                ))
+            }
+            _ => None,
+        }
+    }
+
+    /// A `loop`, and the `var`s it assigns, in the order they are declared,
+    /// with their types, which are the state it hands from round to round.
+    fn core_loop(&self, l: &crate::parser::Loop) -> Option<(Term, Vec<(String, core::Type)>)> {
+        let (source, counter) = match (&l.range, &l.over) {
+            (Some(r), None) => (
+                Source::Range(
+                    Box::new(self.core_expr(&r.from)?),
+                    Box::new(self.core_expr(&r.to)?),
+                ),
+                r.name.clone(),
+            ),
+            (None, Some(o)) => (
+                Source::Over(Box::new(self.core_expr(&o.value)?)),
+                o.name.clone(),
+            ),
+            (None, None) => (Source::Open, "_".to_string()),
+            _ => return None,
+        };
+        let assigned = assigned_in(&l.body);
+        let state: Vec<(String, core::Type)> = self
+            .core_vars
+            .borrow()
+            .iter()
+            .filter(|(n, _)| assigned.contains(n))
+            .cloned()
+            .collect();
+        let pos = l.pos;
+        let initial: Vec<(String, Term)> = state
+            .iter()
+            .map(|(n, t)| (n.clone(), Term::new(Kind::Name(n.clone()), t.clone(), pos)))
+            .collect();
+        let mark = self.core_vars.borrow().len();
+        let body = self.core_round(&l.body, &state, pos);
+        self.core_vars.borrow_mut().truncate(mark);
+        let ty = core::Type::Tuple(state.iter().map(|(_, t)| t.clone()).collect());
+        Some((
+            Term::new(
+                Kind::Loop {
+                    source,
+                    counter,
+                    state: initial,
+                    body: Box::new(body?),
+                },
+                ty,
+                pos,
+            ),
+            state,
+        ))
+    }
+
+    /// The statements of a round: each `var` of the state it gives a value
+    /// is bound again, and the round ends in a `Next`, or in a `Done` where
+    /// an `if` with no `else` ends in `break`.
+    fn core_round(&self, stmts: &[Stmt], state: &[(String, core::Type)], pos: Pos) -> Option<Term> {
+        let end = |done: bool| {
+            let values: Vec<Term> = state
+                .iter()
+                .map(|(n, t)| Term::new(Kind::Name(n.clone()), t.clone(), pos))
+                .collect();
+            Term::new(
+                if done {
+                    Kind::Done(values)
+                } else {
+                    Kind::Next(values)
+                },
+                core::Type::Nothing,
+                pos,
+            )
+        };
+        let own: Vec<String> = state.iter().map(|(n, _)| n.clone()).collect();
+        match stmts {
+            [] => Some(end(false)),
+            [Stmt::Expr(Expr::Break { .. }), ..] => Some(end(true)),
+            [Stmt::Expr(Expr::Match(m)), rest @ ..]
+                if matches!(m.form, Form::If { otherwise: false }) =>
+            {
+                // `if c { ...; break }`, and then the rest of the round.
+                let [then, _] = m.arms.as_slice() else {
+                    return None;
+                };
+                if !matches!(then.body.last(), Some(Stmt::Expr(Expr::Break { .. }))) {
+                    return None;
+                }
+                let of = self.core_expr(&m.of)?;
+                let stop = self.core_round(&then.body, state, pos)?;
+                let go = self.core_round(rest, state, pos)?;
+                Some(Term::new(
+                    Kind::Choose {
+                        of: Box::new(of),
+                        arms: vec![
+                            (CorePattern::Case(1, None), stop),
+                            (CorePattern::Case(0, None), go),
+                        ],
+                    },
+                    core::Type::Nothing,
+                    pos,
+                ))
+            }
+            [
+                Stmt::Define {
+                    name,
+                    pos: at,
+                    var: false,
+                    value,
+                    ..
+                },
+                rest @ ..,
+            ] if own.contains(name) || !self.core_vars.borrow().iter().any(|(n, _)| n == name) => {
+                let value = self.core_expr(value)?;
+                let rest = self.core_round(rest, state, pos)?;
+                Some(Term::new(
+                    Kind::Bind {
+                        name: name.clone(),
+                        value: Box::new(value),
+                        rest: Box::new(rest),
+                    },
+                    core::Type::Nothing,
+                    *at,
                 ))
             }
             _ => None,
@@ -516,4 +703,25 @@ impl<'a> Typed<'a> {
             l.pos,
         ))
     }
+}
+
+/// The names a block gives a value to again, where it is an assignment of a
+/// `var` that the block does not declare, at the top of the block and in an
+/// `if` with no `else` that is there.
+fn assigned_in(stmts: &[Stmt]) -> Vec<String> {
+    let mut found = Vec::new();
+    for stmt in stmts {
+        match stmt {
+            Stmt::Define {
+                name, var: false, ..
+            } => found.push(name.clone()),
+            Stmt::Expr(Expr::Match(m)) if matches!(m.form, Form::If { otherwise: false }) => {
+                for arm in &m.arms {
+                    found.extend(assigned_in(&arm.body));
+                }
+            }
+            _ => {}
+        }
+    }
+    found
 }
