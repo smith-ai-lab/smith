@@ -49,10 +49,16 @@ impl<'a> Typed<'a> {
         Some(match ty {
             Ty::Text => core::Type::Text,
             Ty::Int(i) => core::Type::int(i.min(), i.max()),
-            Ty::Enum(e, args) if args.is_empty() => core::Type::Enum(*e, Vec::new()),
+            Ty::Enum(e, args) => core::Type::Enum(*e, self.core_types(args)?),
+            Ty::Struct(s, args) => core::Type::Struct(*s, self.core_types(args)?),
+            Ty::Tuple(items) => core::Type::Tuple(self.core_types(items)?),
             Ty::Nothing => core::Type::Nothing,
             _ => return None,
         })
+    }
+
+    fn core_types(&self, tys: &[Ty]) -> Option<Vec<core::Type>> {
+        tys.iter().map(|t| self.core_type(t)).collect()
     }
 
     fn core_of(&self, e: &Expr) -> Option<core::Type> {
@@ -179,6 +185,19 @@ impl<'a> Typed<'a> {
             }
             Expr::Call(call) => self.core_named_call(call, ty),
             Expr::Match(m) => self.core_match(m, ty),
+            Expr::Text { text, pos } => {
+                Some(Term::new(Kind::Lit(Lit::Text(text.clone())), ty, *pos))
+            }
+            Expr::Tuple { items, pos } => {
+                let items: Option<Vec<Term>> = items.iter().map(|i| self.core_expr(i)).collect();
+                Some(Term::new(Kind::Make(Make::Tuple, items?), ty, *pos))
+            }
+            Expr::Case {
+                name,
+                pos,
+                payload: Some(payload),
+            } => self.core_case(name, *pos, Some(payload), ty),
+            Expr::Field { of, name, pos } => self.core_field(of, name, *pos, ty),
             _ => None,
         }
     }
@@ -196,6 +215,12 @@ impl<'a> Typed<'a> {
                 ty,
                 call.pos,
             );
+        }
+        if let Some(s) = (call.qualifier.is_none())
+            .then(|| self.defs.struct_named(&call.callee))
+            .flatten()
+        {
+            return self.core_struct(call, s, ty);
         }
         if call.qualifier.is_some() || call.args.iter().any(|a| a.name.is_some() || a.after) {
             return None;
@@ -252,14 +277,14 @@ impl<'a> Typed<'a> {
             }
             Form::Match => {
                 let Expr::Call(c) = &m.of else {
-                    return None;
+                    return self.core_choose(m, ty);
                 };
                 if !(c.qualifier.as_ref().is_some_and(|(q, _)| q == "Ord")
                     && c.callee == "compare"
                     && c.args.len() == 2
                     && ty == bool_ty)
                 {
-                    return None;
+                    return self.core_choose(m, ty);
                 }
                 let holds = |case: &str| {
                     m.arms.iter().any(|a| {
@@ -279,5 +304,155 @@ impl<'a> Typed<'a> {
             }
             _ => None,
         }
+    }
+}
+
+impl<'a> Typed<'a> {
+    /// A case of an enum, with what it holds.
+    fn core_case(
+        &self,
+        name: &str,
+        pos: Pos,
+        payload: Option<&Expr>,
+        ty: core::Type,
+    ) -> Option<Term> {
+        let core::Type::Enum(e, _) = &ty else {
+            return None;
+        };
+        let case = self.defs.case_of(*e, name)?;
+        let args = match payload {
+            Some(p) => vec![self.core_expr(p)?],
+            None => Vec::new(),
+        };
+        Some(Term::new(Kind::Make(Make::Case(*e, case), args), ty, pos))
+    }
+
+    /// `p.x`, a field of a struct or a tuple, or `Pet.none`, which names a
+    /// case in full.
+    fn core_field(&self, of: &Expr, name: &str, pos: Pos, ty: core::Type) -> Option<Term> {
+        if !self.types.contains_key(&addr(of)) {
+            let Expr::Name {
+                name: enum_name, ..
+            } = of
+            else {
+                return None;
+            };
+            self.defs.enum_named(enum_name)?;
+            return self.core_case(name, pos, None, ty);
+        }
+        let of_term = self.core_expr(of)?;
+        let index = match &of_term.ty {
+            core::Type::Struct(s, _) => self.defs.file.structs[*s]
+                .fields
+                .iter()
+                .position(|f| f.name == name)?,
+            core::Type::Tuple(_) => name.parse().ok()?,
+            _ => return None,
+        };
+        Some(Term::new(
+            Kind::Field {
+                of: Box::new(of_term),
+                name: name.to_string(),
+                index,
+            },
+            ty,
+            pos,
+        ))
+    }
+
+    /// A struct written out: `P(x: 1, y: 2)`, with the fields it leaves out
+    /// given their defaults.
+    fn core_struct(&self, call: &Call, s: usize, ty: core::Type) -> Option<Term> {
+        let def = &self.defs.file.structs[s];
+        let mut fields: Vec<Option<Term>> = vec![None; def.fields.len()];
+        for arg in &call.args {
+            let (name, _) = arg.name.as_ref()?;
+            let at = def.fields.iter().position(|f| &f.name == name)?;
+            fields[at] = Some(self.core_expr(&arg.value)?);
+        }
+        for (at, default) in self.defs.left_out(call) {
+            fields[at] = Some(self.core_expr(default)?);
+        }
+        let args: Option<Vec<Term>> = fields.into_iter().collect();
+        Some(Term::new(Kind::Make(Make::Struct(s), args?), ty, call.pos))
+    }
+
+    /// A pattern, for a value of type `ty`.
+    fn core_pattern(&self, p: &crate::parser::Pattern, ty: &Ty) -> Option<CorePattern> {
+        use crate::parser::Pattern as P;
+        Some(match p {
+            P::Bind {
+                name, var: None, ..
+            } if name == "_" => CorePattern::Any,
+            P::Bind {
+                name, var: None, ..
+            } => CorePattern::Bind(name.clone()),
+            P::Bind { var: Some(_), .. } => return None,
+            P::Number {
+                magnitude,
+                negative,
+                ..
+            } => {
+                let n = i128::try_from(*magnitude).ok()?;
+                CorePattern::Lit(Lit::Int(if *negative { -n } else { n }))
+            }
+            P::Text { text, .. } => CorePattern::Lit(Lit::Text(text.clone())),
+            P::Case { name, inner, .. } => {
+                let Ty::Enum(e, args) = ty else {
+                    return None;
+                };
+                let case = self.defs.case_of(*e, name)?;
+                let held = self.defs.cases[*e][case].as_ref();
+                let inner = match (inner, held) {
+                    (Some(p), Some(held)) => {
+                        let held_ty = held.subst(args);
+                        Some(Box::new(self.core_pattern(p, &held_ty)?))
+                    }
+                    (None, _) => None,
+                    _ => return None,
+                };
+                CorePattern::Case(case, inner)
+            }
+            P::Tuple { items, .. } => {
+                let Ty::Tuple(tys) = ty else {
+                    return None;
+                };
+                if items.len() != tys.len() {
+                    return None;
+                }
+                CorePattern::Tuple(
+                    items
+                        .iter()
+                        .zip(tys)
+                        .map(|(p, t)| self.core_pattern(p, t))
+                        .collect::<Option<_>>()?,
+                )
+            }
+        })
+    }
+
+    /// A `match` on any value, by its patterns.
+    fn core_choose(&self, m: &crate::parser::Match, ty: core::Type) -> Option<Term> {
+        let of_ty = self.types.get(&addr(&m.of))?;
+        let of = self.core_expr(&m.of)?;
+        let arms: Option<Vec<(CorePattern, Term)>> = m
+            .arms
+            .iter()
+            .map(|a| {
+                Some((
+                    self.core_pattern(&a.pattern, of_ty)?,
+                    self.core_block(&a.body)?,
+                ))
+            })
+            .collect();
+        let pos = of.pos;
+        Some(Term::new(
+            Kind::Choose {
+                of: Box::new(of),
+                arms: arms?,
+            },
+            ty,
+            pos,
+        ))
     }
 }

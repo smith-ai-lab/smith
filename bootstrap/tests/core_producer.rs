@@ -17,6 +17,10 @@ pub const ONCE: &[Test] = &[
         the_core_term_of_a_function_of_numbers_and_bool_gives_what_the_program_prints,
     ),
     (
+        "the_core_term_of_a_function_of_structs_tuples_and_enums_gives_what_the_program_prints",
+        the_core_term_of_a_function_of_structs_tuples_and_enums_gives_what_the_program_prints,
+    ),
+    (
         "a_sum_a_difference_and_a_product_are_calls_of_operators_with_the_exact_range",
         a_sum_a_difference_and_a_product_are_calls_of_operators_with_the_exact_range,
     ),
@@ -26,29 +30,77 @@ pub const ONCE: &[Test] = &[
     ),
 ];
 
-/// A value: a number, or a case of an enum, by its place among the cases.
-type Value = i128;
+/// A value: a number, a struct or a tuple with its parts, or a case of an
+/// enum with what it holds. `bool` is an enum, so it is a case.
+#[derive(Clone, Debug, PartialEq)]
+enum Value {
+    Int(i128),
+    Text(Vec<u8>),
+    Parts(Vec<Value>),
+    Case(usize, Vec<Value>),
+}
+
+fn int(v: &Value) -> i128 {
+    match v {
+        Value::Int(n) => *n,
+        other => panic!("{other:?} is not a number"),
+    }
+}
+
+fn matches(p: &Pattern, v: &Value, env: &mut Vec<(String, Value)>) -> bool {
+    match (p, v) {
+        (Pattern::Any, _) => true,
+        (Pattern::Bind(n), v) => {
+            env.push((n.clone(), v.clone()));
+            true
+        }
+        (Pattern::Lit(Lit::Int(n)), Value::Int(m)) => n == m,
+        (Pattern::Lit(Lit::Text(t)), Value::Text(u)) => t == u,
+        (Pattern::Case(c, inner), Value::Case(d, held)) => {
+            c == d
+                && match inner {
+                    None => true,
+                    Some(p) => matches(p, &held[0], env),
+                }
+        }
+        (Pattern::Tuple(ps), Value::Parts(vs)) => {
+            ps.iter().zip(vs).all(|(p, v)| matches(p, v, env))
+        }
+        _ => false,
+    }
+}
 
 fn work_out(all: &[Function], t: &Term, env: &mut Vec<(String, Value)>) -> Value {
+    let truth = |b: bool| Value::Case(usize::from(b), vec![]);
     match &t.kind {
-        Kind::Lit(Lit::Int(n)) => *n,
-        Kind::Lit(Lit::Text(_)) => panic!("a text"),
-        Kind::Name(n) => env.iter().rfind(|(k, _)| k == n).expect("a bound name").1,
-        Kind::Make(Make::Case(_, case), _) => *case as i128,
+        Kind::Lit(Lit::Int(n)) => Value::Int(*n),
+        Kind::Lit(Lit::Text(text)) => Value::Text(text.clone()),
+        Kind::Name(n) => env.iter().rfind(|(k, _)| k == n).expect("a bound name").1.clone(),
+        Kind::Make(Make::Case(_, case), args) => {
+            Value::Case(*case, args.iter().map(|a| work_out(all, a, env)).collect())
+        }
+        Kind::Make(Make::Struct(_) | Make::Tuple, args) => {
+            Value::Parts(args.iter().map(|a| work_out(all, a, env)).collect())
+        }
+        Kind::Make(Make::List, _) => panic!("a list"),
+        Kind::Field { of, index, .. } => match work_out(all, of, env) {
+            Value::Parts(parts) => parts[*index].clone(),
+            other => panic!("{other:?} has no fields"),
+        },
         Kind::Call {
             callee: Callee::Operator(op),
             args,
         } => {
-            let (a, b) = (work_out(all, &args[0], env), work_out(all, &args[1], env));
+            let (a, b) = (int(&work_out(all, &args[0], env)), int(&work_out(all, &args[1], env)));
             match op {
-                Operator::Add => a + b,
-                Operator::Sub => a - b,
-                Operator::Mul => a * b,
-                Operator::Less => i128::from(a < b),
-                Operator::LessEqual => i128::from(a <= b),
-                Operator::Greater => i128::from(a > b),
-                Operator::GreaterEqual => i128::from(a >= b),
-                Operator::Equal => i128::from(a == b),
+                Operator::Add => Value::Int(a + b),
+                Operator::Sub => Value::Int(a - b),
+                Operator::Mul => Value::Int(a * b),
+                Operator::Less => truth(a < b),
+                Operator::LessEqual => truth(a <= b),
+                Operator::Greater => truth(a > b),
+                Operator::GreaterEqual => truth(a >= b),
+                Operator::Equal => truth(a == b),
             }
         }
         Kind::Call {
@@ -73,11 +125,16 @@ fn work_out(all: &[Function], t: &Term, env: &mut Vec<(String, Value)>) -> Value
         }
         Kind::Choose { of, arms } => {
             let v = work_out(all, of, env);
-            let (_, body) = arms
-                .iter()
-                .find(|(p, _)| matches!(p, Pattern::Case(c, None) if *c as i128 == v))
-                .expect("an arm");
-            work_out(all, body, env)
+            for (p, body) in arms {
+                let mark = env.len();
+                if matches(p, &v, env) {
+                    let r = work_out(all, body, env);
+                    env.truncate(mark);
+                    return r;
+                }
+                env.truncate(mark);
+            }
+            panic!("no arm for {v:?}")
         }
         other => panic!("{other:?}"),
     }
@@ -171,8 +228,11 @@ fn the_core_term_of_a_function_of_numbers_and_bool_gives_what_the_program_prints
             return;
         };
         let f = all.iter().find(|f| f.name == "f").expect("a term for f");
-        let mut env = vec![("a".to_string(), p.a), ("b".to_string(), p.b)];
-        let got = work_out(&all, &f.body, &mut env);
+        let mut env = vec![
+            ("a".to_string(), Value::Int(p.a)),
+            ("b".to_string(), Value::Int(p.b)),
+        ];
+        let got = int(&work_out(&all, &f.body, &mut env));
         let printed = outcome(&p.source);
         assert_eq!(
             printed,
@@ -212,11 +272,64 @@ fn a_sum_a_difference_and_a_product_are_calls_of_operators_with_the_exact_range(
 
 fn a_function_with_anything_else_in_it_has_no_core_term() {
     let source = with_header(
-        "fn word(a: Byte) -> str { \"hi\" }\n\nfn plain(a: Byte) -> Byte { a }\n\nfn main() ! console, alloc {\n  print(word(plain(1)))\n}\n"
+        "fn first(xs: List[Byte]) -> u64 { xs.size }\n\nfn plain(a: Byte) -> Byte { a }\n\nfn main() ! console, alloc {\n  print(\"{first([1])}\")\n  print(\"{plain(2)}\")\n}\n"
             .to_string(),
     );
     let all = core_terms(source.as_bytes()).expect("checks");
     let names: Vec<&str> = all.iter().map(|f| f.name.as_str()).collect();
     assert!(names.contains(&"plain"), "{names:?}");
-    assert!(!names.contains(&"word"), "{names:?}");
+    assert!(!names.contains(&"first"), "{names:?}");
+}
+
+#[derive(Debug)]
+struct Data {
+    source: String,
+    k: i128,
+    a: i128,
+    b: i128,
+}
+
+fn data(g: &mut Gen) -> Data {
+    let (k, a, b) = (number(g), number(g), number(g));
+    let first = ["a", "b", "p.x", "p.y"][g.below(4)];
+    let order = ["<", "<=", ">", ">=", "=="][g.below(5)];
+    let pick = number(g);
+    Data {
+        source: with_header(format!(
+            "struct P {{\n  x: i32\n  y: i32\n}}\n\n\
+enum S {{\n  dot\n  circle: i32\n  rect: P\n}}\n\n\
+fn make(k: i32, a: i32, b: i32) -> S {{\n  if k < 0 {{ S.dot }} else if k == 0 {{ .circle(a) }} else {{ .rect(P(x: a, y: b)) }}\n}}\n\n\
+fn size(s: S, a: i32, b: i32) -> i32 {{\n  match s {{\n    .dot {{ {pick} }}\n    .circle(r) {{ r }}\n    .rect(p) {{ if p.x {order} p.y {{ {first} }} else {{ p.y }} }}\n  }}\n}}\n\n\
+fn pair(a: i32, b: i32) -> i32 {{\n  match (a, b) {{\n    (0, y) {{ y }}\n    (x, _) {{ x }}\n  }}\n}}\n\n\
+fn f(k: i32, a: i32, b: i32) -> i32 {{\n  pair(size(make(k, a, b), a, b), a)\n}}\n\n\
+fn main() ! console, alloc {{\n  print(\"{{f({k}, {a}, {b})}}\")\n}}\n"
+        )),
+        k,
+        a,
+        b,
+    }
+}
+
+/// For every function of structs, tuples, enums, `match`, and fields, the
+/// term is worked out to what the program prints.
+fn the_core_term_of_a_function_of_structs_tuples_and_enums_gives_what_the_program_prints() {
+    generate::check(121, 150, data, |p| {
+        let Ok(all) = core_terms(p.source.as_bytes()) else {
+            return;
+        };
+        let f = all.iter().find(|f| f.name == "f").expect("a term for f");
+        let mut env = vec![
+            ("k".to_string(), Value::Int(p.k)),
+            ("a".to_string(), Value::Int(p.a)),
+            ("b".to_string(), Value::Int(p.b)),
+        ];
+        let got = int(&work_out(&all, &f.body, &mut env));
+        assert_eq!(
+            outcome(&p.source),
+            Outcome {
+                stdout: format!("{got}\n").into_bytes(),
+                status: 0
+            }
+        );
+    });
 }

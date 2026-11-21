@@ -79,7 +79,7 @@ fn a_term_is_written_out_with_each_of_its_parts_in_order() {
             name: "x".to_string(),
             value: Box::new(lit(7, 1)),
             rest: Box::new(Term::new(
-                Kind::Field { of: Box::new(pair), name: "0".to_string() },
+                Kind::Field { of: Box::new(pair), name: "0".to_string(), index: 0 },
                 nat(),
                 at(2),
             )),
