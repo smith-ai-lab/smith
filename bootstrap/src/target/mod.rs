@@ -310,20 +310,6 @@ impl Target {
         }
     }
 
-    /// Whether an executable for the target asks the system for random bytes
-    /// where a program asks `entropy` for them, and does not say that the
-    /// system gave none.
-    pub fn answers_entropy(self) -> bool {
-        match self {
-            Target::LinuxX64
-            | Target::LinuxArm64
-            | Target::MacosX64
-            | Target::MacosArm64
-            | Target::Wasm => true,
-            Target::WindowsX64 | Target::WindowsArm64 => false,
-        }
-    }
-
     /// Whether the target builds a function that has a float.
     pub fn builds_floats(self) -> bool {
         match self {

@@ -5,7 +5,10 @@
 //! From `KERNEL32.dll` the program uses only thin wrappers over the kernel:
 //! `GetStdHandle`, `WriteFile`, `ExitProcess`, and, in a program that asks
 //! for memory, `VirtualAlloc`, and, in a program that takes the words it was
-//! started with, `GetCommandLineW`. It uses no C runtime.
+//! started with, `GetCommandLineW`. In a program that asks for random bytes it
+//! uses `ProcessPrng` of `bcryptprimitives.dll`, the system's generator of
+//! them, which is the one thing it takes from another library. It uses no C
+//! runtime.
 //! Nothing from the system is needed to build: the import tables that ask
 //! the loader for the library and its symbols are written here.
 
@@ -45,17 +48,39 @@ pub const WRITE_FILE: usize = 1;
 pub const EXIT_PROCESS: usize = 2;
 pub const VIRTUAL_ALLOC: usize = 3;
 pub const GET_COMMAND_LINE: usize = 4;
+/// The library of `ProcessPrng`, which fills bytes with bytes nobody can
+/// predict and always succeeds.
+const PRNG_DLL: &[u8] = b"bcryptprimitives.dll";
+const PRNG: &str = "ProcessPrng";
+/// `ProcessPrng`'s slot in the import address table, which follows the slots
+/// of `KERNEL32.dll` and the one that ends them. A program that asks for it
+/// imports every symbol of `KERNEL32.dll`, so it is always this one.
+pub const PROCESS_PRNG: usize = IMPORTS.len() + 1;
+
+/// What a program imports.
+pub struct Needs {
+    /// The symbols of `KERNEL32.dll`.
+    pub kernel: &'static [&'static str],
+    /// Whether it imports `ProcessPrng`.
+    pub prng: bool,
+}
 
 /// The symbols a program imports: `VirtualAlloc` only if it asks for memory,
 /// and `GetCommandLineW` only if it takes the words it was started with,
-/// which asks for memory too.
-pub fn imports(allocates: bool, takes_arguments: bool) -> &'static [&'static str] {
-    if takes_arguments {
+/// which asks for memory too, and `ProcessPrng` only if it asks for random
+/// bytes, which asks for memory to say that it could not get them, and so
+/// imports the rest.
+pub fn imports(allocates: bool, takes_arguments: bool, entropy: bool) -> Needs {
+    let kernel: &'static [&'static str] = if takes_arguments || entropy {
         &IMPORTS
     } else if allocates {
         &IMPORTS[..4]
     } else {
         &IMPORTS[..3]
+    };
+    Needs {
+        kernel,
+        prng: entropy,
     }
 }
 
@@ -92,18 +117,18 @@ struct Imports {
 }
 
 /// The executable, whose code and data take `text_size` bytes, which
-/// imports `names`. `text` is given where the code is and where the import
+/// imports `needs`. `text` is given where the code is and where the import
 /// address table is, each as an offset from the image's base, and gives the
 /// code and its data.
 pub fn executable(
     machine: &Machine,
     text_size: usize,
-    names: &[&str],
+    needs: &Needs,
     text: impl FnOnce(u64, u64) -> Vec<u8>,
 ) -> Vec<u8> {
     let text_rva = SECTION_ALIGNMENT;
     let idata_rva = (text_rva + text_size as u32).next_multiple_of(SECTION_ALIGNMENT);
-    let imports = import_tables(idata_rva, names);
+    let imports = import_tables(idata_rva, needs);
     let iat_rva = idata_rva + imports.iat;
     let text = text(u64::from(text_rva), u64::from(iat_rva));
     assert_eq!(text.len(), text_size);
@@ -260,19 +285,31 @@ fn section_header(out: &mut Vec<u8>, section: &Section) {
     put32(out, section.characteristics);
 }
 
-/// The import directory, with one entry for `KERNEL32.dll` and one that
-/// ends it; the lookup table and the address table, each a slot for every
-/// symbol and one that ends it; then each symbol's hint and name, and the
-/// library's name. `rva` is where the section is in memory.
-fn import_tables(rva: u32, symbols: &[&str]) -> Imports {
-    let directory_size = 2 * 20;
-    let table_size = 8 * (symbols.len() as u32 + 1);
+/// The import directory, with one entry for `KERNEL32.dll`, one for the
+/// library of `ProcessPrng` when it is needed, and one that ends it; the lookup
+/// tables, then the address tables, which follow one another so that a slot
+/// of the second is counted on from the first, each a slot for every symbol
+/// and one that ends it; then each symbol's hint and name, and the libraries'
+/// names. `rva` is where the section is in memory.
+fn import_tables(rva: u32, needs: &Needs) -> Imports {
+    let libraries = 1 + u32::from(needs.prng);
+    let directory_size = (libraries + 1) * 20;
+    let first_size = 8 * (needs.kernel.len() as u32 + 1);
+    let second_size = if needs.prng { 16 } else { 0 };
     let lookup = directory_size;
-    let iat = lookup + table_size;
+    let second_lookup = lookup + first_size;
+    let iat = second_lookup + second_size;
+    let second_iat = iat + first_size;
+    let names_start = second_iat + second_size;
     let mut names = Vec::new();
     let mut name_offsets = Vec::new();
-    let names_start = iat + table_size;
-    for name in symbols {
+    let symbols: Vec<&str> = needs
+        .kernel
+        .iter()
+        .copied()
+        .chain(needs.prng.then_some(PRNG))
+        .collect();
+    for name in &symbols {
         name_offsets.push(names_start + names.len() as u32);
         names.extend_from_slice(&[0, 0]); // no hint
         names.extend_from_slice(name.as_bytes());
@@ -284,6 +321,11 @@ fn import_tables(rva: u32, symbols: &[&str]) -> Imports {
     let dll = names_start + names.len() as u32;
     names.extend_from_slice(DLL);
     names.push(0);
+    let second_dll = names_start + names.len() as u32;
+    if needs.prng {
+        names.extend_from_slice(PRNG_DLL);
+        names.push(0);
+    }
 
     let mut bytes = Vec::new();
     put32(&mut bytes, rva + lookup);
@@ -291,18 +333,30 @@ fn import_tables(rva: u32, symbols: &[&str]) -> Imports {
     put32(&mut bytes, 0); // no forwarders
     put32(&mut bytes, rva + dll);
     put32(&mut bytes, rva + iat);
+    if needs.prng {
+        put32(&mut bytes, rva + second_lookup);
+        put32(&mut bytes, 0);
+        put32(&mut bytes, 0);
+        put32(&mut bytes, rva + second_dll);
+        put32(&mut bytes, rva + second_iat);
+    }
     bytes.resize(directory_size as usize, 0);
+    let kernel_count = needs.kernel.len();
     for _ in 0..2 {
-        for offset in &name_offsets {
+        for offset in &name_offsets[..kernel_count] {
             put64(&mut bytes, u64::from(rva + offset));
         }
         put64(&mut bytes, 0);
+        if needs.prng {
+            put64(&mut bytes, u64::from(rva + name_offsets[kernel_count]));
+            put64(&mut bytes, 0);
+        }
     }
     bytes.extend_from_slice(&names);
     Imports {
         bytes,
         iat,
-        iat_size: table_size,
+        iat_size: first_size + second_size,
         directory_size,
     }
 }

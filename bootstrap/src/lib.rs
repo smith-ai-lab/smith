@@ -262,15 +262,6 @@ fn emit(
     map: bool,
     timings: &mut Timings,
 ) -> Result<Built, Vec<diag::Error>> {
-    if program.asks_for_entropy() && !target.answers_entropy() {
-        return Err(vec![diag::Error::new(
-            diag::Pos::START,
-            format!(
-                "`entropy` is not built for the target `{}` yet, so a program that asks for it cannot be built for it",
-                target.name()
-            ),
-        )]);
-    }
     // The stage of `inline` is the time of `tail` too, which looks once at each
     // function and changes the few that call themselves last.
     let program = timings.stage("inline", || scalar::inline(scalar::tail(program)));
