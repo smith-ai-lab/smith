@@ -2366,6 +2366,7 @@ fn check_file(
         value_calls: Set::default(),
         fn_values: Map::default(),
         named: Set::default(),
+        handlers: Set::default(),
         named_calls: Map::default(),
         type_args: Map::default(),
         no_impl: false,
@@ -2381,7 +2382,6 @@ fn check_file(
     checker.main(main);
     for &item in &reached {
         match item {
-            Item::Fn(f) if defs.provided(f).is_some() => {}
             Item::Fn(f) => checker.signature(f),
             Item::Struct(s) => checker.structure(s),
             Item::Enum(e) => checker.enumeration(e),
@@ -2429,6 +2429,7 @@ fn check_file(
         value_calls: checker.value_calls,
         fn_values: checker.fn_values,
         named: checker.named,
+        handlers: checker.handlers,
         named_calls: checker.named_calls,
         type_args: checker.type_args,
         core_vars: RefCell::new(Vec::new()),
@@ -5610,7 +5611,6 @@ struct View<'a> {
 
 /// What a checked call does, once every type in it is known.
 enum Callee {
-    Print,
     /// `__eprint`, which the prelude calls to write a line to standard error.
     Eprint,
     /// `__end`, which the prelude calls to end the program with a status.
@@ -5687,9 +5687,7 @@ impl<'a> Defs<'a> {
                         .map(|f| (f.name.as_str(), f.default.as_ref()))
                         .collect();
                     (fields, false)
-                } else if self.provided_by_name(call.name_pos, name).is_some()
-                    || is_stream_call(call)
-                {
+                } else if is_stream_call(call) {
                     return Vec::new();
                 } else if let Some(f) = self.function(call.name_pos, name) {
                     (params(&file.functions[f]), true)
@@ -5857,6 +5855,9 @@ struct Typed<'a> {
     /// Which of those were given for a type parameter that a trait bounds,
     /// and so are the type whose one value the function is.
     named: Set<usize>,
+    /// The effects a call of an effect's name handles, by their places among
+    /// the file's.
+    handlers: Set<usize>,
     /// The calls of a name that holds a function by its type, by their
     /// addresses, with the function each calls.
     named_calls: Map<usize, usize>,
@@ -5919,9 +5920,6 @@ impl<'a> Typed<'a> {
                         unreachable!("checked")
                     };
                     return Callee::Construct(s, args);
-                }
-                if let Some(provided) = defs.provided_by_name(call.name_pos, name) {
-                    return (provided.answer)();
                 }
                 if name == "__eprint" {
                     return Callee::Eprint;
@@ -6019,8 +6017,7 @@ impl<'a> Typed<'a> {
                 }
             },
             Callee::Construct(_, args) => args.clone(),
-            Callee::Print
-            | Callee::Eprint
+            Callee::Eprint
             | Callee::End
             | Callee::Case(_)
             | Callee::Value
@@ -6202,6 +6199,9 @@ struct Checker<'a> {
     fn_values: Map<usize, usize>,
     /// Which of those were given for a type parameter that a trait bounds.
     named: Set<usize>,
+    /// The effects a call of an effect's name handles, by their places among
+    /// the file's.
+    handlers: Set<usize>,
     /// The calls of a name that holds a function by its type, with the function.
     named_calls: Map<usize, usize>,
     /// The types a call writes in brackets after its trait.

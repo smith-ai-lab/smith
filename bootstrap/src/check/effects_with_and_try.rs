@@ -14,24 +14,18 @@ pub(super) const BUILT: &[&str] = &["console", "alloc", "diverge"];
 pub(super) const BUILT_IN_EFFECTS: &[&str] =
     &["alloc", "spawn", "gpu", "diverge", "foreign", "exec"];
 
-/// What the target answers an operation of an effect with, when the effect
-/// reaches `main` with no handler: the effect and the operation as the
-/// library's source declares them, what a call of the operation lowers to,
-/// and the signature the compiler builds the call from, for as much of the
-/// declaration as it builds.
+/// An operation of an effect that the target answers when the effect reaches
+/// `main` with no handler: the effect and the operation as the library's
+/// source declares them.
 pub(super) struct Provided {
     pub(super) effect: &'static str,
     pub(super) operation: &'static str,
-    pub(super) answer: fn() -> Callee,
-    pub(super) signature: fn() -> Signature,
 }
 
 /// The operations the target provides, which a handler will replace.
 pub(super) const PROVIDED: &[Provided] = &[Provided {
     effect: "console",
     operation: "print",
-    answer: || Callee::Print,
-    signature: Signature::print,
 }];
 
 /// A name as the program writes it: without the module that a name which is
@@ -169,12 +163,6 @@ impl<'a> Defs<'a> {
             .iter()
             .find(|p| p.effect == effect && p.operation == written_name(&f.name))
     }
-
-    /// What the target provides for a call of the function the name holds,
-    /// if it is the operation of a provided effect.
-    pub(super) fn provided_by_name(&self, pos: Pos, name: &str) -> Option<&'static Provided> {
-        self.provided(self.function(pos, name)?)
-    }
 }
 
 /// Whether the target answers a declared effect: it is one of the library's
@@ -241,6 +229,7 @@ impl<'a> Checker<'a> {
     /// Checks a call of the name of an effect, which handles it: the lambdas
     /// for the operations and the body, which gives what the call gives.
     pub(super) fn handler_call(&mut self, body: &mut Body<'a>, call: &Call, effect: usize) -> Ty {
+        self.handlers.insert(effect);
         let signature = self.defs.handler_signature(effect);
         let before = self.errors.len();
         let private = self.defs.private_operations(effect, call.name_pos);
@@ -321,7 +310,10 @@ impl<'a> Checker<'a> {
         if body.default.is_some() {
             self.errors.push(Error::new(
                 pos,
-                format!("a default carries no effect, and {what} needs the `{effect}` effect"),
+                format!(
+                    "a default carries no effect, and {what} needs the `{}` effect",
+                    written_name(effect)
+                ),
             ));
             return;
         }
@@ -329,13 +321,14 @@ impl<'a> Checker<'a> {
             return;
         }
         body.missing.push(effect.to_string());
-        let mut effects = body.listed.clone();
-        effects.extend(body.missing.iter().map(String::as_str));
+        let mut effects: Vec<&str> = body.listed.iter().map(|e| written_name(e)).collect();
+        effects.extend(body.missing.iter().map(|e| written_name(e)));
         self.errors.push(
             Error::new(
                 pos,
                 format!(
-                    "{what} needs the `{effect}` effect, which `{}` does not declare",
+                    "{what} needs the `{}` effect, which `{}` does not declare",
+                    written_name(effect),
                     body.owner().name
                 ),
             )

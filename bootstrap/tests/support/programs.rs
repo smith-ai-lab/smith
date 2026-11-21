@@ -1602,10 +1602,9 @@ fn main_statement(
             b.push(")");
         }
         Kind::PrintEnd => {
-            b.push("print(\"a\", ");
-            b.mark(NOT_BUILT, None);
-            b.pick(&["\"b\"", "end: \"\"", "to: stderr"]);
-            b.push(")");
+            b.push("print(\"a\", \"b\", .stdout, ");
+            b.mark("takes 3 arguments", None);
+            b.push("\"c\")");
         }
         Kind::TextWhereNothing => {
             b.mark("returns nothing", None);

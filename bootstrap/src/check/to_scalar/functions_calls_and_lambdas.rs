@@ -586,11 +586,14 @@ impl<'a> Lowering<'a> {
             unreachable!("an operation is a function")
         };
         let (effect, at) = defs.operation_of(f);
-        let handler = out
-            .handlers
-            .iter()
-            .rposition(|h| h.effect == effect)
-            .expect("an effect that is handled where it is asked of");
+        let Some(handler) = out.handlers.iter().rposition(|h| h.effect == effect) else {
+            // No handler is in force, so the target answers it.
+            assert!(
+                defs.provided(f).is_some(),
+                "an effect that is handled where it is asked of"
+            );
+            return self.provided_answer(out, call, instance, env);
+        };
         let func = out.handlers[handler].operations[at].clone();
         let params = defs.params(instance.template);
         let mut args: Vec<Option<Bound<'a>>> = vec![None; params.len()];
@@ -612,6 +615,68 @@ impl<'a> Lowering<'a> {
             result.clear();
         }
         (gives, result)
+    }
+
+    /// Lowers a call of an operation that the target answers because no handler
+    /// is in force: `print` of `console` writes its text and then `end` to
+    /// standard output, or to standard error when `to` is `.stderr`. A `to`
+    /// that is left out is standard output, and is not worked out.
+    fn provided_answer(
+        &mut self,
+        out: &mut Out<'a>,
+        call: &'a Call,
+        instance: Instance,
+        env: &[Ty],
+    ) -> (Ty, Vec<form::Value>) {
+        let defs = self.typed.defs;
+        let params = defs.params(instance.template);
+        let mut args: Vec<Option<Vec<form::Value>>> = vec![None; params.len()];
+        for (arg, at) in call
+            .args
+            .iter()
+            .zip(params_of(&params, &call.args).expect("checked"))
+        {
+            args[at] = Some(self.passed(out, &arg.value, &params[at].1, env));
+        }
+        // What a default builds is the place of the call, as for the text.
+        let place = out.place;
+        for (at, default) in defs.left_out(call) {
+            // The stream a call leaves out is standard output.
+            if at != 2 {
+                let from = out.blocks[out.current].instructions.len();
+                args[at] = Some(self.passed(out, default, &params[at].1, &[]));
+                for i in &mut out.blocks[out.current].instructions[from..] {
+                    i.at = place;
+                }
+            }
+        }
+        let text = args[0].take().expect("given");
+        let end = args[1].take().expect("given");
+        let write = |out: &mut Out<'a>, stream: form::Stream| {
+            for args in [text.clone(), end.clone()] {
+                out.emit(
+                    form::Op::System {
+                        call: form::System::Write(stream),
+                        args,
+                    },
+                    Vec::new(),
+                );
+            }
+        };
+        match args[2].take() {
+            None => write(out, form::Stream::Stdout),
+            Some(to) => {
+                let arms = out.switch(to[0], 2);
+                let mut ends = Vec::new();
+                for (arm, stream) in [(0, form::Stream::Stdout), (1, form::Stream::Stderr)] {
+                    out.current = arms[arm];
+                    write(out, stream);
+                    ends.push((out.current, Vec::new()));
+                }
+                out.join(&[], ends);
+            }
+        }
+        (Ty::Nothing, Vec::new())
     }
 
     /// The number of the handler a call of an effect's name installs, which is
@@ -713,7 +778,7 @@ impl<'a> Lowering<'a> {
         }
         let mut handled: Vec<usize> = effects
             .into_iter()
-            .filter(|e| defs.handled(e))
+            .filter(|e| self.handled(e))
             .filter_map(|e| defs.effect_named(e))
             .collect();
         handled.sort_unstable();
@@ -791,8 +856,18 @@ impl<'a> Lowering<'a> {
             return None;
         };
         (defs.signatures[*f].effects.iter())
-            .any(|e| defs.handled(e))
+            .any(|e| self.handled(e))
             .then_some(*f)
+    }
+
+    /// Whether a handler answers the effect: the target does not, or a call
+    /// of the effect's name in the program does in its place.
+    pub(super) fn handled(&self, effect: &str) -> bool {
+        let defs = self.typed.defs;
+        defs.handled(effect)
+            || defs
+                .effect_named(effect)
+                .is_some_and(|e| self.typed.handlers.contains(&e))
     }
 
     /// One copy of the function, for no handler.

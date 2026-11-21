@@ -1,3 +1,8 @@
+pub enum Stream {
+  stdout
+  stderr
+}
+
 pub effect console {
   pub fn print(text: str, end: str = "\n", to: Stream = .stdout)
 }

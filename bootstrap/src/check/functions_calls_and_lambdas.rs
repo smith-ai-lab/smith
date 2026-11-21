@@ -668,14 +668,6 @@ impl<'a> Checker<'a> {
         if let Some(narrowing) = narrowing(defs, call) {
             return self.narrow(body, call, narrowing, want);
         }
-        if let Some(provided) = defs.provided_by_name(call.name_pos, name) {
-            let print = (provided.signature)();
-            if self.effect_in_default(body, call, &print) {
-                return self.unknown_call(body, call);
-            }
-            self.arguments(body, call, &print, true, None, None);
-            return Ty::Nothing;
-        }
         if let (Some(effect), false) = (
             defs.effect_named(name),
             defs.function(call.name_pos, name).is_some(),
@@ -712,7 +704,8 @@ impl<'a> Checker<'a> {
                 Want::Ty(t) => Some(t),
                 _ => None,
             };
-            let mut sol = self.arguments(body, call, sig, false, None, placed);
+            let is_print = defs.provided(f).is_some();
+            let mut sol = self.arguments(body, call, sig, is_print, None, placed);
             defs.complete_outs(&sig.scope.requires, &mut sol, body.scope);
             for (i, d) in sig.param_defaults.iter().enumerate() {
                 if let (None, Some(d)) = (&sol[i], d) {
@@ -943,7 +936,7 @@ impl<'a> Checker<'a> {
                         param = Some(next);
                         next += 1;
                     }
-                    None if is_print => {
+                    None if is_print && signature.params.len() == 1 => {
                         look_into = false;
                         if !too_many {
                             self.errors.push(Error::unsupported(
@@ -977,7 +970,10 @@ impl<'a> Checker<'a> {
                                 given[i] = true;
                                 param = Some(i);
                             }
-                            None if is_print && (name == "end" || name == "to") => {
+                            None if is_print
+                                && signature.params.len() == 1
+                                && (name == "end" || name == "to") =>
+                            {
                                 look_into = false;
                                 self.errors.push(Error::unsupported(
                                     *pos,

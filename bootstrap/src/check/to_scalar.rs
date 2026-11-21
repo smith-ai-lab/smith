@@ -1084,11 +1084,8 @@ impl<'a> Lowering<'a> {
                     let values = self.case(out, &ty, k, payload, env);
                     (ty, values)
                 }
-                Callee::Print | Callee::Eprint => {
-                    let stream = match typed.callee(call, env) {
-                        Callee::Print => form::Stream::Stdout,
-                        _ => form::Stream::Stderr,
-                    };
+                Callee::Eprint => {
+                    let stream = form::Stream::Stderr;
                     let (_, text) = self.expr(out, &call.args[0].value, env);
                     let newline = self.text(out, b"\n");
                     for args in [text, newline] {
