@@ -2330,6 +2330,10 @@ fn check_file(
                     && a.scope.requires.is_empty()
                     && b.scope.requires.is_empty()
                     && overlaps(&defs.outs[k], a, b)
+                    // Of two that overlap, the one for fewer types is used
+                    // where both fit.
+                    && !defs.more_specific(i, j)
+                    && !defs.more_specific(j, i)
             });
             if covered && let Some(info) = &mut defs.impls[j] {
                 info.chosen = false;
