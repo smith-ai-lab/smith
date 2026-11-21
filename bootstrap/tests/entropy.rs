@@ -51,8 +51,8 @@ fn every_executable_for_this_machine_that_asks_for_entropy_prints_64_hex_digits_
         .filter(|t| t.is_machine_code() && t.answers_entropy())
     {
         let bytes = targets::build(DRAW.as_bytes(), target).unwrap_or_else(|e| panic!("{e:?}"));
+        targets::record(target, &[&bytes]);
         if targets::fingerprinting() {
-            targets::record(target, &[&bytes]);
             continue;
         }
         let lines: Vec<String> = (0..2)
@@ -84,16 +84,9 @@ fn ran(target: Target, entropy: Entropy) -> Option<aarch64::Ran> {
     if aarch64::is_executable(&bytes) {
         return Some(aarch64::run_with(&bytes, entropy));
     }
-    if Target::host() != Some(target) {
-        return None;
-    }
-    let ran = targets::run(&bytes);
-    Some(aarch64::Ran {
-        stdout: ran.stdout,
-        stderr: Vec::new(),
-        status: ran.status,
-        steps: 0,
-    })
+    // An executable for this machine is run by the test of the machine, which
+    // is the one a fingerprint holds.
+    None
 }
 
 /// The line the program prints, which is 64 hex digits.
