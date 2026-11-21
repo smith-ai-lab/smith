@@ -7,7 +7,8 @@ built:
   - "`std.http`, with `Request`, `Response`, `Status` and the errors `NotFound`, `BadRequest`, and `Unauthorized` with 404, 400, and 401, and the readers of a request's parts: `segments`, `route_match`, which gives each `:name` part of a path that a pattern fits, and `query_parts`"
   - "`Params`, which a type that is told of the parameters of a function says them in order with each marked as read from the body or not, and `Reading` with `FromRequest`, which reads a struct of those parameters from the parts of the path, the members of the query, and the body, as `Deserialize` reads it: a part as the type of its parameter by [`from_text`](fromtext.md), and a struct, an enum, a list, or a tuple from the body as JSON"
   - "`Respond`, whose function `respond(value)` gives a `Response`: `Serialize` gives it for every type with `Serialize`, as JSON with status 200 and the header `content-type: application/json`, and the library writes `impl`s for `Html` (status 200, `text/html; charset=utf-8`), `Text` (200, `text/plain; charset=utf-8`), `Redirect` (302 with the header `location`), `()` (204, no body), and `Result[T, E]` for a `T` with `Respond` and an `E` with `Status` and `Serialize`, which is the response of the value, or status `status(e)` with `e` as JSON; a type's own `impl` is the one used, as [Traits](../language/traits.md#when-two-impls-fit) says"
-  - "not `routes`, `get` and the other methods, `at`, a guard, `listen`, or the reading of a percent sign in a part"
+  - "the effect `http`, whose operations `request` and `send` are what a deployment answers, `routes`, the handler that asks `http` for the request, answers it with the first route whose method and path it fits and with 404 when none does, and gives the response to `http`, and `get`, `post`, `put`, `patch`, and `delete`, which each take a path and a function, read its parameters from the request by `FromRequest`, call it through `Function`, answer with what it gives by `Respond`, and answer 400 with the path and the problem of the `ReadError` as JSON when the request does not fit; the effects of the function are asked of the handlers in force where its name is written, so a `with` of a handler of them is written before `with routes()`"
+  - "not a parameter that has no `FromText` refused when the program is built, the check of a path that names a part the function has no parameter for, a function with two parameters for the body refused when the program is built, `at`, a guard, `listen`, or the reading of a percent sign in a part"
 ---
 
 # HTTP server
@@ -64,7 +65,7 @@ trait Respond[T] {
 | A struct, an enum, a list, a number, or any type with [`Serialize`](serialize.md) | Status 200, with the value as JSON |
 | An [`Html`](html.md) | Status 200, with the page |
 | `Text(text: "...")` | Status 200, with the text as it is |
-| `Redirect(to: "/login")` | A redirect to that place |
+| `Redirect(to: "/login")` | Status 302, with the header `location` set to that place |
 | `()` | Status 204, with no body |
 
 `Respond` is given to every type that has `Serialize`, as JSON, in the way `Serialize` is given to a type whose parts have it. A type's own `impl` takes the place of the one it is given, which is how `Html`, `Text`, `Redirect`, and `()` answer as they do, and how a type of a program's own answers as it likes: a type that holds a picture writes an `impl` that gives its bytes and says what they are. Nothing of the library's types is special.
@@ -96,6 +97,8 @@ impl Status[Taken] {
 ```
 
 `.ok(v)` is the response of `v`, by `Respond`. `.err(e)` is a response of status `status(e)` whose body is `e` as JSON. An error that is an enum says the status of each case with a `match`. A route whose function gives an error with no `Status` is refused when the program is built, so no failure is answered with a status nobody chose. The library has `NotFound`, `BadRequest`, and `Unauthorized`, with 404, 400, and 401.
+
+`Text` and `Redirect` are structs of `std.http`, so a file that imports `Text` from `std.http` and `Text` from [`std.text`](text.md) writes one of them with its module.
 
 A function of a route is a plain function. It names nothing of HTTP unless it gives one of the library's errors, so it is called from other code and tested as any function is, and the same function may be a tool of an [MCP](mcp.md) server.
 
