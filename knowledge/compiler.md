@@ -280,9 +280,9 @@ A Smith executable carries everything it runs. All of its code is compiled from 
 | --- | --- | --- |
 | Linux | The kernel's system calls, made directly | The kernel keeps them stable, so the executable is fully static and uses no C library |
 | macOS, iOS | `libSystem`, loaded by the system's dynamic loader | Apple changes system call numbers between releases, and Apple silicon does not run a static executable |
-| Windows | `KERNEL32.dll`, loaded by the system's loader | Windows changes system call numbers between builds |
+| Windows | `KERNEL32.dll`, loaded by the system's loader, and `bcryptprimitives.dll` for random bytes | Windows changes system call numbers between builds |
 
-- From a system library a program calls only the thin wrappers over the kernel, such as `write`, `mmap`, and `exit`, or on Windows `WriteFile` and `ExitProcess`. It never uses the C library behind them. Allocation, formatting, and everything else are written in Smith and behave the same on every target.
+- From a system library a program calls only the thin wrappers over the kernel, such as `write`, `mmap`, and `exit`, or on Windows `WriteFile` and `ExitProcess`, and for random bytes `getentropy` on macOS and `ProcessPrng` on Windows. It never uses the C library behind them. Allocation, formatting, and everything else are written in Smith and behave the same on every target.
 - Nothing from the system is needed to build. The compiler writes the records that ask the loader for a library and its symbols, so it needs no SDK and can build for any target from any machine.
 
 ## Why builds are fast

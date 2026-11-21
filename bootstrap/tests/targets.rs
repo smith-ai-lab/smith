@@ -1145,9 +1145,6 @@ fn every_executable_uses_only_thin_wrappers_over_the_kernel() {
         .into_iter()
         .filter(|t| t.is_machine_code())
         .flat_map(|t| programs.map(|p| (t, p)))
-        // A target that does not answer `entropy` refuses the program that
-        // asks for it.
-        .filter(|(t, p)| t.answers_entropy() || *p != crate::entropy::DRAW)
     {
         let bytes = compile(source.as_bytes(), target).unwrap();
         let name = target.name();
@@ -1173,11 +1170,20 @@ fn every_executable_uses_only_thin_wrappers_over_the_kernel() {
             }
         } else if bytes.starts_with(b"MZ") {
             let (libraries, symbols) = pe_imports(&bytes);
-            assert_eq!(libraries, ["KERNEL32.dll"], "{name} links only KERNEL32");
+            // A program that asks for random bytes takes `ProcessPrng`, the
+            // system's generator of them, from the library that holds it.
+            let asks = source == crate::entropy::DRAW;
+            let expected: &[&str] = if asks {
+                &["KERNEL32.dll", "bcryptprimitives.dll"]
+            } else {
+                &["KERNEL32.dll"]
+            };
+            assert_eq!(libraries, expected, "{name} links only what it needs");
             assert!(!symbols.is_empty(), "{name} imports what it calls");
             for symbol in symbols {
                 assert!(
-                    KERNEL32_THIN_WRAPPERS.contains(&symbol.as_str()),
+                    KERNEL32_THIN_WRAPPERS.contains(&symbol.as_str())
+                        || (asks && symbol == "ProcessPrng"),
                     "{name} imports {symbol}, which is not a thin wrapper over the kernel"
                 );
             }

@@ -5,7 +5,8 @@
 use super::Part;
 use super::pe::{
     self, EXIT_PROCESS, GET_COMMAND_LINE, GET_STD_HANDLE, MEM_COMMIT_RESERVE, MOST_PER_WRITE,
-    Machine, PAGE_READWRITE, STD_ERROR_HANDLE, STD_OUTPUT_HANDLE, VIRTUAL_ALLOC, WRITE_FILE,
+    Machine, PAGE_READWRITE, PROCESS_PRNG, STD_ERROR_HANDLE, STD_OUTPUT_HANDLE, VIRTUAL_ALLOC,
+    WRITE_FILE,
 };
 use super::x86_64::{self, Asm, Place, R8, R9, RAX, RBX, RCX, RDI, RDX, RSI, Reg, System, Z};
 use crate::scalar::{Program, Stream};
@@ -33,9 +34,13 @@ const RBX_AT: u32 = 48;
 pub fn emit(program: &Program) -> (Vec<u8>, Vec<Part>) {
     let (asm, data, parts) = x86_64::code::<Windows>(program);
     let size = asm.len() + data.iter().map(|(_, d)| d.len()).sum::<usize>();
-    let imports = pe::imports(program.allocates(), program.takes_arguments());
+    let imports = pe::imports(
+        program.allocates(),
+        program.takes_arguments(),
+        program.asks_for_entropy(),
+    );
     let mut at = 0;
-    let executable = pe::executable(&MACHINE, size, imports, |code, iat| {
+    let executable = pe::executable(&MACHINE, size, &imports, |code, iat| {
         at = code;
         asm.finish(&data, code, iat)
     });
@@ -91,10 +96,22 @@ impl System for Windows {
         asm.call_slot(EXIT_PROCESS);
     }
 
-    /// The system is not asked yet, and `compile` refuses a program that asks
-    /// for bytes for this target, so this is not reached.
+    /// Asks `ProcessPrng` for every byte at once, which takes any count and
+    /// gives a `BOOL` that is not 0 when it filled them. The address and the
+    /// count are in rdi and rsi, which calls preserve.
     fn entropy(asm: &mut Asm) {
+        let refused = asm.label();
+        let end = asm.label();
+        asm.mov(RCX, RDI);
+        asm.mov(RDX, RSI);
+        asm.call_slot(PROCESS_PRNG);
+        asm.test32(RAX);
+        asm.jcc(Z, refused);
+        asm.mov32(RAX, 0);
+        asm.jmp(end);
+        asm.bind(refused);
         asm.mov32(RAX, 1);
+        asm.bind(end);
     }
 
     fn end(asm: &mut Asm) {
