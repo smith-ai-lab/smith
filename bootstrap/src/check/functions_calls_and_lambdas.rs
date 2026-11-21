@@ -496,6 +496,15 @@ impl<'a> Checker<'a> {
             self.fn_values.insert(addr(expr), f);
             let mut items: Vec<Ty> = sig.params.iter().map(|(_, t)| t.clone()).collect();
             items.push(sig.gives.clone());
+            if items.contains(&Ty::Unknown) {
+                // A type the file does not name, as the `Stream` of `print`,
+                // would pass for any type, and lower to no value.
+                self.errors.push(Error::unsupported(
+                    pos,
+                    "passing a function with a type this file does not name as a value",
+                ));
+                return Ty::Unknown;
+            }
             return Ty::func(items);
         };
         self.errors.push(error);
