@@ -411,6 +411,11 @@ impl<'a> Out<'a> {
         self.emit(form::Op::FloatBinary { op, a, b }, vec![ty])[0]
     }
 
+    fn float_sqrt(&mut self, value: form::Value) -> form::Value {
+        let ty = self.types[value.0];
+        self.emit(form::Op::FloatSqrt(value), vec![ty])[0]
+    }
+
     fn float_negate(&mut self, value: form::Value) -> form::Value {
         let ty = self.types[value.0];
         self.emit(form::Op::FloatNegate(value), vec![ty])[0]

@@ -825,6 +825,20 @@ fn on_floats(ty: Type) -> Function {
     }
     results.push(b.float_negate(v[0]));
     types.push(ty);
+    for x in [v[0], v[1]] {
+        results.push(b.float_sqrt(x));
+        types.push(ty);
+    }
+    // The bits of a float, and the float of those bits.
+    let bits_of_first = b.float_bits(v[0]);
+    results.push(bits_of_first);
+    types.push(match float_bits(ty) {
+        FloatBits::F32 => Type::Int(Bits::B32),
+        FloatBits::F64 => Type::Int(Bits::B64),
+    });
+    let bits_of_second = b.float_bits(v[1]);
+    results.push(b.float_from_bits(bits_of_second));
+    types.push(ty);
     for op in FloatCompare::ALL {
         results.push(b.float_compare(op, v[0], v[1]));
         types.push(I8);

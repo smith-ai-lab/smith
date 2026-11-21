@@ -24,7 +24,7 @@ pub struct Impl<'a> {
 /// The traits whose declarations are read only for a program that names one of
 /// them or one of their functions, or imports a module that does: the traits of
 /// operations on whole numbers that a program calls by name.
-pub const NUMERIC: &[&str] = &["Wrapping", "Saturating", "Checked", "Bits"];
+pub const NUMERIC: &[&str] = &["Wrapping", "Saturating", "Checked", "Bits", "Float"];
 
 /// A trait of `NUMERIC`.
 #[derive(Debug, PartialEq, Eq)]

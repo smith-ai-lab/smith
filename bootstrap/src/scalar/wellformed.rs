@@ -3,8 +3,8 @@
 //! its type, and every jump gives a block the parameters it takes.
 
 use super::{
-    Binary, Bits, Constant, End, FloatBinary, Function, Jump, Lane, Op, Program, System, Type,
-    Value,
+    Binary, Bits, Constant, End, FloatBinary, FloatBits, Function, Jump, Lane, Op, Program, System,
+    Type, Value,
 };
 
 /// Why a function is not well formed.
@@ -210,6 +210,42 @@ fn function_of(program: &Program, f: &Function) -> Result<(), Why> {
                         return Err(Why::WrongType(result));
                     }
                     used(value, i, ty)?;
+                }
+                Op::FloatSqrt(value) => {
+                    let [result] = instruction.results[..] else {
+                        return Err(Why::WrongCount);
+                    };
+                    let ty = f.types[result.0];
+                    if !matches!(ty, Type::Float(_)) {
+                        return Err(Why::WrongType(result));
+                    }
+                    used(value, i, ty)?;
+                }
+                Op::FloatBits(value) => {
+                    let [result] = instruction.results[..] else {
+                        return Err(Why::WrongCount);
+                    };
+                    let want = match f.types[value.0] {
+                        Type::Float(FloatBits::F32) => Type::Int(Bits::B32),
+                        Type::Float(FloatBits::F64) => Type::Int(Bits::B64),
+                        _ => return Err(Why::WrongType(*value)),
+                    };
+                    if f.types[result.0] != want {
+                        return Err(Why::WrongType(result));
+                    }
+                }
+                Op::FloatFromBits(value) => {
+                    let [result] = instruction.results[..] else {
+                        return Err(Why::WrongCount);
+                    };
+                    let want = match f.types[value.0] {
+                        Type::Int(Bits::B32) => Type::Float(FloatBits::F32),
+                        Type::Int(Bits::B64) => Type::Float(FloatBits::F64),
+                        _ => return Err(Why::WrongType(*value)),
+                    };
+                    if f.types[result.0] != want {
+                        return Err(Why::WrongType(result));
+                    }
                 }
                 Op::FloatCompare { a, b, .. } => {
                     let [result] = instruction.results[..] else {

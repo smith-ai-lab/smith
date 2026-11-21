@@ -152,6 +152,10 @@ trait Checked[T] {
   fn checked_rem(a: T, b: T) -> Option[T]
 }
 
+trait Float[T] {
+  fn sqrt(a: T) -> T
+}
+
 trait Bits[T] {
   fn bit_and(a: T, b: T) -> T
   fn bit_or(a: T, b: T) -> T
@@ -680,4 +684,12 @@ impl Fmt[f64] {
 
 impl Repr[f64] {
   fn repr(value: f64) -> str ! alloc { __float_text(value) }
+}
+
+impl Float[f32] {
+  fn sqrt(a: f32) -> f32 { __sqrt(a) }
+}
+
+impl Float[f64] {
+  fn sqrt(a: f64) -> f64 { __sqrt(a) }
 }

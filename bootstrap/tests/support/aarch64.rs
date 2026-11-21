@@ -537,6 +537,13 @@ impl Machine {
         } else if w & 0xff3f_fc00 == 0x1e21_4000 {
             // fneg
             self.f[rd] = u128::from(a ^ if double { 1 << 63 } else { 1 << 31 });
+        } else if w & 0xff3f_fc00 == 0x1e21_c000 {
+            // fsqrt
+            self.f[rd] = if double {
+                u128::from(f64::from_bits(a).sqrt().to_bits())
+            } else {
+                u128::from(f32s(a).sqrt().to_bits())
+            };
         } else if w & 0xffff_fc00 == 0x1e60_4000 {
             // fmov dd, dn
             self.f[rd] = u128::from(a);

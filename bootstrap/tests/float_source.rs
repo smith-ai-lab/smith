@@ -36,6 +36,18 @@ pub const ONCE: &[Test] = &[
         || texts_are_what_rust_says::<f64>(3),
     ),
     (
+        "the_square_root_of_an_f32_is_the_float_nearest_the_exact_root",
+        || roots_are_what_rust_says::<f32>(4),
+    ),
+    (
+        "the_square_root_of_an_f64_is_the_float_nearest_the_exact_root",
+        || roots_are_what_rust_says::<f64>(5),
+    ),
+    (
+        "a_float_written_only_inside_a_string_is_still_a_float_of_the_file",
+        a_float_written_only_inside_a_string_is_still_a_float_of_the_file,
+    ),
+    (
         "a_tie_between_two_shortest_texts_goes_to_the_even_digit",
         a_tie_between_two_shortest_texts_goes_to_the_even_digit,
     ),
@@ -65,6 +77,14 @@ pub const MACHINE: &[Test] = &[
     (
         "every_executable_prints_2_5_for_half_of_5",
         every_executable_prints_2_5_for_half_of_5,
+    ),
+    (
+        "every_executable_gives_the_square_root_of_an_f32_that_the_evaluator_gives",
+        || roots_on_every_executable::<f32>(4),
+    ),
+    (
+        "every_executable_gives_the_square_root_of_an_f64_that_the_evaluator_gives",
+        || roots_on_every_executable::<f64>(5),
     ),
     (
         "every_executable_writes_the_shortest_text_of_an_f32",
@@ -582,5 +602,69 @@ pub fn sources() -> Vec<String> {
         generate::sample(1, 0, program::<f64>).0,
         generate::sample(2, 0, text_program::<f32>).0,
         generate::sample(3, 0, text_program::<f64>).0,
+        generate::sample(4, 0, root_program::<f32>).0,
+        generate::sample(5, 0, root_program::<f64>).0,
     ]
+}
+
+/// Rust's square root of a float, which is the one that is rounded once.
+fn root<T: Float>(x: T) -> T {
+    T::from_bits(if T::NAME == "f32" {
+        u64::from(f32::from_bits(x.bits() as u32).sqrt().to_bits())
+    } else {
+        f64::from_bits(x.bits()).sqrt().to_bits()
+    })
+}
+
+/// The program that compares the square root of each float with the one that
+/// Rust gives, as a float written out, and what it must print.
+fn root_program<T: Float>(g: &mut Gen) -> (String, String) {
+    let mut values = texts::<T>(g);
+    // The perfect squares and the numbers beside them, where a root is exact or
+    // is half way between two floats.
+    for k in [1.0f64, 2.0, 3.0, 4.0, 9.0, 25.0, 1e6, 4503599627370496.0] {
+        if let Some(x) = T::parsed(&format!("{:e}", k * k)) {
+            values.extend([x, T::from_bits(x.bits() + 1), T::from_bits(x.bits() - 1)]);
+        }
+    }
+    let t = T::NAME;
+    let mut source = format!(
+        "use std.float (sqrt)\n\nfn main() ! console, alloc {{\n  xs: List[{t}] = [{}]\n",
+        values.iter().map(|x| written(*x)).collect::<Vec<_>>().join(", ")
+    );
+    let mut said = String::new();
+    for (i, x) in values.iter().enumerate() {
+        source += &format!("  print(\"{{sqrt(xs[{i}]) == {}}}\")\n", written(root(*x)));
+        said += "true\n";
+        let _ = x;
+    }
+    source += "}\n";
+    (with_header(source), said)
+}
+
+fn roots_are_what_rust_says<T: Float>(seed: u64) {
+    let (source, said) = generate::sample(seed, 0, root_program::<T>);
+    let lowered = lower(source.as_bytes()).unwrap_or_else(|e| panic!("{e:?} for {source}"));
+    let outcome = scalar::run(&scalar::passes(&lowered));
+    assert_eq!(String::from_utf8_lossy(&outcome.stdout), said, "for {source}");
+}
+
+fn roots_on_every_executable<T: Float>(seed: u64) {
+    let (source, _) = generate::sample(seed, 0, root_program::<T>);
+    let lowered = lower(source.as_bytes()).unwrap_or_else(|e| panic!("{e:?} for {source}"));
+    let outcome = scalar::run(&scalar::passes(&lowered));
+    for target in runnable().into_iter().filter(|t: &Target| t.builds_floats()) {
+        runs_as(source.as_bytes(), target, &outcome);
+    }
+}
+
+/// A float that is written only inside a string, and no other, is a float of
+/// the file, so what floats are compared by is read for it.
+fn a_float_written_only_inside_a_string_is_still_a_float_of_the_file() {
+    let source = with_header(
+        "fn main() ! console, alloc {\n  print(\"{1.5 == 1.5} {2.0 < 3.0} {1.5}\")\n}\n".to_string(),
+    );
+    let lowered = lower(source.as_bytes()).unwrap_or_else(|e| panic!("{e:?} for {source}"));
+    let outcome = scalar::run(&scalar::passes(&lowered));
+    assert_eq!(String::from_utf8_lossy(&outcome.stdout), "true true 1.5\n");
 }

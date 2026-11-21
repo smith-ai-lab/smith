@@ -1,4 +1,4 @@
 use_of_the_prelude.smith:2:5: there is no module `std.prelude`
   2 | use std.prelude (Option)
     |     ^
-  fix: import from one of `std.ascii`, `std.base64`, `std.bits`, `std.console`, `std.der`, `std.describe`, `std.deserialize`, `std.entropy`, `std.fmt`, `std.fromtext`, `std.html`, `std.http`, `std.http1`, `std.http2`, `std.int`, `std.json`, `std.jsonrpc`, `std.jsonschema`, `std.list`, `std.mcp`, `std.random`, `std.serialize`, `std.text`, `std.utf8`, `std.x509`
+  fix: import from one of `std.ascii`, `std.base64`, `std.bits`, `std.console`, `std.der`, `std.describe`, `std.deserialize`, `std.entropy`, `std.float`, `std.fmt`, `std.fromtext`, `std.html`, `std.http`, `std.http1`, `std.http2`, `std.int`, `std.json`, `std.jsonrpc`, `std.jsonschema`, `std.list`, `std.mcp`, `std.random`, `std.serialize`, `std.text`, `std.utf8`, `std.x509`

@@ -1953,6 +1953,19 @@ impl<S: System> Writer<'_, S> {
                 self.vector_float_fused(asm, results[0], *op, *a, *b, *c)
             }
             Op::FloatNegate(value) => self.float_negate(asm, results[0], *value),
+            Op::FloatSqrt(value) => {
+                let t = self.float_target(results[0], &[]);
+                asm.float_arithmetic(0x51, self.width(results[0]), t, self.float_operand(*value));
+                self.float_finish(asm, results[0], t);
+            }
+            Op::FloatBits(value) => {
+                self.float_bits_into(asm, RAX, *value);
+                self.finish(asm, results[0], RAX, true);
+            }
+            Op::FloatFromBits(value) => {
+                self.read_into(asm, RAX, *value);
+                self.float_finish_bits(asm, results[0], RAX);
+            }
             Op::FloatCompare { op, a, b } => self.float_comparison(asm, results[0], *op, *a, *b),
             Op::FloatFromInt { signed, value } => {
                 self.float_from_int(asm, results[0], *signed, *value)

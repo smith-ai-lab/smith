@@ -246,6 +246,9 @@ fn operands(op: &mut Op) -> Vec<&mut Value> {
         Op::Widen { value, .. }
         | Op::Narrow(value)
         | Op::FloatNegate(value)
+        | Op::FloatSqrt(value)
+        | Op::FloatBits(value)
+        | Op::FloatFromBits(value)
         | Op::FloatFromInt { value, .. }
         | Op::IntFromFloat { value, .. }
         | Op::FloatResize(value)

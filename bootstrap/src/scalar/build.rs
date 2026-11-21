@@ -100,6 +100,33 @@ impl Builder {
         self.emit(Op::FloatNegate(value), &[ty])[0]
     }
 
+    pub fn float_sqrt(&mut self, value: Value) -> Value {
+        let ty = self.types[value.0];
+        self.emit(Op::FloatSqrt(value), &[ty])[0]
+    }
+
+    /// The bits of a float, as an integer of its size.
+    pub fn float_bits(&mut self, value: Value) -> Value {
+        let Type::Float(bits) = self.types[value.0] else {
+            panic!("the bits of what is not a float")
+        };
+        let to = match bits {
+            FloatBits::F32 => Bits::B32,
+            FloatBits::F64 => Bits::B64,
+        };
+        self.emit(Op::FloatBits(value), &[Type::Int(to)])[0]
+    }
+
+    /// The float of the size of the integer whose bits are those.
+    pub fn float_from_bits(&mut self, value: Value) -> Value {
+        let to = match self.types[value.0] {
+            Type::Int(Bits::B32) => FloatBits::F32,
+            Type::Int(Bits::B64) => FloatBits::F64,
+            _ => panic!("the bits of a float are 32 or 64"),
+        };
+        self.emit(Op::FloatFromBits(value), &[Type::Float(to)])[0]
+    }
+
     pub fn float_compare(&mut self, op: FloatCompare, a: Value, b: Value) -> Value {
         self.emit(Op::FloatCompare { op, a, b }, &[Type::Int(Bits::B8)])[0]
     }
