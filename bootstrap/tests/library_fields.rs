@@ -167,6 +167,27 @@ fn around(h: &Hidden, takes: bool) -> (String, String) {
   f(encoder())
 }
 "),
+        "Params" => (
+            "Params, no_params",
+            "fn main() {
+  f(no_params())
+}
+",
+        ),
+        "Reading" => (
+            "Reading, reading",
+            "fn main() {
+  f(reading([], [], [], \"\"))
+}
+",
+        ),
+        "In" => (
+            "In, json_in",
+            "fn main() {
+  f(json_in(\"\"))
+}
+",
+        ),
         other => panic!("the test makes no `{other}`, so it needs a way to"),
     };
     let main = if takes {
