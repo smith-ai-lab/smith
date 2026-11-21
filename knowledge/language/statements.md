@@ -2,7 +2,9 @@
 type: specification
 title: Statements
 description: A statement is a type built from what data is built from, a proof is a value of it, and a boolean expression is the statement that it is true, so there is no second language for proofs.
-status: planned
+status: partial
+built:
+  - "a proof function, a function whose result is a statement, whose body is steps the kernel checks: `same`; `arith(p, q)`, which gives an equality of whole numbers that is the sum of the equalities `p` and `q` say, each times a number, with a product of unknowns taken as one unknown of its own; a name given by `unfold(f(x))`, which says that `f(x)` equals the body of `f` with `x` put in, where each condition the body tests is decided by the cases the proof is in; and an `if` that splits the proof into cases, each of which knows which it is in; `replace`, a proof that calls itself, and a statement as a parameter or a field are not built"
 ---
 
 # Statements

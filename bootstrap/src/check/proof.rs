@@ -1651,7 +1651,7 @@ pub(super) fn tails(stmts: &[Stmt], out: &mut Vec<usize>) {
 }
 
 /// How a contract is written, where `s` gives the text for a name.
-fn written_contract(s: &dyn Fn(&str) -> Option<String>, e: &Expr) -> String {
+pub(super) fn written_contract(s: &dyn Fn(&str) -> Option<String>, e: &Expr) -> String {
     let group = |inner: &Expr| match inner {
         Expr::Match(m) if matches!(m.form, Form::And | Form::Or) => {
             format!("({})", written_contract(s, inner))

@@ -4,6 +4,10 @@
 //! failure to end within the steps it was given, or in a term that is not a
 //! value it can work out.
 
+mod proof;
+
+pub use proof::check_proof;
+
 use crate::core::{Callee, Function, Kind, Lit, Make, Operator, Pattern, Source, Term};
 use crate::diag::Pos;
 
@@ -57,10 +61,10 @@ pub struct Machine<'a> {
     last: Option<Why>,
 }
 
-type Env = Vec<(String, Value)>;
+pub type Env = Vec<(String, Value)>;
 
 /// A value, and for a `bool` why it is what it is.
-type Worked = (Value, Option<Why>);
+pub type Worked = (Value, Option<Why>);
 
 impl<'a> Machine<'a> {
     pub fn new(functions: &'a [Function], limit: u64) -> Machine<'a> {
@@ -81,6 +85,11 @@ impl<'a> Machine<'a> {
     /// How many steps have been taken.
     pub fn steps(&self) -> u64 {
         self.steps
+    }
+
+    /// A term worked out in a given environment.
+    pub fn evaluate(&mut self, t: &Term, env: &mut Env) -> Result<Worked, Failure> {
+        self.work(t, env)
     }
 
     /// The function of the file at `place`, called with `args`.

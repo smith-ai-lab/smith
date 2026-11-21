@@ -72,6 +72,45 @@ pub enum Callee {
     Trait(usize, usize),
     /// An operation of whole numbers, which no function of the file is.
     Operator(Operator),
+    /// A step of a proof, which only the body of a proof has.
+    Step(Step),
+}
+
+/// The steps a proof is made of, which the kernel knows and nothing else.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Step {
+    /// `a == a`, and any statement with nothing unknown in it, which the
+    /// kernel works out.
+    Same,
+    /// `unfold(f(x))`, which gives that `f(x)` equals the body of `f` with
+    /// `x` put in.
+    Unfold,
+    /// `arith(p, q)`, which gives a fact about numbers that follows from the
+    /// proofs it is handed.
+    Arith,
+}
+
+impl Step {
+    /// How it is written.
+    pub fn name(self) -> &'static str {
+        match self {
+            Step::Same => "same",
+            Step::Unfold => "unfold",
+            Step::Arith => "arith",
+        }
+    }
+}
+
+/// A proof function: its parameters, the statement it proves as a term, that
+/// statement as it is written, and the steps of its body as a term.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Proof {
+    pub name: String,
+    pub pos: Pos,
+    pub params: Vec<(String, Type)>,
+    pub statement: Term,
+    pub written: String,
+    pub body: Term,
 }
 
 /// The operations of whole numbers. A sum, a difference, and a product give
@@ -257,6 +296,61 @@ impl Term {
         }
     }
 
+    /// Puts each term directly inside this one as `f` gives, in place.
+    pub fn rebuild<E>(&mut self, f: &mut dyn FnMut(&Term) -> Result<Term, E>) -> Result<(), E> {
+        match &mut self.kind {
+            Kind::Lit(_) | Kind::Name(_) => {}
+            Kind::Call { args, .. } | Kind::Make(_, args) => {
+                for a in args {
+                    *a = f(a)?;
+                }
+            }
+            Kind::Apply { function, args } => {
+                **function = f(function)?;
+                for a in args {
+                    *a = f(a)?;
+                }
+            }
+            Kind::Lambda { body, .. } => **body = f(body)?,
+            Kind::Bind { value, rest, .. } => {
+                **value = f(value)?;
+                **rest = f(rest)?;
+            }
+            Kind::Field { of, .. } => **of = f(of)?,
+            Kind::Choose { of, arms } => {
+                **of = f(of)?;
+                for (_, b) in arms {
+                    *b = f(b)?;
+                }
+            }
+            Kind::Loop {
+                source,
+                state,
+                body,
+                ..
+            } => {
+                match source {
+                    Source::Range(a, b) => {
+                        **a = f(a)?;
+                        **b = f(b)?;
+                    }
+                    Source::Over(of) => **of = f(of)?,
+                    Source::Open => {}
+                }
+                for (_, t) in state {
+                    *t = f(t)?;
+                }
+                **body = f(body)?;
+            }
+            Kind::Next(values) | Kind::Done(values) => {
+                for v in values {
+                    *v = f(v)?;
+                }
+            }
+        }
+        Ok(())
+    }
+
     /// How many nodes the term has, itself included.
     pub fn size(&self) -> usize {
         1 + self.parts().iter().map(|t| t.size()).sum::<usize>()
@@ -274,6 +368,7 @@ impl Term {
                     Callee::Function(f) => format!("call f{f}"),
                     Callee::Trait(t, f) => format!("call t{t}.f{f}"),
                     Callee::Operator(o) => format!("call {}", o.symbol()),
+                    Callee::Step(s) => format!("call {}", s.name()),
                 },
                 args.iter().map(Term::show).collect(),
             ),
