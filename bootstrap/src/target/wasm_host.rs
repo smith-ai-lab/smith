@@ -57,6 +57,22 @@ fn operation_script(effect: &str, operation: &str) -> String {
     },
 "#
         .to_string(),
+        // Fills `length` bytes at `address` with bytes nobody can predict, in
+        // pieces of at most 65536, which is the most `getRandomValues` takes,
+        // and says whether it did: 0 when it did, and 1 when the host refused.
+        ("entropy", "fill") => r#"    fill(address, length) {
+      try {
+        for (let at = 0; at < length; at += 65536) {
+          const piece = Math.min(65536, length - at);
+          globalThis.crypto.getRandomValues(new Uint8Array(memory.buffer, address + at, piece));
+        }
+        return 0;
+      } catch (error) {
+        return 1;
+      }
+    },
+"#
+        .to_string(),
         _ => panic!("no host supplies the operation {operation} of {effect}"),
     }
 }
