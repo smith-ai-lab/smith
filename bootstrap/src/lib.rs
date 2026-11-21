@@ -306,6 +306,18 @@ pub fn lower_in(
         .map_err(in_order)
 }
 
+/// The core term of each function of a source file that has one, which is a
+/// function made of whole numbers and `bool`, or the errors `compile` reports
+/// before a target is involved.
+pub fn core_terms(source: &[u8]) -> Result<Vec<core::Function>, Vec<diag::Error>> {
+    let tokens = lexer::lex(source).map_err(in_order)?;
+    let mut file = parser::parse(&tokens).map_err(in_order)?;
+    with_function_args(&mut file, source);
+    check::check_core(file, &check::Library::standard())
+        .map(|checked| checked.core)
+        .map_err(in_order)
+}
+
 fn checked(source: &[u8], timings: &mut Timings) -> Result<check::Checked, Vec<diag::Error>> {
     checked_in(source, &check::Library::standard(), timings)
 }
