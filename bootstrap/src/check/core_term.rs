@@ -52,6 +52,12 @@ impl<'a> Typed<'a> {
             Ty::Enum(e, args) => core::Type::Enum(*e, self.core_types(args)?),
             Ty::Struct(s, args) => core::Type::Struct(*s, self.core_types(args)?),
             Ty::Tuple(items) => core::Type::Tuple(self.core_types(items)?),
+            Ty::List(of) => core::Type::List(Box::new(self.core_type(of.first()?)?)),
+            Ty::Slice(of) => core::Type::Slice(Box::new(self.core_type(of.first()?)?)),
+            Ty::Fn(of) => {
+                let (result, params) = of.split_last()?;
+                core::Type::Fn(self.core_types(params)?, Box::new(self.core_type(result)?))
+            }
             Ty::Nothing => core::Type::Nothing,
             _ => return None,
         })
@@ -198,6 +204,11 @@ impl<'a> Typed<'a> {
                 payload: Some(payload),
             } => self.core_case(name, *pos, Some(payload), ty),
             Expr::Field { of, name, pos } => self.core_field(of, name, *pos, ty),
+            Expr::List { items, pos } => {
+                let items: Option<Vec<Term>> = items.iter().map(|i| self.core_expr(i)).collect();
+                Some(Term::new(Kind::Make(Make::List, items?), ty, *pos))
+            }
+            Expr::Lambda(l) => self.core_lambda(l, ty),
             _ => None,
         }
     }
@@ -221,6 +232,28 @@ impl<'a> Typed<'a> {
             .flatten()
         {
             return self.core_struct(call, s, ty);
+        }
+        if call.qualifier.is_none() && self.value_calls.contains(&addr(call)) {
+            let args: Vec<Term> = call
+                .args
+                .iter()
+                .map(|a| self.core_expr(&a.value))
+                .collect::<Option<_>>()?;
+            // The function is a name that holds one, whose type is what the
+            // arguments and the result say.
+            let held = core::Type::Fn(
+                args.iter().map(|a| a.ty.clone()).collect(),
+                Box::new(ty.clone()),
+            );
+            let function = Term::new(Kind::Name(call.callee.clone()), held, call.name_pos);
+            return Some(Term::new(
+                Kind::Apply {
+                    function: Box::new(function),
+                    args,
+                },
+                ty,
+                call.pos,
+            ));
         }
         if call.qualifier.is_some() || call.args.iter().any(|a| a.name.is_some() || a.after) {
             return None;
@@ -453,6 +486,34 @@ impl<'a> Typed<'a> {
             },
             ty,
             pos,
+        ))
+    }
+}
+
+impl<'a> Typed<'a> {
+    /// A function written where it is used, whose type is the one it is
+    /// given and whose parameters have the types that type says.
+    fn core_lambda(&self, l: &crate::parser::Lambda, ty: core::Type) -> Option<Term> {
+        let core::Type::Fn(params, _) = &ty else {
+            return None;
+        };
+        if params.len() != l.params.len() {
+            return None;
+        }
+        let params: Vec<(String, core::Type)> = l
+            .params
+            .iter()
+            .zip(params)
+            .map(|(n, t)| (n.0.clone(), t.clone()))
+            .collect();
+        let body = self.core_block(&l.body)?;
+        Some(Term::new(
+            Kind::Lambda {
+                params,
+                body: Box::new(body),
+            },
+            ty,
+            l.pos,
         ))
     }
 }
