@@ -1191,6 +1191,15 @@ fn every_executable_uses_only_thin_wrappers_over_the_kernel() {
             }
         } else if bytes.starts_with(b"MZ") {
             let (libraries, symbols) = pe_imports(&bytes);
+            // The tables of 8-byte entries the loader fills are on a multiple
+            // of 8, as the arm64 loader reads them with loads that need it.
+            let optional = u32_at(&bytes, 0x3c) + 24;
+            let (imports, iat) = (
+                u32_at(&bytes, optional + 112 + 8),
+                u32_at(&bytes, optional + 112 + 12 * 8),
+            );
+            assert_eq!(iat % 8, 0, "{name}: the import address table is not aligned");
+            assert_eq!(imports % 8, 0, "{name}: the import directory is not aligned");
             // A program that asks for random bytes takes `ProcessPrng`, the
             // system's generator of them, from the library that holds it.
             let asks = source == crate::entropy::DRAW;
