@@ -31,6 +31,10 @@ use crate::tuples;
 
 pub const ONCE: &[Test] = &[
     (
+        "a_test_that_does_not_depend_on_the_machine_may_not_run_an_executable_the_fingerprint_would_not_hold",
+        a_test_that_does_not_depend_on_the_machine_may_not_run_an_executable_the_fingerprint_would_not_hold,
+    ),
+    (
         "every_target_builds_identical_bytes_twice_for_programs_part_1_of_2",
         || every_target_builds_identical_bytes_twice_for_programs(0),
     ),
@@ -302,9 +306,20 @@ pub fn build(source: &[u8], target: Target) -> Result<Vec<u8>, Vec<Error>> {
     }
 }
 
+thread_local! {
+    /// The executables the test on this thread has noted it runs, by hash,
+    /// which it must have done before it runs one.
+    static NOTED: RefCell<std::collections::HashSet<String>> = RefCell::new(Default::default());
+}
+
 /// Notes what a test would run for `target`, when a fingerprint is being
 /// made. The parts are an executable and whatever it is checked against.
+/// When one is not being made, it notes that the executable is what a
+/// fingerprint holds, so that `run` can say that a test ran one it did not.
 pub fn record(target: Target, parts: &[&[u8]]) {
+    if let Some(executable) = parts.first() {
+        NOTED.with_borrow_mut(|n| n.insert(sha256::hex(executable)));
+    }
     FINGERPRINT.with_borrow_mut(|f| {
         if let Some(f) = f.as_mut() {
             let mut bytes = Vec::new();
@@ -329,9 +344,8 @@ pub fn record_for_every_target(source: &[u8]) {
 /// fingerprint, notes both.
 pub fn scalar_runs_as(program: &scalar::Program, target: Target, said: &Outcome) {
     let bytes = target.emit(program);
-    if fingerprinting() {
-        record(target, &[&bytes, &said.stdout, &said.status.to_le_bytes()]);
-    } else {
+    record(target, &[&bytes, &said.stdout, &said.status.to_le_bytes()]);
+    if !fingerprinting() {
         assert_eq!(run(&bytes), *said, "{}", target.name());
     }
 }
@@ -340,9 +354,8 @@ pub fn scalar_runs_as(program: &scalar::Program, target: Target, said: &Outcome)
 /// `said` says, or, for a fingerprint, notes both.
 pub fn runs_as(source: &[u8], target: Target, said: &Outcome) {
     let bytes = build(source, target).unwrap_or_else(|e| panic!("{e:?}"));
-    if fingerprinting() {
-        record(target, &[&bytes, &said.stdout, &said.status.to_le_bytes()]);
-    } else {
+    record(target, &[&bytes, &said.stdout, &said.status.to_le_bytes()]);
+    if !fingerprinting() {
         assert_eq!(run(&bytes), *said, "{}", target.name());
     }
 }
@@ -433,6 +446,14 @@ pub fn run_with_words(bytes: &[u8], words: &[String]) -> Outcome {
 /// Runs an executable for this machine with the command `command` makes of
 /// its path, and gives what it did.
 fn run_with(bytes: &[u8], command: impl Fn(&Path) -> std::process::Command) -> Outcome {
+    assert!(
+        crate::in_a_machine_test(),
+        "a test that is not of the group that depends on the machine ran an executable, so a change to what a target writes for it runs on no machine; make it one of that group, which declares `pub const MACHINE`"
+    );
+    assert!(
+        NOTED.with_borrow(|n| n.contains(&sha256::hex(bytes))),
+        "a test ran an executable that no fingerprint holds, so a change to what a target writes for it runs on no machine; note it with `targets::record` first, or run it with `targets::runs_as`"
+    );
     let dir = crate::scratch::path("run");
     std::fs::create_dir_all(&dir).unwrap();
     let path = dir.join("program");
@@ -882,8 +903,8 @@ fn a_program_the_system_refuses_memory_ends_with_a_failing_status_and_does_nothi
         let source = case.source.as_bytes();
         for &target in &targets {
             let executable = build(source, target).unwrap_or_else(|e| panic!("{e:?}"));
+            record(target, &[&executable, before]);
             if fingerprinting() {
-                record(target, &[&executable, before]);
                 continue;
             }
             let ran = run_with(&executable, |path| limited(path).expect("a limit"));
@@ -1185,4 +1206,25 @@ fn every_executable_uses_only_thin_wrappers_over_the_kernel() {
             panic!("{name} writes an executable in a form this test does not read");
         }
     }
+}
+
+/// An executable that a test runs is run by the machine it is for only when the
+/// test is of the group a fingerprint is made of, and a test of another group
+/// is refused, so no executable is run on a machine without a change to what
+/// a target writes for it being tested there.
+fn a_test_that_does_not_depend_on_the_machine_may_not_run_an_executable_the_fingerprint_would_not_hold() {
+    let bytes = compile(HELLO.as_bytes(), any()).unwrap();
+    let refused = std::panic::catch_unwind(|| run(&bytes));
+    let message = match refused {
+        Ok(_) => panic!("a test of the group that does not depend on the machine ran an executable"),
+        Err(payload) => payload
+            .downcast_ref::<String>()
+            .cloned()
+            .or_else(|| payload.downcast_ref::<&str>().map(|s| s.to_string()))
+            .unwrap_or_default(),
+    };
+    assert!(
+        message.contains("not of the group that depends on the machine"),
+        "{message}"
+    );
 }

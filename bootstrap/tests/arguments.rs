@@ -405,10 +405,9 @@ fn executables_agree(source: &str, words: &[Vec<u8>], said: &Outcome) {
         .collect();
     for target in runnable() {
         let bytes = build(source.as_bytes(), target).unwrap_or_else(|e| panic!("{e:?}"));
-        if fingerprinting() {
-            let given = words.concat();
-            record(target, &[&bytes, &given, &said.stdout]);
-        } else {
+        let given = words.concat();
+        record(target, &[&bytes, &given, &said.stdout]);
+        if !fingerprinting() {
             assert_eq!(
                 targets::run_with_words(&bytes, &strings),
                 *said,
@@ -500,8 +499,8 @@ fn every_executable_started_with_a_word_that_is_not_valid_utf8_ends_before_main(
     let said = refused(2);
     for target in runnable() {
         let bytes = build(EACH.as_bytes(), target).unwrap_or_else(|e| panic!("{e:?}"));
+        record(target, &[&bytes, &said.1]);
         if fingerprinting() {
-            record(target, &[&bytes, &said.1]);
             continue;
         }
         let words = ["fine".into(), invalid_word(), "later".into()];

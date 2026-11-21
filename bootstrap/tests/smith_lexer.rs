@@ -220,8 +220,8 @@ fn lexes_as_the_rust_lexer_does(texts: &[Vec<u8>]) {
     let expected = lexer_form::expected(&texts);
     for target in targets::runnable() {
         let bytes = targets::build(source.as_bytes(), target).unwrap_or_else(|e| panic!("{e:?}"));
+        targets::record(target, &[&bytes, expected.as_bytes()]);
         if targets::fingerprinting() {
-            targets::record(target, &[&bytes, expected.as_bytes()]);
             continue;
         }
         let said = targets::run(&bytes);
@@ -323,8 +323,8 @@ fn strings_nested_four_and_five_deep_are_lexed_differently_until_recursion_is_bu
     let expected = lexer_form::expected(&refs);
     for target in targets::runnable() {
         let bytes = targets::build(source.as_bytes(), target).unwrap_or_else(|e| panic!("{e:?}"));
+        targets::record(target, &[&bytes, expected.as_bytes()]);
         if targets::fingerprinting() {
-            targets::record(target, &[&bytes, expected.as_bytes()]);
             continue;
         }
         let said = String::from_utf8(targets::run(&bytes).stdout).unwrap();
