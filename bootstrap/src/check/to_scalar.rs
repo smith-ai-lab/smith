@@ -87,11 +87,14 @@ pub(super) fn lower(typed: &Typed, start: Instance) -> Result<form::Program, Vec
     // A function that calls itself as the last thing it does is a loop, and one
     // that calls itself otherwise has a stack of its own, before the stacks of
     // `alloc` are passed, so that the stack is asked for as any memory is.
-    let program = form::tail(form::Program {
+    // A product of floats that one sum or difference reads is fused with it
+    // as the program is made, before any pass, as the rules of floats say.
+    let program = form::fuse(&form::Program {
         data: lowering.data,
         functions,
         main: usize::from(takes),
     });
+    let program = form::tail(program);
     Ok(form::handler::install(form::recur(program)))
 }
 
@@ -381,6 +384,104 @@ impl<'a> Out<'a> {
         };
         let n = number as u64 & mask;
         self.constant(form::Constant::Int(n), form::Type::Int(bits))
+    }
+
+    /// A float of the size whose bits are `n`.
+    fn float(&mut self, bits: form::FloatBits, n: u64) -> form::Value {
+        self.constant(form::Constant::Float(n), form::Type::Float(bits))
+    }
+
+    fn float_binary(
+        &mut self,
+        op: form::FloatBinary,
+        a: form::Value,
+        b: form::Value,
+    ) -> form::Value {
+        let ty = self.types[a.0];
+        self.emit(form::Op::FloatBinary { op, a, b }, vec![ty])[0]
+    }
+
+    fn float_negate(&mut self, value: form::Value) -> form::Value {
+        let ty = self.types[value.0];
+        self.emit(form::Op::FloatNegate(value), vec![ty])[0]
+    }
+
+    /// Whether `a` and `b` stand in the relation, as `bool`, by what floats
+    /// say: a float that is not a number is none of them, but is not equal.
+    fn float_compare(
+        &mut self,
+        op: form::FloatCompare,
+        a: form::Value,
+        b: form::Value,
+    ) -> form::Value {
+        let ty = form::Type::Int(form::Bits::B8);
+        self.emit(form::Op::FloatCompare { op, a, b }, vec![ty])[0]
+    }
+
+    /// Whether the float `x` is not a number, as `x != x`.
+    fn float_is_nan(&mut self, x: form::Value) -> form::Value {
+        self.float_compare(form::FloatCompare::NotEqual, x, x)
+    }
+
+    /// `1 / x`, which tells `0.0` from `-0.0`, as one is an infinity and the
+    /// other the negative of it.
+    fn float_inverse(&mut self, x: form::Value) -> form::Value {
+        let form::Type::Float(bits) = self.types[x.0] else {
+            unreachable!("a float")
+        };
+        let one = match bits {
+            form::FloatBits::F32 => 0x3f80_0000,
+            form::FloatBits::F64 => 0x3ff0_0000_0000_0000,
+        };
+        let one = self.float(bits, one);
+        self.float_binary(form::FloatBinary::Div, one, x)
+    }
+
+    /// Whether the floats `a` and `b` are the same value, as `==` says of
+    /// floats: a float that is not a number equals itself, and `0.0` and
+    /// `-0.0` are two values. It is worked out from `==` and `!=` of the
+    /// floats alone, so that no target's choice of the bits of a float that is
+    /// not a number is seen.
+    fn float_equal(&mut self, a: form::Value, b: form::Value) -> form::Value {
+        use form::Binary::{And, Or};
+        let same = self.float_compare(form::FloatCompare::Equal, a, b);
+        // Where they are equal, they are one value unless they are zeros of two
+        // signs, whose inverses are two infinities.
+        let (ia, ib) = (self.float_inverse(a), self.float_inverse(b));
+        let inverses = self.float_compare(form::FloatCompare::Equal, ia, ib);
+        let (na, nb) = (self.float_is_nan(a), self.float_is_nan(b));
+        let both_nan = self.binary(And, na, nb);
+        let value = self.binary(And, same, inverses);
+        self.binary(Or, value, both_nan)
+    }
+
+    /// Whether the float `a` is below `b`, as `<` says of floats: `-0.0` is
+    /// below `0.0`, and a float that is not a number is above every other.
+    fn float_less(&mut self, a: form::Value, b: form::Value) -> form::Value {
+        use form::Binary::{And, Or, Xor};
+        let one = self.int(form::Bits::B8, 1);
+        let below = self.float_compare(form::FloatCompare::Less, a, b);
+        let same = self.float_compare(form::FloatCompare::Equal, a, b);
+        let (ia, ib) = (self.float_inverse(a), self.float_inverse(b));
+        let inverse_below = self.float_compare(form::FloatCompare::Less, ia, ib);
+        let zeros = self.binary(And, same, inverse_below);
+        let (na, nb) = (self.float_is_nan(a), self.float_is_nan(b));
+        let a_number = self.binary(Xor, na, one);
+        let number_before_nan = self.binary(And, a_number, nb);
+        let value = self.binary(Or, below, zeros);
+        self.binary(Or, value, number_before_nan)
+    }
+
+    fn float_from_int(
+        &mut self,
+        signed: bool,
+        value: form::Value,
+        to: form::FloatBits,
+    ) -> form::Value {
+        self.emit(
+            form::Op::FloatFromInt { signed, value },
+            vec![form::Type::Float(to)],
+        )[0]
     }
 
     /// The number `op` gives of `a` and `b` with the bits that do not fit left
@@ -678,6 +779,7 @@ impl<'a> Lowering<'a> {
                 put(form::Type::Int(form::Bits::B64));
             }
             Ty::Int(t) => put(form::Type::Int(bits_of(*t))),
+            Ty::Float(f) => put(form::Type::Float(float_bits(*f))),
             Ty::Struct(s, args) => {
                 for f in &defs.fields[*s] {
                     self.scalars_into(&f.subst(args), put);
@@ -1044,6 +1146,13 @@ impl<'a> Lowering<'a> {
                 negative,
                 ..
             } => self.number(out, expr, (*magnitude, *negative), env),
+            Expr::Float { text, negative, .. } => {
+                let Ty::Float(float) = typed.type_of(expr, env) else {
+                    unreachable!("checked")
+                };
+                let bits = float.bits_of(text, *negative).expect("checked");
+                (Ty::Float(float), vec![out.float(float_bits(float), bits)])
+            }
             Expr::Interp { parts, .. } => self.interpolation(out, parts, env),
             Expr::Name { name, .. } => match out.find(name) {
                 Some(at) => (out.names()[at].ty.clone(), out.names()[at].values.clone()),
@@ -1138,6 +1247,7 @@ impl<'a> Lowering<'a> {
                 Callee::Freeze => self.freeze(out, expr, call, env),
                 Callee::Utf8 => self.utf8(out, expr, call, env),
                 Callee::Narrow(narrowing) => self.narrow_call(out, expr, call, narrowing, env),
+                Callee::Float => self.float_call(out, expr, call, env),
                 Callee::Value => self.call_value(out, call, env),
                 Callee::Handle(effect) => self.handle(out, expr, call, effect, env),
                 Callee::Intrinsic => self.intrinsic_call(out, expr, call, env),
@@ -1256,8 +1366,11 @@ impl<'a> Lowering<'a> {
             // The result was proven to fit, so the operation is the one
             // instruction, and no result is tested.
             Expr::Arith {
-                op, left, right, ..
-            } => self.operation(out, expr, (*op, left, right), env),
+                op,
+                left,
+                right,
+                op_pos,
+            } => self.operation(out, expr, (*op, left, right, *op_pos), env),
             Expr::Tuple { items, .. } => {
                 let mut types = Vec::new();
                 let mut values = Vec::new();
@@ -2017,4 +2130,12 @@ fn distinct<T: PartialEq>(items: impl Iterator<Item = T>) -> Vec<T> {
         }
     }
     out
+}
+
+/// The size of the float that a type of the checker says.
+fn float_bits(float: Float) -> form::FloatBits {
+    match float {
+        Float::F32 => form::FloatBits::F32,
+        Float::F64 => form::FloatBits::F64,
+    }
 }

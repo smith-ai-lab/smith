@@ -42,17 +42,17 @@ struct Unbuilt {
 
 const UNBUILT: &[Unbuilt] = &[
     Unbuilt {
-        declares: "fn u{i}() -> Int {\n  x = @1.5\n  wrapping_add(x, 1)\n}\n",
+        declares: "fn u{i}() -> Int {\n  x = (1)@(2)\n  wrapping_add(x, 1)\n}\n",
         call: "u{i}()",
         parsed: true,
     },
     Unbuilt {
-        declares: "fn u{i}() -> Int { @1e5 }\n",
+        declares: "fn u{i}() -> Int { (3)@(4) }\n",
         call: "u{i}()",
         parsed: true,
     },
     Unbuilt {
-        declares: "fn u{i}() -> Int {\n  x = @1.5\n  y = @2.5\n  wrapping_add(x, y)\n}\n",
+        declares: "fn u{i}() -> Int {\n  x = (1)@(2)\n  y = (3)@(4)\n  wrapping_add(x, y)\n}\n",
         call: "u{i}()",
         parsed: true,
     },
@@ -98,23 +98,23 @@ const UNBUILT: &[Unbuilt] = &[
     },
     // In a block inside a function, and in two blocks of one statement.
     Unbuilt {
-        declares: "fn u{i}(c: bool) -> Int {\n  if c {\n    @1.5\n  } else {\n    @1.5\n  }\n}\n",
+        declares: "fn u{i}(c: bool) -> Int {\n  if c {\n    (1)@(2)\n  } else {\n    (1)@(2)\n  }\n}\n",
         call: "u{i}(true)",
         parsed: true,
     },
     Unbuilt {
-        declares: "fn u{i}(c: bool) -> Int {\n  x = if c {\n    @2.5\n  } else {\n    3\n  }\n  wrapping_add(x, 1)\n}\n",
+        declares: "fn u{i}(c: bool) -> Int {\n  x = if c {\n    (3)@(4)\n  } else {\n    3\n  }\n  wrapping_add(x, 1)\n}\n",
         call: "u{i}(true)",
         parsed: true,
     },
     // A name a statement that is not built would bind is still bound.
     Unbuilt {
-        declares: "fn u{i}() -> Int {\n  a = 1\n  z = a\n  b = @1.5\n  (c, d) = @1.5\n  wrapping_add(z, wrapping_add(b, wrapping_add(c, d)))\n}\n",
+        declares: "fn u{i}() -> Int {\n  a = 1\n  z = a\n  b = (1)@(2)\n  (c, d) = (1)@(2)\n  wrapping_add(z, wrapping_add(b, wrapping_add(c, d)))\n}\n",
         call: "u{i}()",
         parsed: true,
     },
     Unbuilt {
-        declares: "struct P{i} { x: Int = @1.5 }\nfn u{i}() -> Int { P{i}().x }\n",
+        declares: "struct P{i} {\n  @pub x: Int\n}\nfn u{i}() -> Int { P{i}(x: 1).x }\n",
         call: "u{i}()",
         parsed: true,
     },
@@ -355,11 +355,11 @@ fn what_is_not_built_and_is_used_gives_its_error_and_the_mistake_of_another_func
 fn a_value_that_is_not_built_is_said_nothing_of_where_it_is_used() {
     let before = "use std.console (console, print)\nuse std.int (wrapping_add)\n\nfn f() -> Int ! console, alloc {\n  x = ";
     let source = format!(
-        "{before}1.5\n  y = x\n  a = if y == 2 {{ 1 }} else {{ 2 }}\n  b = wrapping_add(y, a)\n  print(\"{{y}}{{b}}\")\n  b\n}}\n\n\
+        "{before}(1)(2)\n  y = x\n  a = if y == 2 {{ 1 }} else {{ 2 }}\n  b = wrapping_add(y, a)\n  print(\"{{y}}{{b}}\")\n  b\n}}\n\n\
          fn main() ! console, alloc {{\n  print(\"{{f()}}\")\n}}\n"
     );
     let found = lower(source.as_bytes()).expect_err("an error");
     assert_eq!(found.len(), 1, "{found:?}");
-    assert_eq!(found[0].pos, pos_after(before));
-    assert!(found[0].message.contains("a float is not supported yet"));
+    assert_eq!(found[0].pos, pos_after(&format!("{before}(1)")));
+    assert!(found[0].message.contains("calling what this gives is not supported yet"));
 }

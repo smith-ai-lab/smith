@@ -3,8 +3,9 @@
 //! and `checked_` arithmetic, for `Bits`, and for `narrow` and its relatives, and
 //! `Convert` between numbers.
 
+use super::float_bits;
 use super::*;
-use crate::check::numbers_and_operators::{BitFn, bits_function};
+use crate::check::numbers_and_operators::{BitFn, bits_function, is_negation};
 
 /// How many bits a number of the type has, in the scalar form.
 pub(super) fn bits_of(t: Int) -> form::Bits {
@@ -47,11 +48,14 @@ impl<'a> Lowering<'a> {
         &mut self,
         out: &mut Out<'a>,
         expr: &'a Expr,
-        (op, left, right): (ArithOp, &'a Expr, &'a Expr),
+        (op, left, right, op_pos): (ArithOp, &'a Expr, &'a Expr, Pos),
         env: &[Ty],
     ) -> (Ty, Vec<form::Value>) {
         let typed = self.typed;
         let ty = typed.type_of(expr, env);
+        if let Ty::Float(_) = ty {
+            return self.float_operation(out, (op, left, right, op_pos), ty, env);
+        }
         let (taken, a) = self.expr(out, left, env);
         let b = self.expr(out, right, env).1[0];
         let word = match op {
@@ -63,6 +67,32 @@ impl<'a> Lowering<'a> {
             }
         };
         (ty, vec![out.binary(word, a[0], b)])
+    }
+
+    /// Lowers `left + right`, `left - right`, `left * right`, or
+    /// `left / right` of two floats, which is one instruction that rounds
+    /// once, and `-right`, which the parser writes as `0 - right`.
+    fn float_operation(
+        &mut self,
+        out: &mut Out<'a>,
+        (op, left, right, op_pos): (ArithOp, &'a Expr, &'a Expr, Pos),
+        ty: Ty,
+        env: &[Ty],
+    ) -> (Ty, Vec<form::Value>) {
+        if is_negation(op, left, op_pos) {
+            let value = self.expr(out, right, env).1[0];
+            return (ty, vec![out.float_negate(value)]);
+        }
+        let a = self.expr(out, left, env).1[0];
+        let b = self.expr(out, right, env).1[0];
+        let word = match op {
+            ArithOp::Add => form::FloatBinary::Add,
+            ArithOp::Sub => form::FloatBinary::Sub,
+            ArithOp::Mul => form::FloatBinary::Mul,
+            ArithOp::Div => form::FloatBinary::Div,
+            ArithOp::Rem => unreachable!("refused"),
+        };
+        (ty, vec![out.float_binary(word, a, b)])
     }
 
     /// Lowers a quotient or what is left over, from the two sides at the size
@@ -116,7 +146,7 @@ impl<'a> Lowering<'a> {
             && call.callee == name
             && call.args.len() == 2
             && match typed.type_of(&call.args[0].value, env) {
-                Ty::Int(_) => true,
+                Ty::Int(_) | Ty::Float(_) => true,
                 Ty::Enum(e, _) => e == typed.defs.boolean,
                 _ => false,
             }
@@ -131,6 +161,9 @@ impl<'a> Lowering<'a> {
     ) -> (Ty, Vec<form::Value>) {
         let (ta, a) = self.expr(out, &call.args[0].value, env);
         let (tb, b) = self.expr(out, &call.args[1].value, env);
+        if let (Ty::Float(_), Ty::Float(_)) = (&ta, &tb) {
+            return (self.typed.defs.bool_ty(), vec![out.float_equal(a[0], b[0])]);
+        }
         if let Some(mixed) = Mixed::of(&ta, &tb) {
             return (
                 self.typed.defs.bool_ty(),
@@ -195,6 +228,9 @@ impl<'a> Lowering<'a> {
         let a = a[0];
         let (other, b) = self.expr(out, &call.args[1].value, env);
         let b = b[0];
+        if let (Ty::Float(_), Ty::Float(_)) = (&ty, &other) {
+            return self.float_comparison(out, answers, (a, b));
+        }
         if let Some(mixed) = Mixed::of(&ty, &other) {
             return self.mixed_comparison(out, mixed, answers, (a, b));
         }
@@ -211,6 +247,30 @@ impl<'a> Lowering<'a> {
             _ => return None,
         };
         let below = out.compare(op, x, y);
+        if !flip {
+            return Some(vec![below]);
+        }
+        let one = out.int(form::Bits::B8, 1);
+        Some(vec![out.binary(form::Binary::Xor, below, one)])
+    }
+
+    /// What the comparison of two floats, as the answers of `less`, `equal`,
+    /// and `greater` say, gives, by how floats are ordered: `-0.0` is below
+    /// `0.0`, and a float that is not a number is above all others.
+    fn float_comparison(
+        &mut self,
+        out: &mut Out<'a>,
+        answers: [Option<bool>; 3],
+        (a, b): (form::Value, form::Value),
+    ) -> Option<Vec<form::Value>> {
+        let (x, y, flip) = match answers {
+            [Some(true), Some(false), Some(false)] => (a, b, false),
+            [Some(false), Some(false), Some(true)] => (b, a, false),
+            [Some(true), Some(true), Some(false)] => (b, a, true),
+            [Some(false), Some(true), Some(true)] => (a, b, true),
+            _ => return None,
+        };
+        let below = out.float_less(x, y);
         if !flip {
             return Some(vec![below]);
         }
@@ -282,6 +342,23 @@ impl<'a> Lowering<'a> {
         )
     }
 
+    /// Lowers `float(n)`: the float nearest the value of `n`, rounded once,
+    /// to the nearest, ties to even.
+    pub(super) fn float_call(
+        &mut self,
+        out: &mut Out<'a>,
+        expr: &'a Expr,
+        call: &'a Call,
+        env: &[Ty],
+    ) -> (Ty, Vec<form::Value>) {
+        let (given, values) = self.expr(out, &call.args[0].value, env);
+        let (Ty::Int(from), ty @ Ty::Float(float)) = (given, self.typed.type_of(expr, env)) else {
+            unreachable!("checked")
+        };
+        let value = out.float_from_int(from.signed(), values[0], float_bits(float));
+        (ty, vec![value])
+    }
+
     /// Lowers a call of `narrow` or one of its relatives.
     pub(super) fn narrow_call(
         &mut self,
@@ -320,12 +397,18 @@ impl<'a> Lowering<'a> {
         let typed = self.typed;
         let mut args = Vec::new();
         let mut int = None;
+        let mut float = false;
         for arg in &call.args {
             let (ty, values) = self.expr(out, &arg.value, env);
+            float |= matches!(ty, Ty::Float(_));
             if let (Ty::Int(t), None) = (ty, int) {
                 int = Some(t);
             }
             args.push(values[0]);
+        }
+        if float {
+            let values = self.float_intrinsic(out, &call.callee, &args);
+            return (typed.type_of(expr, env), values);
         }
         let int = int.expect("checked");
         let values = match typed.type_of(expr, env) {
@@ -333,6 +416,33 @@ impl<'a> Lowering<'a> {
             _ => self.intrinsic(out, &call.callee, int, &args),
         };
         (typed.type_of(expr, env), values)
+    }
+
+    /// What the function the compiler builds for `==` or `compare` of floats
+    /// gives for the two floats `args`.
+    fn float_intrinsic(
+        &mut self,
+        out: &mut Out<'a>,
+        name: &str,
+        args: &[form::Value],
+    ) -> Vec<form::Value> {
+        let defs = self.typed.defs;
+        let (a, b) = (args[0], args[1]);
+        match name {
+            "__equal" => vec![out.float_equal(a, b)],
+            "__compare" => {
+                let case = |out: &mut Out<'a>, name: &str| {
+                    let k = defs.case_of(defs.order, name).expect("a case");
+                    out.int(form::Bits::B8, k as i128)
+                };
+                let below = out.float_less(a, b);
+                let same = out.float_equal(a, b);
+                let (l, e, g) = (case(out, "less"), case(out, "equal"), case(out, "greater"));
+                let after = out.choose(same, e, g);
+                vec![out.choose(below, l, after)]
+            }
+            _ => unreachable!("checked"),
+        }
     }
 
     /// Which function of `Bits` with two numbers `call` is a call of.

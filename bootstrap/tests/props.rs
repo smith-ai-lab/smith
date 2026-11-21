@@ -406,9 +406,9 @@ fn a_function_main_does_not_reach_is_parsed_and_not_checked() {
         let with_unreached = format!("{text}{renamed}\n");
         assert_eq!(lower(with_unreached.as_bytes()), Ok(program));
         // A mistake in its syntax is still found, as it is parsed.
-        let broken = format!("{text}fn broken() {{ x = ");
+        let broken = format!("{text}fn broken() {{ x = (1)");
         let at = pos_after(&broken);
-        let found = errors(&format!("{broken}1.5 }}\n"));
+        let found = errors(&format!("{broken}(2) }}\n"));
         assert_eq!(found.iter().map(|e| e.pos).collect::<Vec<_>>(), [at]);
     });
 }
@@ -1212,24 +1212,24 @@ fn file_with_syntax_errors(g: &mut Gen) -> (String, Vec<(Pos, &'static str)>) {
     const STATEMENTS: &[Line] = &[
         ("", "print(\"a\")", None),
         ("", "x = \"a\"", None),
-        ("x = ", "1.5", Some("not supported yet")),
-        ("var x = ", "1.5", Some("not supported yet")),
-        ("x = ", "1e5", Some("not supported yet")),
-        ("var x = ", "2.5E-3", Some("not supported yet")),
-        ("x = ", "1e+5", Some("not supported yet")),
+        ("x = (1)", "(2)", Some("not supported yet")),
+        ("var x = (1)", "(2)", Some("not supported yet")),
+        ("x = (1)", "(3)", Some("not supported yet")),
+        ("var x = (1)", "(4)", Some("not supported yet")),
+        ("x = (1)", "(5)", Some("not supported yet")),
         ("print(\"a\" ", "\"b\")", Some("`,` or `)`")),
         ("print(\"a\")", "(0)", Some("not supported yet")),
         ("x.y ", "+= \"a\"", Some("not supported yet")),
         ("", ")", Some("statement")),
     ];
     const ITEMS: &[Line] = &[
-        ("struct A { x: str = ", "1.5 }", Some("not supported yet")),
+        ("struct A { x: str = (1)", "(2) }", Some("not supported yet")),
         ("", "struct C { x: str = \"a\" }", None),
         ("fn d(a: str = ", ") {}", Some("an expression")),
         ("", "struct B {\n  x: f32\n}", None),
         ("", ")", Some("definition")),
         ("", "fn f() ! console { print(\"a\") }", None),
-        ("fn g()\n{\n  x = ", "1.5\n}", Some("not supported yet")),
+        ("fn g()\n{\n  x = (1)", "(2)\n}", Some("not supported yet")),
         ("fn h(a: str ", "b: str) {}", Some("`,` or `)`")),
         // A mistake in the signature of a function in an implementation is
         // the only error.

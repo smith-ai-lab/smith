@@ -621,7 +621,9 @@ impl<'a> Walk<'a> {
             self.temporary(e);
         }
         match e {
-            Expr::Text { .. } | Expr::Number { .. } | Expr::Unbuilt { .. } => None,
+            Expr::Text { .. } | Expr::Number { .. } | Expr::Float { .. } | Expr::Unbuilt { .. } => {
+                None
+            }
             Expr::Interp { parts, .. } => {
                 for part in parts {
                     if let Part::Expr(value) = part {

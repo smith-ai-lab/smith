@@ -138,7 +138,7 @@ fn file_with_names_that_are_no_trait(g: &mut Gen) -> File {
     file.push(PRELUDE);
     let mut calls = String::new();
     for i in 0..1 + g.below(3) {
-        let name = *g.pick(&["Nope", "str", "Byte", "Int", "Cat", "Shape", "f32"]);
+        let name = *g.pick(&["Nope", "str", "Byte", "Int", "Cat", "Shape", "f16"]);
         let what = if name == "Nope" {
             "no trait named"
         } else {

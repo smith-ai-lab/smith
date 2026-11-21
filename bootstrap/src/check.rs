@@ -57,7 +57,9 @@ use crate::parser::{
 use effects_with_and_try::{BUILT, BUILT_IN_EFFECTS, LIBRARY_EFFECTS, declarations};
 use lists_and_text::{as_read, is_freeze, is_push, is_utf8};
 use names::{Naming, Resolution, own_final, renamed_tokens};
-use numbers_and_operators::{Int, Narrowing, Numbers, flexible, literal_blocks, narrowing};
+use numbers_and_operators::{
+    Int, Narrowing, Numbers, flexible, is_float_call, literal_blocks, narrowing,
+};
 use traits::{
     Found, ImplInfo, PRELUDE_TRAITS, Requirement, TRAITS_NOT_BUILT, bounds_named, impl_info,
     needs_named, overlaps, split_needs, withouts,
@@ -136,9 +138,7 @@ const TEXT: &str = "str";
 
 /// The types the language and its library define that the compiler does
 /// not build yet.
-const TYPES_NOT_BUILT: &[&str] = &[
-    "usize", "f16", "bf16", "f32", "f64", "Pos", "Fin", "Ptr", "Map",
-];
+const TYPES_NOT_BUILT: &[&str] = &["usize", "f16", "bf16", "Pos", "Fin", "Ptr", "Map"];
 
 /// The names of sizes, which `std.bits` holds, and which the compiler knows
 /// as the whole number types of that many bits.
@@ -398,6 +398,8 @@ enum Ty {
     Text,
     /// A whole number type.
     Int(Int),
+    /// A float type.
+    Float(Float),
     /// A struct, by its place in the file's structs, with a type for each
     /// of its type parameters.
     Struct(usize, Vec<Ty>),
@@ -431,6 +433,55 @@ enum Ty {
     /// is not known and nothing about it is reported again. A type that
     /// holds an unknown type is itself unknown.
     Unknown,
+}
+
+/// The float types that are built.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+enum Float {
+    F32,
+    F64,
+}
+
+impl Float {
+    /// The float type a name writes.
+    fn named(name: &str) -> Option<Float> {
+        match name {
+            "f32" => Some(Float::F32),
+            "f64" => Some(Float::F64),
+            _ => None,
+        }
+    }
+
+    /// How it is written.
+    fn written(self) -> &'static str {
+        match self {
+            Float::F32 => "f32",
+            Float::F64 => "f64",
+        }
+    }
+
+    /// The bits of the float the text of a float literal says, rounded once,
+    /// to the nearest, ties to even, with its sign flipped if `negative`. It
+    /// is `None` where the number is too large for the type, as the literal
+    /// is then an infinity, which no literal is.
+    pub(crate) fn bits_of(self, text: &str, negative: bool) -> Option<u64> {
+        let digits: String = text.chars().filter(|c| *c != '_').collect();
+        let (bits, finite) = match self {
+            Float::F32 => {
+                let x: f32 = digits.parse().ok()?;
+                (u64::from(x.to_bits()), x.is_finite())
+            }
+            Float::F64 => {
+                let x: f64 = digits.parse().ok()?;
+                (x.to_bits(), x.is_finite())
+            }
+        };
+        let sign = match self {
+            Float::F32 => 1u64 << 31,
+            Float::F64 => 1u64 << 63,
+        };
+        finite.then_some(if negative { bits | sign } else { bits })
+    }
 }
 
 impl Ty {
@@ -705,6 +756,17 @@ fn fits_i64(expr: &Expr) -> bool {
             ..
         } if *negative => *magnitude <= Int::I64.min().unsigned_abs(),
         Expr::Number { magnitude, .. } => *magnitude <= Int::I64.max() as u128,
+        // A float is an `f64` where nothing decides.
+        e => float_written(e),
+    }
+}
+
+/// Whether the expression is a float written out, or an operation of floats
+/// written out, whose type the place it is used decides.
+pub(super) fn float_written(e: &Expr) -> bool {
+    match e {
+        Expr::Float { .. } => true,
+        Expr::Arith { left, right, .. } => float_written(left) && float_written(right),
         _ => false,
     }
 }
@@ -1200,6 +1262,14 @@ impl<'a> Defs<'a> {
                 element => Ty::slice(element),
             };
         }
+        if let Some(float) = Float::named(name) {
+            no_args("the type", errors);
+            return if t.args.is_empty() {
+                Ty::Float(float)
+            } else {
+                Ty::Unknown
+            };
+        }
         if name == TEXT || Int::named(name).is_some() {
             no_args("the type", errors);
             if !of_prelude(t.pos) && !of_std(t.pos) {
@@ -1421,6 +1491,7 @@ impl<'a> Defs<'a> {
         match ty {
             Ty::Text => TEXT.to_string(),
             Ty::Int(int) => self.spelling(*int).to_string(),
+            Ty::Float(float) => float.written().to_string(),
             Ty::Struct(_, args) | Ty::Enum(_, args) => {
                 let name = self.type_name(ty);
                 if args.is_empty() {
@@ -1606,7 +1677,7 @@ fn written_expr(e: &Expr) -> String {
 /// How `e` is written, where a name that `s` gives text for is written as it.
 fn written_with(s: &dyn Fn(&str) -> Option<String>, e: &Expr) -> String {
     match e {
-        Expr::Number { text, negative, .. } => {
+        Expr::Number { text, negative, .. } | Expr::Float { text, negative, .. } => {
             format!("{}{text}", if *negative { "-" } else { "" })
         }
         Expr::Text { text, .. } => {
@@ -5461,6 +5532,7 @@ fn walk<'a>(expr: &'a Expr, out: &mut Vec<&'a Expr>) {
         }
         Expr::Text { .. }
         | Expr::Number { .. }
+        | Expr::Float { .. }
         | Expr::Unbuilt { .. }
         | Expr::Name { .. }
         | Expr::Break { .. } => {}
@@ -5531,6 +5603,7 @@ fn statements(body: &[Stmt]) -> Vec<&Stmt> {
             Expr::Case { .. }
             | Expr::Text { .. }
             | Expr::Number { .. }
+            | Expr::Float { .. }
             | Expr::Unbuilt { .. }
             | Expr::Name { .. }
             | Expr::Break { .. }
@@ -5674,6 +5747,8 @@ enum Callee {
     /// `narrow` or one of its three relatives, which take a whole number to
     /// a type that does not hold all of its values.
     Narrow(Narrowing),
+    /// `float`, which gives the float of the value of a whole number.
+    Float,
     /// The name of an effect, called with a lambda for each operation and the
     /// body to run with them in force: the effect, by its place among the
     /// file's.
@@ -5983,6 +6058,9 @@ impl<'a> Typed<'a> {
                 if let Some(narrowing) = narrowing(defs, call) {
                     return Callee::Narrow(narrowing);
                 }
+                if is_float_call(defs, call) {
+                    return Callee::Float;
+                }
                 let by_type = self.named_calls.get(&addr(call)).copied();
                 if let Some(f) = by_type.or_else(|| defs.function(call.name_pos, name)) {
                     let sig = &defs.signatures[f];
@@ -6069,6 +6147,7 @@ impl<'a> Typed<'a> {
             | Callee::Freeze
             | Callee::Utf8
             | Callee::Handle(_)
+            | Callee::Float
             | Callee::Narrow(_) => Vec::new(),
         }
     }
@@ -7433,6 +7512,11 @@ impl<'a> Checker<'a> {
                 pos,
                 ..
             } => self.number(body, expr, *magnitude, *negative, *pos, want),
+            Expr::Float {
+                text,
+                negative,
+                pos,
+            } => self.float_literal(body, expr, (text, *negative), *pos, want),
             Expr::Interp { pos, parts } => self.interpolation(body, *pos, parts),
             Expr::Name { name, pos } => {
                 if let Some((_, ty)) = body.names.iter().rfind(|(n, _)| n == name) {

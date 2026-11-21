@@ -405,6 +405,37 @@ fn max_xor(a: u64, mut b: u64, c: u64, mut d: u64) -> u64 {
 
 /// Whether an expression is a literal, or an operation on literals only,
 /// which takes the type of what it is used with.
+/// Whether `-x` is what the operation is: the parser writes it as `0 - x`
+/// with the `0` at the place of the `-`.
+pub(crate) fn is_negation(op: ArithOp, left: &Expr, op_pos: Pos) -> bool {
+    matches!(
+        (op, left),
+        (ArithOp::Sub, Expr::Number { magnitude: 0, pos, .. }) if *pos == op_pos
+    )
+}
+
+/// Whether the operand is a float written out or a call of `float`, which take
+/// the float type their use decides.
+pub(super) fn float_deferred(defs: &Defs, e: &Expr) -> bool {
+    match e {
+        Expr::Float { .. } => true,
+        Expr::Call(call) => is_float_call(defs, call),
+        _ => false,
+    }
+}
+
+/// Whether the call is of `float`, which makes a float of a whole number and
+/// which no function of the program takes the name of.
+pub(crate) fn is_float_call(defs: &Defs, call: &Call) -> bool {
+    let (at, name) = (call.name_pos, call.callee.as_str());
+    name == "float"
+        && call.qualifier.is_none()
+        && call.args.len() == 1
+        && defs.function(at, name).is_none()
+        && defs.struct_at(at, name).is_none()
+        && defs.trait_fns_at(at, name).is_none()
+}
+
 pub(super) fn flexible(e: &Expr) -> bool {
     match e {
         Expr::Number { .. } => true,
@@ -519,13 +550,46 @@ impl<'a> Checker<'a> {
         want: &Want,
     ) -> Ty {
         let wanted = match want {
-            Want::Ty(t @ (Ty::Int(_) | Ty::Flex(_))) => Want::Ty(t.clone()),
+            Want::Ty(t @ (Ty::Int(_) | Ty::Flex(_) | Ty::Float(_))) => Want::Ty(t.clone()),
             _ => Want::Any,
         };
+        let defs = self.defs;
+        let unary = is_negation(op, left, op_pos);
         // A literal beside a number of a range is the range that holds it
         // alone, where the exact range of the result fits a type, and takes
         // the type of the number where it does not.
         let (l, r) = match (flexible(left), flexible(right)) {
+            // `-x`, which is a float with its sign flipped where `x` is one.
+            (true, false) if unary => {
+                let by = if matches!(want, Want::Ty(Ty::Float(_))) {
+                    want
+                } else {
+                    &Want::Any
+                };
+                let r = self.expr(body, right, by);
+                if matches!(r, Ty::Float(_)) {
+                    return r;
+                }
+                let side = self.literal_want(op, (left, &r), false);
+                (self.expr(body, left, &side), r)
+            }
+            // A float written out, and `float(n)`, take the type of the other
+            // side, or of the place, and are an `f64` when nothing decides.
+            (false, false) if float_deferred(defs, left) && float_deferred(defs, right) => (
+                self.expr(body, left, &wanted),
+                self.expr(body, right, &wanted),
+            ),
+            (false, false) if float_deferred(defs, left) => {
+                let r = self.expr(body, right, &Want::Any);
+                let side = Self::side_want(&r);
+                (self.expr(body, left, &side), r)
+            }
+            (false, false) if float_deferred(defs, right) => {
+                let l = self.expr(body, left, &Want::Any);
+                let side = Self::side_want(&l);
+                let r = self.expr(body, right, &side);
+                (l, r)
+            }
             (true, false) => {
                 let r = self.expr(body, right, &Want::Any);
                 let side = self.literal_want(op, (left, &r), false);
@@ -559,7 +623,6 @@ impl<'a> Checker<'a> {
             ),
         };
         let symbol = op.symbol();
-        let defs = self.defs;
         if matches!(op, ArithOp::Div | ArithOp::Rem)
             && let Ty::Int(b) = &r
             && b.min() <= 0
@@ -598,6 +661,33 @@ impl<'a> Checker<'a> {
                     }
                 }
                 return Ty::Int(exact);
+            }
+            (Ty::Float(a), Ty::Float(b)) if a == b && op != ArithOp::Rem => return l.clone(),
+            (Ty::Float(_), Ty::Float(_)) if op == ArithOp::Rem => {
+                self.errors
+                    .push(Error::unsupported(op_pos, "`%` of floats"));
+                return Ty::Unknown;
+            }
+            (Ty::Float(_), Ty::Float(_)) => {
+                self.errors.push(Error::unsupported(
+                    op_pos,
+                    "an `f32` and an `f64` in one operator",
+                ));
+                return Ty::Unknown;
+            }
+            (Ty::Float(_), Ty::Int(_) | Ty::Flex(_)) | (Ty::Int(_) | Ty::Flex(_), Ty::Float(_)) => {
+                let (a, b) = (defs.describe(&l, body.scope), defs.describe(&r, body.scope));
+                self.errors.push(
+                    Error::new(
+                        op_pos,
+                        format!(
+                            "`{symbol}` takes two whole numbers or two floats, and the sides \
+                             are {a} and {b}"
+                        ),
+                    )
+                    .with_fix("`float(n)` makes a float of a whole number"),
+                );
+                return Ty::Unknown;
             }
             (Ty::Int(a), Ty::Int(b)) if a == b => l.clone(),
             (Ty::Int(a), Ty::Int(b)) => {
@@ -833,9 +923,75 @@ impl<'a> Checker<'a> {
     /// operand has type `other`.
     pub(super) fn side_want(other: &Ty) -> Want {
         match other {
-            Ty::Int(_) | Ty::Flex(_) => Want::Ty(other.clone()),
+            Ty::Int(_) | Ty::Flex(_) | Ty::Float(_) => Want::Ty(other.clone()),
             _ => Want::Any,
         }
+    }
+
+    /// Checks `float(n)`, which is the float of the value of the whole number
+    /// `n`: the float type that is wanted, and an `f64` where nothing decides.
+    pub(super) fn float_of(&mut self, body: &mut Body<'a>, call: &Call, want: &Want) -> Ty {
+        let defs = self.defs;
+        let plain = call.args.iter().all(|a| a.name.is_none() && !a.after);
+        if !plain {
+            self.errors.push(Error::new(
+                call.pos,
+                "`float` takes the one whole number to make a float of",
+            ));
+            return self.unknown_call(body, call);
+        }
+        let value = &call.args[0].value;
+        match self.expr(body, value, &Want::Any) {
+            Ty::Int(_) => {}
+            Ty::Unknown => return Ty::Unknown,
+            other => {
+                let given = defs.describe(&other, body.scope);
+                self.errors.push(Error::new(
+                    value.pos(),
+                    format!("`float` takes a whole number, and this is {given}"),
+                ));
+                return Ty::Unknown;
+            }
+        }
+        match want {
+            Want::Ty(Ty::Float(float)) => Ty::Float(*float),
+            _ => Ty::Float(Float::F64),
+        }
+    }
+
+    /// Checks a float literal, which becomes the float type that is wanted
+    /// of it, as `FromFloat` says, and an `f64` where nothing decides.
+    pub(super) fn float_literal(
+        &mut self,
+        body: &Body,
+        expr: &Expr,
+        (text, negative): (&str, bool),
+        pos: Pos,
+        want: &Want,
+    ) -> Ty {
+        let float = match want {
+            Want::Ty(Ty::Float(float)) => *float,
+            Want::Any | Want::Unused | Want::Ty(Ty::Unknown | Ty::Flex(_)) => Float::F64,
+            Want::Ty(needed) => {
+                let needed = self.defs.describe(needed, body.scope);
+                self.errors.push(Error::new(
+                    pos,
+                    format!("this is a float, where {needed} is needed"),
+                ));
+                return Ty::Unknown;
+            }
+        };
+        if float.bits_of(text, negative).is_none() {
+            self.errors.push(Error::new(
+                pos,
+                format!(
+                    "`{}` is too large for `{}`, which has no number that large",
+                    written_expr(expr),
+                    float.written()
+                ),
+            ));
+        }
+        Ty::Float(float)
     }
 
     /// Checks a whole number literal, which becomes the type that is wanted
