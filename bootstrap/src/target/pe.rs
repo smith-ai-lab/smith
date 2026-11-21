@@ -296,7 +296,9 @@ fn import_tables(rva: u32, needs: &Needs) -> Imports {
     let directory_size = (libraries + 1) * 20;
     let first_size = 8 * (needs.kernel.len() as u32 + 1);
     let second_size = if needs.prng { 16 } else { 0 };
-    let lookup = directory_size;
+    // The tables of 8-byte entries begin on a multiple of 8, which the three
+    // entries of the directory, 60 bytes, do not leave.
+    let lookup = directory_size.next_multiple_of(8);
     let second_lookup = lookup + first_size;
     let iat = second_lookup + second_size;
     let second_iat = iat + first_size;
@@ -340,7 +342,7 @@ fn import_tables(rva: u32, needs: &Needs) -> Imports {
         put32(&mut bytes, rva + second_dll);
         put32(&mut bytes, rva + second_iat);
     }
-    bytes.resize(directory_size as usize, 0);
+    bytes.resize(lookup as usize, 0);
     let kernel_count = needs.kernel.len();
     for _ in 0..2 {
         for offset in &name_offsets[..kernel_count] {
