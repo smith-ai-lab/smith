@@ -68,9 +68,11 @@ fn grouped(f: &Function) -> (Groups, Vec<bool>) {
                 Op::Store { address, value, .. } if holds(value) => join(*value, *address),
                 Op::Call { args, .. } => {
                     let held: Vec<Value> = (args.iter().chain(&i.results))
-                        .filter(|v| f.types[v.0] == Type::Address)
+                        .filter(|v| f.types[v.0] == Type::Address && !constant[v.0])
                         .copied()
                         .collect();
+                    // The first is the one the others are put with, so a
+                    // constant is left out: it joins nothing.
                     for v in held.iter().skip(1) {
                         join(held[0], *v);
                     }
